@@ -1,0 +1,12 @@
+{
+  "appId": "com.burnmsg.app",
+  "appName": "焚信",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
