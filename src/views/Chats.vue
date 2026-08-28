@@ -62,7 +62,17 @@ export default {
         })
     }
   },
+  mounted() {
+    window.addEventListener('bm-back', this.onNativeBack)
+  },
+  beforeUnmount() {
+    window.removeEventListener('bm-back', this.onNativeBack)
+  },
   methods: {
+    /** 原生返回键：会话长按/右键菜单打开时先关菜单，消费掉事件 */
+    onNativeBack(e) {
+      if (this.menu) { this.closeMenu(); e.preventDefault() }
+    },
     openChat,
     avatarColor,
     convAvatar,

@@ -199,7 +199,21 @@ export default {
       return list.filter(u => !inGroup.includes(u.id))
     }
   },
+  mounted() {
+    window.addEventListener('bm-back', this.onNativeBack)
+  },
+  beforeUnmount() {
+    window.removeEventListener('bm-back', this.onNativeBack)
+  },
   methods: {
+    /** 原生返回键：先关本页内部弹层（解散/退群确认→成员操作→添加成员→编辑资料），消费掉事件 */
+    onNativeBack(e) {
+      if (this.confirmDissolve) { this.confirmDissolve = false; e.preventDefault(); return }
+      if (this.confirmLeave)    { this.confirmLeave = false; e.preventDefault(); return }
+      if (this.memberAction)    { this.memberAction = null; e.preventDefault(); return }
+      if (this.showAdd)         { this.showAdd = false; e.preventDefault(); return }
+      if (this.showEdit)        { this.showEdit = false; e.preventDefault(); return }
+    },
     avatarColor,
     avatarSrc,
     memberAvatar,

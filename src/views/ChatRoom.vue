@@ -187,7 +187,20 @@ export default {
       else this.newMsgPill = true
     }
   },
+  mounted() {
+    window.addEventListener('bm-back', this.onNativeBack)
+  },
+  beforeUnmount() {
+    window.removeEventListener('bm-back', this.onNativeBack)
+  },
   methods: {
+    /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
+    onNativeBack(e) {
+      if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
+      if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
+      if (this.showBurnSheet)     { this.showBurnSheet = false; e.preventDefault(); return }
+      if (this.editing)           { this.editing = null; e.preventDefault(); return }
+    },
     closeChat,
     avatarColor,
     convName,

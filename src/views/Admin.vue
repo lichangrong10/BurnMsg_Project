@@ -222,8 +222,21 @@ export default {
   },
   mounted() {
     this.load()
+    window.addEventListener('bm-back', this.onNativeBack)
+  },
+  beforeUnmount() {
+    window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    /** 原生返回键：先关本页内部弹层（强制解散确认→重置密码→结果弹窗→群操作→账号操作→新建账号），消费掉事件 */
+    onNativeBack(e) {
+      if (this.confirmForce)  { this.confirmForce = null; e.preventDefault(); return }
+      if (this.resetTarget)   { this.resetTarget = null; e.preventDefault(); return }
+      if (this.resultDialog)  { this.resultDialog = null; e.preventDefault(); return }
+      if (this.groupAction)   { this.groupAction = null; e.preventDefault(); return }
+      if (this.actionTarget)  { this.actionTarget = null; e.preventDefault(); return }
+      if (this.showCreate)    { this.showCreate = false; e.preventDefault(); return }
+    },
     avatarColor,
     avatarSrc,
     switchTab(t) {

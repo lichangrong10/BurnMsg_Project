@@ -16,7 +16,7 @@
     <div class="dialog">
       <div class="dialog-title">后端地址</div>
       <div class="dialog-body">
-        <input class="input" v-model.trim="serverInput" placeholder="http://192.168.9.110:9091/api/v1">
+        <input class="input" v-model.trim="serverInput" placeholder="http://192.168.9.116:9091/api/v1">
         <div style="font-size:12px;margin-top:8px;line-height:1.5">
           打包 APK 后 WebView 直连无跨域限制；浏览器调试可填 <b>/api/v1</b> 走 vite 开发代理，或确保后端已开启 CORS。
         </div>
@@ -36,6 +36,7 @@
 <script>
 import axios from 'axios'
 import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, showToast } from './store'
+import { setupBackHandler } from './utils/back'
 import LoginView from './views/Login.vue'
 import ChangePwdView from './views/ChangePwd.vue'
 import HomeView from './views/Home.vue'
@@ -57,6 +58,7 @@ export default {
   mounted() {
     window.addEventListener('bm-logout', forceLogout)
     startTimers()
+    setupBackHandler()
     if (state.view === 'main') bootstrap()
   },
   beforeUnmount() {

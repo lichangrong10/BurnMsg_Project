@@ -7,7 +7,7 @@ export const storage = {
   set token(v)   { v ? localStorage.setItem('bm_access_token', v) : localStorage.removeItem('bm_access_token') },
   get refresh()  { return localStorage.getItem('bm_refresh_token') || '' },
   set refresh(v) { v ? localStorage.setItem('bm_refresh_token', v) : localStorage.removeItem('bm_refresh_token') },
-  get baseURL()  { return localStorage.getItem('bm_base_url') || 'http://192.168.9.110:9091/api/v1' },
+  get baseURL()  { return localStorage.getItem('bm_base_url') || 'http://192.168.9.116:9091/api/v1' },
   set baseURL(v) { localStorage.setItem('bm_base_url', v) },
   get user()     { try { return JSON.parse(localStorage.getItem('bm_user') || 'null') } catch { return null } },
   set user(v)    { v ? localStorage.setItem('bm_user', JSON.stringify(v)) : localStorage.removeItem('bm_user') },
