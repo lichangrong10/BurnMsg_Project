@@ -67,7 +67,7 @@
       <div class="edit-bar-close" @click="cancelEdit">✕</div>
     </div>
 
-    <div class="input-bar">
+    <div v-if="!isDissolved" class="input-bar">
       <button class="attach-btn" @click="$refs.fileInput.click()" title="发送图片/文件">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
@@ -80,6 +80,7 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
       </button>
     </div>
+    <div v-else class="dissolved-bar">群组已解散，无法发送消息</div>
 
     <!-- ═══════ 阅后即焚定时器选择 ═══════ -->
     <div v-if="showBurnSheet" class="overlay" @click.self="showBurnSheet = false">
@@ -153,9 +154,13 @@ export default {
       const m = this.msgAction
       return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text')
     },
+    isDissolved() {
+      return !!(state.chat && state.chat.dissolved_at)
+    },
     chatStatus() {
       const c = state.chat
       if (!c) return ''
+      if (c.dissolved_at) return '已解散'
       if (c.type === 'group') return c.member_count + ' 位成员'
       if (c.type === 'channel') return c.member_count + ' 位订阅者'
       return '在线'
@@ -367,4 +372,5 @@ export default {
 .bubble.out .read-tag.unread { color: rgba(255,255,255,.55); } /* 未读：灰白 */
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
+.dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }
 </style>

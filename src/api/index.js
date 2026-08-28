@@ -36,6 +36,10 @@ export const api = {
   addGroupMembers: (id, member_ids) => http.post(`/groups/${id}/members`, { member_ids }),
   removeGroupMember: (id, userId) => http.delete(`/groups/${id}/members/${userId}`),
   setGroupMemberRole: (id, userId, role) => http.put(`/groups/${id}/members/${userId}/role`, { role }),
+  dissolveGroup: id => http.delete(`/groups/${id}`), // 群主解散群（解散即焚）
+  // ── 群组管理（admin） ──
+  getAdminGroups: (params = {}) => http.get('/groups/admin/all', { params: { page: 1, pageSize: 20, ...params } }),
+  adminDissolveGroup: id => http.delete(`/groups/admin/${id}`), // 管理员强制解散（留痕）
   // ── 健康检查 ──
   health: () => http.get('/health'),
   // ── 账号管理（admin） ──

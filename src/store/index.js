@@ -432,7 +432,21 @@ function onWsReceiptRead(p) {
 onWs(WS_EVENTS.MESSAGE_NEW, onWsNewMessage)
 onWs(WS_EVENTS.MESSAGE_EDITED, onWsEdited)
 onWs(WS_EVENTS.MESSAGE_RECALLED, onWsRecalled)
-onWs(WS_EVENTS.CONVERSATION_UPDATED, () => { if (!state.demoMode) scheduleConvReload() })
+onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
+  if (state.demoMode) return
+  // 群被解散（群主解散/管理员强制解散）：实时给当前会话与列表打 dissolved 标记，禁止再发消息
+  if (p && p.reason === 'dissolved') {
+    const cid = p.conversation_id || (p.conversation && p.conversation.id)
+    const at = p.dissolved_at || new Date().toISOString()
+    const c = state.convs.find(x => String(x.id) === String(cid))
+    if (c) c.dissolved_at = at
+    if (state.chat && String(state.chat.id) === String(cid)) {
+      state.chat.dissolved_at = at
+      showToast('该群组已被解散')
+    }
+  }
+  scheduleConvReload()
+})
 onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
 
 /* token 刷新成功后用新 token 重建 WS（旧 token 握手会持续失败） */
@@ -720,6 +734,35 @@ export async function setMemberRole(uid, role) {
     await api.setGroupMemberRole(state.chat.id, uid, role)
     await loadGroupMembers()
     showToast('角色已更新')
+    return true
+  } catch (e) {
+    showToast(e.message)
+    return false
+  }
+}
+
+/** 群主解散群（解散即焚，不可恢复）：成功后给会话打 dissolved 标记并关闭聊天页 */
+export async function dissolveGroup() {
+  if (!state.chat) return false
+  const cid = state.chat.id
+  const mark = () => {
+    const at = new Date().toISOString()
+    const c = state.convs.find(x => String(x.id) === String(cid))
+    if (c) c.dissolved_at = at
+  }
+  if (state.demoMode) {
+    mark()
+    state.showChatInfo = false
+    closeChat()
+    showToast('群组已解散（模拟）')
+    return true
+  }
+  try {
+    await api.dissolveGroup(cid)
+    mark()
+    state.showChatInfo = false
+    closeChat()
+    showToast('群组已解散')
     return true
   } catch (e) {
     showToast(e.message)

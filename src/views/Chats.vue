@@ -20,7 +20,8 @@
         <div class="conv-row" style="align-items:center">
           <div class="conv-preview"><span v-if="c.burning" class="burn-tag">🔥 </span>{{ c.lastMsg || '开始聊天吧' }}</div>
           <div class="conv-right">
-            <span v-if="c.unread" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
+            <span v-if="c.dissolved_at" class="type-tag" style="color:#E53935;background:rgba(229,57,53,.1)">已解散</span>
+            <span v-else-if="c.unread" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
             <span v-else-if="c.type === 'channel'" class="type-tag">频道</span>
             <span v-else-if="c.type === 'group'" class="type-tag">群组</span>
           </div>

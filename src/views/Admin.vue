@@ -5,24 +5,39 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
       <div class="chat-title-wrap">
-        <div class="chat-title">账号管理</div>
-        <div class="chat-status">共 {{ total }} 个账号</div>
+        <div class="chat-title">{{ tab === 'groups' ? '群组管理' : '账号管理' }}</div>
+        <div class="chat-status">{{ tab === 'groups' ? ('共 ' + gtotal + ' 个群组') : ('共 ' + total + ' 个账号') }}</div>
       </div>
-      <button class="btn-text" style="color:#fff;font-weight:600;font-size:14.5px" @click="openCreate">＋ 开通</button>
+      <button v-if="tab === 'accounts'" class="btn-text" style="color:#fff;font-weight:600;font-size:14.5px" @click="openCreate">＋ 开通</button>
     </div>
 
-    <!-- 搜索 + 状态筛选 -->
+    <!-- 页签：账号 / 群组 -->
     <div style="padding:10px 14px 6px;background:var(--tg-bg)">
-      <input class="input" v-model.trim="keyword" placeholder="搜索手机号 / 姓名" @input="onSearchInput">
-      <div class="seg-wrap" style="margin-top:8px">
-        <div class="seg-item" :class="{ on: status === '' }" @click="setStatus('')">全部</div>
-        <div class="seg-item" :class="{ on: status === 'active' }" @click="setStatus('active')">启用中</div>
-        <div class="seg-item" :class="{ on: status === 'disabled' }" @click="setStatus('disabled')">已停用</div>
+      <div class="seg-wrap" style="margin-bottom:8px">
+        <div class="seg-item" :class="{ on: tab === 'accounts' }" @click="switchTab('accounts')">账号</div>
+        <div class="seg-item" :class="{ on: tab === 'groups' }" @click="switchTab('groups')">群组</div>
       </div>
+      <template v-if="tab === 'accounts'">
+        <!-- 搜索 + 状态筛选 -->
+        <input class="input" v-model.trim="keyword" placeholder="搜索手机号 / 姓名" @input="onSearchInput">
+        <div class="seg-wrap" style="margin-top:8px">
+          <div class="seg-item" :class="{ on: status === '' }" @click="setStatus('')">全部</div>
+          <div class="seg-item" :class="{ on: status === 'active' }" @click="setStatus('active')">启用中</div>
+          <div class="seg-item" :class="{ on: status === 'disabled' }" @click="setStatus('disabled')">已停用</div>
+        </div>
+      </template>
+      <template v-else>
+        <!-- 群搜索 + 解散状态筛选 -->
+        <input class="input" v-model.trim="gkeyword" placeholder="搜索群名称" @input="onGSearchInput">
+        <div class="seg-wrap" style="margin-top:8px">
+          <div class="seg-item" :class="{ on: !gIncludeDissolved }" @click="setGInclude(false)">进行中</div>
+          <div class="seg-item" :class="{ on: gIncludeDissolved }" @click="setGInclude(true)">含已解散</div>
+        </div>
+      </template>
     </div>
 
     <!-- 账号列表 -->
-    <div style="flex:1;overflow-y:auto">
+    <div v-if="tab === 'accounts'" style="flex:1;overflow-y:auto">
       <div v-if="loading" class="empty-state"><div>加载中…</div></div>
       <div v-else-if="!list.length" class="empty-state"><div>没有匹配的账号</div></div>
       <div v-for="u in list" :key="u.id" class="contact-item" @click="actionTarget = u">
@@ -39,11 +54,34 @@
       </div>
     </div>
 
+    <!-- 群组列表 -->
+    <div v-else style="flex:1;overflow-y:auto">
+      <div v-if="gloading" class="empty-state"><div>加载中…</div></div>
+      <div v-else-if="!glist.length" class="empty-state"><div>没有匹配的群组</div></div>
+      <div v-for="g in glist" :key="g.id" class="contact-item" @click="groupAction = g">
+        <div class="avatar" :style="{ width: '42px', height: '42px', fontSize: '15px', background: avatarColor(g.name) }"><img v-if="avatarSrc(g)" :src="avatarSrc(g)" alt=""><template v-else>{{ (g.name || '?')[0] }}</template></div>
+        <div class="contact-main">
+          <div class="contact-name">
+            {{ g.name }}
+            <span v-if="g.is_channel" class="mini-tag admin">频道</span>
+            <span v-if="g.dissolved_at" class="mini-tag off">已解散</span>
+          </div>
+          <div class="contact-sub">群主 {{ g.owner_name || '—' }} · {{ g.member_count ?? 0 }} 名成员</div>
+        </div>
+        <span style="color:var(--tg-text-secondary);margin-right:8px">›</span>
+      </div>
+    </div>
+
     <!-- 分页 -->
-    <div class="pager" v-if="total > pageSize">
+    <div class="pager" v-if="tab === 'accounts' && total > pageSize">
       <button class="btn-text" :style="{ opacity: page > 1 ? 1 : .35 }" @click="goPage(page - 1)">‹ 上一页</button>
       <span style="font-size:13px;color:var(--tg-text-secondary)">{{ page }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
       <button class="btn-text" :style="{ opacity: page < Math.ceil(total / pageSize) ? 1 : .35 }" @click="goPage(page + 1)">下一页 ›</button>
+    </div>
+    <div class="pager" v-if="tab === 'groups' && gtotal > gpageSize">
+      <button class="btn-text" :style="{ opacity: gpage > 1 ? 1 : .35 }" @click="goGPage(gpage - 1)">‹ 上一页</button>
+      <span style="font-size:13px;color:var(--tg-text-secondary)">{{ gpage }} / {{ Math.max(1, Math.ceil(gtotal / gpageSize)) }}</span>
+      <button class="btn-text" :style="{ opacity: gpage < Math.ceil(gtotal / gpageSize) ? 1 : .35 }" @click="goGPage(gpage + 1)">下一页 ›</button>
     </div>
 
     <!-- ═══ 开通账号（单个 / JSON 批量 / Excel 导入） ═══ -->
@@ -116,6 +154,28 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ 群组操作菜单 ═══ -->
+    <div v-if="groupAction" class="overlay" @click.self="groupAction = null">
+      <div class="sheet">
+        <div class="sheet-title">{{ groupAction.name }}</div>
+        <div v-if="!groupAction.dissolved_at" class="sheet-item danger" @click="confirmForce = groupAction; groupAction = null">强制解散（留痕，消息保留供审计）</div>
+        <div v-else class="sheet-item" style="color:var(--tg-text-secondary);pointer-events:none">该群已解散</div>
+        <div class="sheet-item sheet-cancel" @click="groupAction = null">取消</div>
+      </div>
+    </div>
+
+    <!-- ═══ 强制解散确认 ═══ -->
+    <div v-if="confirmForce" class="dialog-overlay" @click.self="confirmForce = null">
+      <div class="dialog">
+        <div class="dialog-title">强制解散群组</div>
+        <div class="dialog-body">确定要强制解散「{{ confirmForce.name }}」吗？解散后成员不可再发消息；消息与回执将保留供审计追溯（留痕，不做物理焚毁）。</div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="confirmForce = null">取消</button>
+          <button class="btn-text" style="font-weight:600;color:#E53935" @click="doForceDissolve">强制解散</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -145,7 +205,19 @@ export default {
       actionTarget: null,
       resetTarget: null,
       resetPwdInput: '',
-      resultDialog: null
+      resultDialog: null,
+      // ── 群组管理 ──
+      tab: 'accounts',
+      glist: [],
+      gtotal: 0,
+      gpage: 1,
+      gpageSize: 20,
+      gkeyword: '',
+      gIncludeDissolved: false,
+      gloading: false,
+      gsearchTimer: null,
+      groupAction: null,
+      confirmForce: null
     }
   },
   mounted() {
@@ -154,6 +226,70 @@ export default {
   methods: {
     avatarColor,
     avatarSrc,
+    switchTab(t) {
+      if (this.tab === t) return
+      this.tab = t
+      if (t === 'groups' && !this.glist.length) this.loadGroups()
+    },
+    /* ─── 群组管理 ─── */
+    async loadGroups() {
+      this.gloading = true
+      try {
+        if (state.demoMode) {
+          const k = this.gkeyword.toLowerCase()
+          this.glist = DEMO.convs
+            .filter(c => c.type === 'group')
+            .filter(c => !k || (c.name || '').toLowerCase().includes(k))
+            .filter(c => this.gIncludeDissolved || !c.dissolved_at)
+            .map(c => ({ ...c, owner_name: c.owner_name || DEMO.me.display_name }))
+          this.gtotal = this.glist.length
+          return
+        }
+        const d = await api.getAdminGroups({
+          page: this.gpage,
+          pageSize: this.gpageSize,
+          keyword: this.gkeyword || undefined,
+          include_dissolved: this.gIncludeDissolved ? 'true' : undefined
+        })
+        this.glist = asArray(d)
+        this.gtotal = (d && typeof d === 'object' && !Array.isArray(d) && typeof d.total === 'number') ? d.total : this.glist.length
+      } catch (e) {
+        showToast(e.message)
+      } finally {
+        this.gloading = false
+      }
+    },
+    onGSearchInput() {
+      clearTimeout(this.gsearchTimer)
+      this.gsearchTimer = setTimeout(() => { this.gpage = 1; this.loadGroups() }, 400)
+    },
+    setGInclude(v) {
+      this.gIncludeDissolved = v
+      this.gpage = 1
+      this.loadGroups()
+    },
+    goGPage(p) {
+      const max = Math.max(1, Math.ceil(this.gtotal / this.gpageSize))
+      if (p < 1 || p > max) return
+      this.gpage = p
+      this.loadGroups()
+    },
+    async doForceDissolve() {
+      const g = this.confirmForce
+      this.confirmForce = null
+      if (state.demoMode) {
+        g.dissolved_at = new Date().toISOString()
+        showToast('已强制解散（模拟）')
+        return
+      }
+      try {
+        await api.adminDissolveGroup(g.id)
+        showToast('已强制解散（留痕）')
+        this.loadGroups()
+      } catch (e) {
+        showToast(e.message)
+      }
+    },
     async load() {
       this.loading = true
       try {

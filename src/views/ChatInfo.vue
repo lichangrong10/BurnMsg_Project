@@ -12,24 +12,24 @@
     <div style="flex:1;overflow-y:auto" v-if="state.chat">
       <!-- ═══ 资料卡 ═══ -->
       <div class="info-card">
-        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage) }" @click="pickGroupAvatar" :title="isGroup && canManage ? '更换群头像' : ''">
+        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved ? '更换群头像' : ''">
           <div class="avatar" :style="{ width: '72px', height: '72px', fontSize: '28px', background: avatarColor(title) }"><img v-if="cardAvatar" :src="cardAvatar" alt=""><template v-else>{{ (title || '?')[0] }}</template></div>
-          <div v-if="isGroup && canManage" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+          <div v-if="isGroup && canManage && !isDissolved" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         </div>
         <input ref="groupAvatarFile" type="file" accept="image/*" style="display:none" @change="onGroupAvatarPick">
-        <div class="info-name">{{ title }}</div>
+        <div class="info-name">{{ title }}<span v-if="isDissolved" style="font-size:12px;color:#E53935;background:rgba(229,57,53,.1);padding:2px 8px;border-radius:8px;margin-left:8px;vertical-align:2px">已解散</span></div>
         <div class="info-sub" v-if="isGroup">{{ memberList.length || state.chat.member_count }} 位成员</div>
         <div class="info-sub" v-else>{{ state.chat.other_user && state.chat.other_user.phone }}</div>
         <div class="info-sub" v-if="!isGroup && state.chat.other_user && state.chat.other_user.signature">{{ state.chat.other_user.signature }}</div>
         <div class="info-sub" v-if="isGroup && state.chat.description" style="margin-top:4px">{{ state.chat.description }}</div>
-        <button v-if="isGroup && canManage" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
+        <button v-if="isGroup && canManage && !isDissolved" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
       </div>
 
       <!-- ═══ 群成员 ═══ -->
       <template v-if="isGroup">
         <div class="section-header">成员列表</div>
         <div class="member-list">
-          <div v-if="canManage" class="contact-item" @click="showAdd = true">
+          <div v-if="canManage && !isDissolved" class="contact-item" @click="showAdd = true">
             <div class="avatar add-avatar">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
             </div>
@@ -50,9 +50,17 @@
 
         <div style="height:14px"></div>
         <div class="cell-group">
-          <div class="cell danger" @click="confirmLeave = true">
-            <span class="cell-label">{{ state.chat.is_channel ? '退出频道' : '退出群组' }}</span>
+          <div v-if="isDissolved" class="cell" style="pointer-events:none">
+            <span class="cell-label" style="color:var(--tg-text-secondary)">该{{ state.chat.is_channel ? '频道' : '群组' }}已解散，仅可查看</span>
           </div>
+          <template v-else>
+            <div v-if="myRole === 'owner'" class="cell danger" @click="confirmDissolve = true">
+              <span class="cell-label">解散{{ state.chat.is_channel ? '频道' : '群组' }}</span>
+            </div>
+            <div v-else class="cell danger" @click="confirmLeave = true">
+              <span class="cell-label">{{ state.chat.is_channel ? '退出频道' : '退出群组' }}</span>
+            </div>
+          </template>
         </div>
         <div style="height:24px"></div>
       </template>
@@ -114,11 +122,26 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ 解散群确认（解散即焚，不可恢复，二次确认） ═══ -->
+    <div v-if="confirmDissolve" class="dialog-overlay" @click.self="confirmDissolve = false">
+      <div class="dialog">
+        <div class="dialog-title">解散{{ state.chat && state.chat.is_channel ? '频道' : '群组' }}</div>
+        <div class="dialog-body">
+          确定要解散「{{ title }}」吗？<br>
+          <span style="color:#E53935">解散即焚：全群消息将立即销毁且不可恢复，所有成员会实时收到通知。</span>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="confirmDissolve = false">取消</button>
+          <button class="btn-text" style="font-weight:600;color:#E53935" @click="doDissolve">解散</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
-import { state, myChatRole, renameGroup, addMembers, removeMember, setMemberRole, changeGroupAvatar } from '../store'
+import { state, myChatRole, renameGroup, addMembers, removeMember, setMemberRole, changeGroupAvatar, dissolveGroup } from '../store'
 import { avatarColor, avatarSrc, convAvatar, memberName, memberUid, memberAvatar } from '../utils/format'
 
 export default {
@@ -132,7 +155,8 @@ export default {
       showAdd: false,
       addIds: [],
       memberAction: null,
-      confirmLeave: false
+      confirmLeave: false,
+      confirmDissolve: false
     }
   },
   computed: {
@@ -152,6 +176,9 @@ export default {
     },
     myRole() {
       return myChatRole()
+    },
+    isDissolved() {
+      return !!(state.chat && state.chat.dissolved_at)
     },
     canManage() {
       return this.myRole === 'owner' || this.myRole === 'admin'
@@ -179,7 +206,7 @@ export default {
     uidOf: memberUid,
     nameOf: memberName,
     pickGroupAvatar() {
-      if (!(this.isGroup && this.canManage)) return
+      if (!(this.isGroup && this.canManage && !this.isDissolved)) return
       this.$refs.groupAvatarFile && this.$refs.groupAvatarFile.click()
     },
     async onGroupAvatarPick(e) {
@@ -209,6 +236,7 @@ export default {
       if (ok) { this.showAdd = false; this.addIds = [] }
     },
     onMemberTap(m) {
+      if (this.isDissolved) return // 已解散群不再允许成员管理操作
       if (this.uidOf(m) === state.me.id) return // 自己用底部退群按钮
       if (this.canSetRole || (this.myRole === 'admin' && m.role === 'member') || (this.myRole === 'owner' && m.role !== 'owner')) {
         this.memberAction = m
@@ -227,6 +255,10 @@ export default {
     async doLeave() {
       this.confirmLeave = false
       await removeMember(state.me.id)
+    },
+    async doDissolve() {
+      this.confirmDissolve = false
+      await dissolveGroup()
     }
   }
 }
