@@ -55,6 +55,13 @@ export const api = {
   },
   resetAccountPassword: (id, new_password) => http.post(`/accounts/${id}/reset-password`, new_password ? { new_password } : {}),
   toggleAccountStatus: (id, status) => http.post(`/accounts/${id}/toggle-status`, { status }),
+  // ── 系统公告（App 端只读展示；发布/删除在管理后台） ──
+  getAnnouncements: (params = {}) => http.get('/announcements', { params: { page: 1, pageSize: 50, ...params } }),
+  getAnnouncementUnread: () => http.get('/announcements/unread-count'),
+  markAnnouncementRead: id => http.post(`/announcements/${id}/read`),
+  // ── 意见反馈（App 端：提交 + 我的列表；回复在管理后台） ──
+  submitFeedback: payload => http.post('/feedback', payload),
+  getMyFeedback: (params = {}) => http.get('/feedback/my', { params: { page: 1, pageSize: 50, ...params } }),
   // ── 文件 ──
   upload: file => {
     const fd = new FormData()

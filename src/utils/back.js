@@ -31,6 +31,8 @@ export function setupBackHandler() {
 
     // 1-4. 应用级覆盖层（顺序即层级，后渲染的在上，先关最上层）
     if (state.showServerDialog) { state.showServerDialog = false; return }
+    if (state.showAnnouncements) { state.showAnnouncements = false; return }
+    if (state.showFeedback)      { state.showFeedback = false; return }
     if (state.showChatInfo)     { state.showChatInfo = false; return }
     if (state.showCreateGroup)  { state.showCreateGroup = false; return }
     if (state.showAdmin)        { state.showAdmin = false; return }

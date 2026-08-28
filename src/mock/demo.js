@@ -69,5 +69,16 @@ export const DEMO = (() => {
     { user_id: me.id, role: 'member', user: me },
     { user_id: users[0].id, role: 'member', user: users[0] }
   ]
-  return { me, users, convs, messages, groupMembers, uid }
+  // 系统公告（演示公告中心）
+  const announcements = [
+    { id: uid(), title: '服务器例行维护通知', content: '本周六 22:00-24:00 服务器升级维护，期间消息可能延迟，请提前保存重要工作。', priority: 'urgent', target_type: 'all', target_departments: null, created_by: me.id, is_read: false, created_at: new Date(now - 5 * 60 * min).toISOString(), updated_at: new Date(now - 5 * 60 * min).toISOString() },
+    { id: uid(), title: '焚信 v1.2 版本上线', content: '本次更新：\n1. 新增系统公告中心\n2. 支持群组解散留痕\n3. 修复若干已知问题\n欢迎大家体验反馈。', priority: 'normal', target_type: 'all', target_departments: null, created_by: me.id, is_read: false, created_at: new Date(now - 26 * 60 * min).toISOString(), updated_at: new Date(now - 26 * 60 * min).toISOString() },
+    { id: uid(), title: '信息安全提醒', content: '请勿在聊天中传输明文密码等敏感信息，敏感内容请使用阅后即焚。', priority: 'normal', target_type: 'all', target_departments: null, created_by: me.id, is_read: true, created_at: new Date(now - 3 * 24 * 60 * min).toISOString(), updated_at: new Date(now - 3 * 24 * 60 * min).toISOString() }
+  ]
+  // 意见反馈（演示）
+  const feedbacks = [
+    { id: uid(), content: '希望群聊支持按部门批量拉人，每次手动加人太麻烦了。', contact: null, status: 'processed', admin_reply: '已收到，该功能已列入下个版本计划，感谢反馈！', replied_by: null, replied_at: new Date(now - 5 * 60 * min).toISOString(), created_at: new Date(now - 26 * 60 * min).toISOString(), updated_at: new Date(now - 5 * 60 * min).toISOString() },
+    { id: uid(), content: '建议增加夜间模式，晚上加班用太刺眼了。', contact: null, status: 'pending', admin_reply: null, replied_by: null, replied_at: null, created_at: new Date(now - 2 * 60 * min).toISOString(), updated_at: new Date(now - 2 * 60 * min).toISOString() }
+  ]
+  return { me, users, convs, messages, groupMembers, announcements, feedbacks, uid }
 })()

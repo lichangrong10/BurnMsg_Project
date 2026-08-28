@@ -10,6 +10,8 @@
   <CreateGroup v-if="state.showCreateGroup" />
   <ChatInfo v-if="state.showChatInfo && state.chat" />
   <AdminView v-if="state.showAdmin" />
+  <AnnouncementsView v-if="state.showAnnouncements" />
+  <FeedbackView v-if="state.showFeedback" />
 
   <!-- ═══════ 后端地址设置（登录页 / 我的 共用） ═══════ -->
   <div v-if="state.showServerDialog" class="dialog-overlay" @click.self="state.showServerDialog = false">
@@ -44,10 +46,12 @@ import ChatRoom from './views/ChatRoom.vue'
 import CreateGroup from './views/CreateGroup.vue'
 import ChatInfo from './views/ChatInfo.vue'
 import AdminView from './views/Admin.vue'
+import AnnouncementsView from './views/Announcements.vue'
+import FeedbackView from './views/Feedback.vue'
 
 export default {
   name: 'App',
-  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView },
+  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView },
   data() {
     return {
       state,

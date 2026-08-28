@@ -35,7 +35,15 @@ export const state = reactive({
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
-  readWatermark: 0        // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
+  readWatermark: 0,       // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
+  showAnnouncements: false, // 公告中心页（覆盖层）
+  announcements: [],      // 公告列表（含 is_read 标记）
+  annUnread: 0,           // 未读公告数（首页铃铛角标）
+  urgentBanner: null,     // 首页紧急跑马灯展示的公告（最新未读 urgent）
+  annFocusId: null,       // 进公告中心后自动展开的公告 id（从紧急横幅跳入时用）
+  showFeedback: false,    // 意见反馈页（覆盖层）
+  feedbackList: [],       // 我的反馈列表（含管理员回复）
+  feedbackLoading: false  // 反馈列表加载中
 })
 
 /** 从接口返回值中稳妥提取数组：兼容直接数组，以及 {list}/{users}/{items}/{records}/{data} 等分页/包装结构 */
@@ -169,6 +177,13 @@ export function forceLogout() {
   state.showChatInfo = false
   state.showAdmin = false
   state.groupMembers = []
+  state.showAnnouncements = false
+  state.announcements = []
+  state.annUnread = 0
+  state.urgentBanner = null
+  state.annFocusId = null
+  state.showFeedback = false
+  state.feedbackList = []
   disconnectWs()
 }
 
@@ -236,6 +251,7 @@ async function fillMissingPreviews() {
 
 export async function bootstrap() {
   await Promise.all([loadConvs(), loadContacts()])
+  refreshAnnUnread()
   if (!state.demoMode) {
     if (storage.token) connectWs(storage.token) // 刷新页面后凭本地 token 恢复 WS 连接
     try {
@@ -448,6 +464,152 @@ onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
   scheduleConvReload()
 })
 onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
+
+/* ─── 系统公告（App 端只读展示） ─── */
+/** 刷新未读公告角标（启动/轮询/收到推送时调用，静默失败） */
+export async function refreshAnnUnread() {
+  if (state.demoMode) {
+    state.annUnread = (DEMO.announcements || []).filter(a => !a.is_read).length
+    return
+  }
+  try {
+    const d = await api.getAnnouncementUnread()
+    state.annUnread = (d && d.unread) || 0
+  } catch (e) { /* 静默：角标不打扰 */ }
+}
+
+/** 拉取公告列表并同步未读角标/首页紧急横幅（quiet=静默失败，用于后台刷新） */
+export async function loadAnnouncements(quiet) {
+  if (state.demoMode) {
+    state.announcements = (DEMO.announcements || []).slice()
+    updateUrgentBanner()
+    refreshAnnUnread()
+    return
+  }
+  try {
+    const d = await api.getAnnouncements()
+    state.announcements = asArray(d)
+    updateUrgentBanner()
+    refreshAnnUnread()
+  } catch (e) {
+    if (!quiet) showToast(e.message)
+  }
+}
+
+/** 用户 × 掉的紧急横幅公告 id（本地持久化，防重拉列表后复活） */
+function annDismissedId() {
+  try { return localStorage.getItem('bm_ann_dismissed') || '' } catch { return '' }
+}
+
+/** 从公告列表计算首页紧急横幅：最新一条未读且未被 × 掉的 urgent 公告 */
+function updateUrgentBanner() {
+  const list = state.announcements || []
+  state.urgentBanner = list.find(a => a.priority === 'urgent' && !a.is_read && a.id !== annDismissedId()) || null
+}
+
+/** 打开公告中心 */
+export function openAnnouncements() {
+  state.showAnnouncements = true
+  loadAnnouncements()
+}
+
+/** 点击首页紧急横幅：进公告中心并自动展开该条公告详情卡片 */
+export function openUrgentBanner() {
+  if (!state.urgentBanner) return
+  state.annFocusId = state.urgentBanner.id
+  openAnnouncements()
+}
+
+/** × 掉首页紧急横幅：本地记录 + 标记已读 + 立即隐藏 */
+export function dismissUrgentBanner() {
+  const a = state.urgentBanner
+  if (!a) return
+  try { localStorage.setItem('bm_ann_dismissed', a.id) } catch { /* 忽略 */ }
+  state.urgentBanner = null
+  readAnnouncement(a)
+}
+
+/** 点开公告详情：未读则上报已读（一人一公告幂等），并本地同步角标 */
+export async function readAnnouncement(a) {
+  if (!a || a.is_read) return
+  a.is_read = true
+  state.annUnread = Math.max(0, state.annUnread - 1)
+  if (state.demoMode) return
+  try {
+    await api.markAnnouncementRead(a.id)
+  } catch (e) { /* 静默：已读上报失败不影响阅读 */ }
+}
+
+/** announcement:new：公告实时推送 → 提示音 + toast + 角标/列表联动；urgent 立即上首页跑马灯 */
+onWs(WS_EVENTS.ANNOUNCEMENT_NEW, p => {
+  if (state.demoMode) return
+  playMsgDing()
+  const ann = (p && (p.announcement || p.data || p)) || {}
+  showToast('新公告：' + (ann.title || '点击查看'))
+  if (state.showAnnouncements) loadAnnouncements()
+  else refreshAnnUnread()
+  // urgent：payload 带完整公告时立即上首页跑马灯，并静默拉列表同步角标/横幅
+  if (ann.priority === 'urgent') {
+    if (ann.id && ann.title && ann.content && ann.id !== annDismissedId()) {
+      state.urgentBanner = { ...ann, is_read: false }
+    }
+    loadAnnouncements(true)
+  }
+})
+
+/* ─── 意见反馈 ─── */
+/** 拉取我的反馈列表（含管理员回复；quiet=静默失败） */
+export async function loadFeedback(quiet) {
+  if (state.demoMode) {
+    state.feedbackList = (DEMO.feedbacks || []).slice()
+    return
+  }
+  state.feedbackLoading = true
+  try {
+    const d = await api.getMyFeedback()
+    state.feedbackList = asArray(d)
+  } catch (e) {
+    if (!quiet) showToast(e.message)
+  } finally {
+    state.feedbackLoading = false
+  }
+}
+
+/** 打开意见反馈页 */
+export function openFeedback() {
+  state.showFeedback = true
+  loadFeedback(true)
+}
+
+/** 提交意见反馈（content 必填，contact 选填），成功后静默刷新列表 */
+export async function submitFeedback(content, contact) {
+  const c = (content || '').trim()
+  if (!c) { showToast('请先填写反馈内容'); return false }
+  const payload = { content: c }
+  if (contact && contact.trim()) payload.contact = contact.trim()
+  if (state.demoMode) {
+    state.feedbackList.unshift({
+      id: 'demo-fb-' + Date.now(),
+      content: c,
+      contact: payload.contact || null,
+      status: 'pending',
+      admin_reply: null,
+      replied_at: null,
+      created_at: new Date().toISOString()
+    })
+    showToast('反馈提交成功（演示）')
+    return true
+  }
+  try {
+    await api.submitFeedback(payload)
+    showToast('反馈提交成功')
+    loadFeedback(true)
+    return true
+  } catch (e) {
+    showToast(e.message)
+    return false
+  }
+}
 
 /* token 刷新成功后用新 token 重建 WS（旧 token 握手会持续失败） */
 window.addEventListener('bm-token-refreshed', () => {
@@ -805,7 +967,7 @@ export function saveServer(url) {
 const timers = []
 export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
-  timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) loadConvs(true) }, 15000))
+  timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   timers.push(setInterval(() => { if (state.chat && !state.demoMode) loadMessages(true) }, 4000))
 }
 export function stopTimers() {

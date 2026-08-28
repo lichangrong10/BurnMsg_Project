@@ -98,6 +98,15 @@ export function fmtClock(t) {
   return t ? new Date(t).toTimeString().slice(0, 5) : ''
 }
 
+/** 公告时间：始终显示 X月X日 HH:mm，跨年补年份 */
+export function fmtDateTime(t) {
+  if (!t) return ''
+  const d = new Date(t), now = new Date()
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`
+  const hm = d.toTimeString().slice(0, 5)
+  return d.getFullYear() === now.getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}年${md} ${hm}`
+}
+
 export function fmtSize(s) {
   if (!s) return ''
   if (s < 1024) return s + ' B'
