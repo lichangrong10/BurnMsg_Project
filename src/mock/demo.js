@@ -59,7 +59,7 @@ export const DEMO = (() => {
   const groupMembers = {}
   groupMembers[convs[1].id] = [
     { user_id: me.id, role: 'owner', user: me },
-    { user_id: users[0].id, role: 'admin', user: users[0] },
+    { user_id: users[0].id, role: 'member', user: users[0] },
     { user_id: users[1].id, role: 'member', user: users[1] },
     { user_id: users[2].id, role: 'member', user: users[2] },
     { user_id: users[4].id, role: 'member', user: users[4] }

@@ -43,7 +43,6 @@
               </div>
             </div>
             <span v-if="m.role === 'owner'" class="role-tag owner">群主</span>
-            <span v-else-if="m.role === 'admin'" class="role-tag">管理员</span>
           </div>
           <div v-if="!memberList.length" class="empty-state"><div>成员加载中…</div></div>
         </div>
@@ -104,10 +103,24 @@
     <div v-if="memberAction" class="overlay" @click.self="memberAction = null">
       <div class="sheet">
         <div class="sheet-title">{{ nameOf(memberAction) }}</div>
-        <div v-if="canSetRole && memberAction.role !== 'admin'" class="sheet-item" @click="doSetRole('admin')">设为管理员</div>
-        <div v-if="canSetRole && memberAction.role === 'admin'" class="sheet-item" @click="doSetRole('member')">取消管理员</div>
+        <div v-if="canTransfer" class="sheet-item" @click="confirmTransfer = true">转让群主</div>
         <div v-if="canRemoveTarget" class="sheet-item danger" @click="doRemove">移出{{ state.chat.is_channel ? '频道' : '群组' }}</div>
         <div class="sheet-item sheet-cancel" @click="memberAction = null">取消</div>
+      </div>
+    </div>
+
+    <!-- ═══ 转让群主确认（转让后本人降为管理员，不可撤销） ═══ -->
+    <div v-if="confirmTransfer" class="dialog-overlay" @click.self="confirmTransfer = false">
+      <div class="dialog">
+        <div class="dialog-title">转让群主</div>
+        <div class="dialog-body">
+          确定把群主转让给「{{ memberAction ? nameOf(memberAction) : '' }}」吗？<br>
+          <span style="color:#E53935">转让后你将失去群主权限，此操作不可撤销。</span>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="confirmTransfer = false">取消</button>
+          <button class="btn-text" style="font-weight:600;color:#E53935" @click="doTransfer">转让</button>
+        </div>
       </div>
     </div>
 
@@ -141,7 +154,7 @@
 </template>
 
 <script>
-import { state, myChatRole, renameGroup, addMembers, removeMember, setMemberRole, changeGroupAvatar, dissolveGroup } from '../store'
+import { state, myChatRole, renameGroup, addMembers, removeMember, changeGroupAvatar, dissolveGroup, transferOwnership } from '../store'
 import { avatarColor, avatarSrc, convAvatar, memberName, memberUid, memberAvatar } from '../utils/format'
 
 export default {
@@ -156,7 +169,8 @@ export default {
       addIds: [],
       memberAction: null,
       confirmLeave: false,
-      confirmDissolve: false
+      confirmDissolve: false,
+      confirmTransfer: false
     }
   },
   computed: {
@@ -181,17 +195,17 @@ export default {
       return !!(state.chat && state.chat.dissolved_at)
     },
     canManage() {
-      return this.myRole === 'owner' || this.myRole === 'admin'
+      return this.myRole === 'owner'
     },
-    canSetRole() {
-      return this.myRole === 'owner' && this.memberAction && this.uidOf(this.memberAction) !== state.me.id
+    /** 转让群主：仅群主可操作，目标不能是自己，也不能是现群主（兜底） */
+    canTransfer() {
+      return this.myRole === 'owner' && this.memberAction && this.uidOf(this.memberAction) !== state.me.id && this.memberAction.role !== 'owner'
     },
     canRemoveTarget() {
       if (!this.memberAction) return false
       if (this.uidOf(this.memberAction) === state.me.id) return false
       if (this.memberAction.role === 'owner') return false
-      if (this.myRole === 'owner') return true
-      return this.myRole === 'admin' && this.memberAction.role === 'member'
+      return this.myRole === 'owner'
     },
     addableContacts() {
       const inGroup = this.memberList.map(m => this.uidOf(m))
@@ -209,6 +223,7 @@ export default {
     /** 原生返回键：先关本页内部弹层（解散/退群确认→成员操作→添加成员→编辑资料），消费掉事件 */
     onNativeBack(e) {
       if (this.confirmDissolve) { this.confirmDissolve = false; e.preventDefault(); return }
+      if (this.confirmTransfer) { this.confirmTransfer = false; e.preventDefault(); return }
       if (this.confirmLeave)    { this.confirmLeave = false; e.preventDefault(); return }
       if (this.memberAction)    { this.memberAction = null; e.preventDefault(); return }
       if (this.showAdd)         { this.showAdd = false; e.preventDefault(); return }
@@ -252,14 +267,17 @@ export default {
     onMemberTap(m) {
       if (this.isDissolved) return // 已解散群不再允许成员管理操作
       if (this.uidOf(m) === state.me.id) return // 自己用底部退群按钮
-      if (this.canSetRole || (this.myRole === 'admin' && m.role === 'member') || (this.myRole === 'owner' && m.role !== 'owner')) {
+      if (this.myRole === 'owner' && m.role !== 'owner') {
         this.memberAction = m
       }
     },
-    async doSetRole(role) {
+    /** 转让群主：确认后调用接口，成员菜单一并收起 */
+    async doTransfer() {
       const m = this.memberAction
+      this.confirmTransfer = false
       this.memberAction = null
-      await setMemberRole(this.uidOf(m), role)
+      if (!m) return
+      await transferOwnership(this.uidOf(m))
     },
     async doRemove() {
       const m = this.memberAction

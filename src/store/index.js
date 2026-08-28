@@ -461,6 +461,14 @@ onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
       showToast('该群组已被解散')
     }
   }
+  // 群主变更（owner 转让群）：当前打开的群重拉成员列表，界面角色徽标/操作菜单即时刷新
+  if (p && p.reason === 'owner_changed') {
+    const cid = p.conversation_id || (p.conversation && p.conversation.id)
+    if (state.chat && String(state.chat.id) === String(cid)) {
+      loadGroupMembers()
+      showToast('群主已变更')
+    }
+  }
   scheduleConvReload()
 })
 onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
@@ -794,7 +802,7 @@ export async function loadGroupMembers() {
   }
 }
 
-/** 当前会话里我的角色：owner | admin | member（私聊返回 member） */
+/** 当前会话里我的角色：owner | member（私聊返回 member） */
 export function myChatRole() {
   const list = Array.isArray(state.groupMembers) ? state.groupMembers : []
   const m = list.find(x => String(memberUid(x)) === String(state.me.id))
@@ -884,25 +892,6 @@ export async function removeMember(uid) {
   }
 }
 
-export async function setMemberRole(uid, role) {
-  if (state.demoMode) {
-    const m = (DEMO.groupMembers[state.chat.id] || []).find(x => x.user_id === uid)
-    if (m) m.role = role
-    state.groupMembers = (DEMO.groupMembers[state.chat.id] || []).slice()
-    showToast('角色已更新（模拟）')
-    return true
-  }
-  try {
-    await api.setGroupMemberRole(state.chat.id, uid, role)
-    await loadGroupMembers()
-    showToast('角色已更新')
-    return true
-  } catch (e) {
-    showToast(e.message)
-    return false
-  }
-}
-
 /** 群主解散群（解散即焚，不可恢复）：成功后给会话打 dissolved 标记并关闭聊天页 */
 export async function dissolveGroup() {
   if (!state.chat) return false
@@ -925,6 +914,30 @@ export async function dissolveGroup() {
     state.showChatInfo = false
     closeChat()
     showToast('群组已解散')
+    return true
+  } catch (e) {
+    showToast(e.message)
+    return false
+  }
+}
+
+/** 群主转让群：老群主自动降为管理员，新群主须为本群成员（不能转让给自己） */
+export async function transferOwnership(uid) {
+  if (!state.chat) return false
+  if (state.demoMode) {
+    const arr = DEMO.groupMembers[state.chat.id] || []
+    const oldO = arr.find(x => x.role === 'owner')
+    const newO = arr.find(x => String(x.user_id) === String(uid))
+    if (oldO) oldO.role = 'member'
+    if (newO) newO.role = 'owner'
+    state.groupMembers = arr.slice()
+    showToast('群主已转让（模拟）')
+    return true
+  }
+  try {
+    await api.transferGroup(state.chat.id, uid)
+    await loadGroupMembers()
+    showToast('群主已转让')
     return true
   } catch (e) {
     showToast(e.message)
