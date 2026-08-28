@@ -122,6 +122,28 @@
         <div class="sheet-item sheet-cancel" @click="receiptMsg = null">关闭</div>
       </div>
     </div>
+
+    <!-- 文件在线预览层（Word / Excel） -->
+    <div v-if="preview.show" class="preview-mask">
+      <div class="preview-head">
+        <div class="preview-close" @click="closePreview">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </div>
+        <div class="preview-title">{{ preview.name }}</div>
+        <div class="preview-dl" @click="downloadPreview">下载</div>
+      </div>
+      <div class="preview-body">
+        <div v-if="preview.loading" class="preview-tip">加载中…</div>
+        <div v-else-if="preview.error" class="preview-tip">{{ preview.error }}<div><span class="preview-tip-btn" @click="downloadPreview">下载到本地查看</span></div></div>
+        <div v-else-if="preview.kind === 'word'" ref="previewBox" class="preview-doc"></div>
+        <template v-else>
+          <div v-if="preview.sheets.length > 1" class="preview-sheet-bar">
+            <div v-for="(s, i) in preview.sheets" :key="i" class="preview-sheet-tab" :class="{ on: i === preview.activeSheet }" @click="preview.activeSheet = i">{{ s.name }}</div>
+          </div>
+          <div class="preview-doc preview-xlsx" v-html="preview.sheets[preview.activeSheet] ? preview.sheets[preview.activeSheet].html : ''"></div>
+        </template>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -129,8 +151,10 @@
 import { nextTick } from 'vue'
 import { state, closeChat, setBurn, sendText, sendFile, recallMessage, showToast, editMessage, openChatInfo, asArray } from '../store'
 import { api } from '../api'
+import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
 import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
+import { renderSheetHtml } from '../utils/xlsxRender'
 
 export default {
   name: 'ChatRoom',
@@ -145,6 +169,7 @@ export default {
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
+      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0 }, // 文件在线预览
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
       newMsgPill: false    // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
     }
@@ -196,6 +221,7 @@ export default {
   methods: {
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
     onNativeBack(e) {
+      if (this.preview.show)      { this.preview.show = false; e.preventDefault(); return }
       if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
       if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
       if (this.showBurnSheet)     { this.showBurnSheet = false; e.preventDefault(); return }
@@ -353,8 +379,65 @@ export default {
       e.target.value = ''
       if (file) sendFile(file)
     },
+    /** 点击文件消息：Word/Excel 在线预览，其他类型维持原下载/打开逻辑 */
     openFile(m) {
-      if (m.file_url) window.open(fileURL(m.file_url), '_blank')
+      if (!m.file_url) return
+      const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
+      if (ext === 'docx') this.startPreview(m, 'word')
+      else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
+      else window.open(fileURL(m.file_url), '_blank')
+    },
+    /** 在线预览：拉取文件 blob → docx-preview 渲染 Word / SheetJS 渲染 Excel（库均按需动态加载，不进主包） */
+    async startPreview(m, kind) {
+      this.preview = { show: true, kind, name: m.file_name || '附件', url: fileURL(m.file_url), loading: true, error: '', sheets: [], activeSheet: 0 }
+      if (state.demoMode) { this.preview.loading = false; this.preview.error = '演示模式暂不支持在线预览'; return }
+      let blob
+      try {
+        blob = await http.get(this.preview.url, { responseType: 'blob', timeout: 30000 })
+      } catch (e) {
+        this.preview.loading = false
+        this.preview.error = '文件获取失败'
+        return
+      }
+      try {
+        if (kind === 'word') {
+          const { renderAsync } = await import('docx-preview')
+          this.preview.loading = false
+          await nextTick()
+          await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true })
+          // 纸张比屏幕宽时整页缩放适配（Chrome/WebView 支持 zoom，布局随缩放重排），观感同微信
+          const box = this.$refs.previewBox
+          const pw = box ? box.clientWidth : 0
+          if (pw > 0) box.querySelectorAll('section.docx').forEach(sec => {
+            if (sec.offsetWidth > pw) sec.style.zoom = (pw / sec.offsetWidth).toFixed(3)
+          })
+        } else {
+          const buf = await blob.arrayBuffer()
+          const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
+          if (ext === 'xlsx') {
+            // xlsx：exceljs 读取样式，自渲染还原原生 Excel 观感（颜色/边框/合并/列宽行高/数字格式）
+            const ExcelJS = await import('exceljs')
+            const wb = new ExcelJS.Workbook()
+            await wb.xlsx.load(buf)
+            this.preview.sheets = wb.worksheets.map(ws => ({ name: ws.name, html: renderSheetHtml(ws) }))
+          } else {
+            // xls 老格式：SheetJS 兜底（无样式，数据+网格线）
+            const XLSX = await import('xlsx')
+            const wb = XLSX.read(buf, { type: 'array' })
+            this.preview.sheets = wb.SheetNames.map(n => ({ name: n, html: XLSX.utils.sheet_to_html(wb.Sheets[n]) }))
+          }
+          if (!this.preview.sheets.length) throw new Error('empty workbook')
+          this.preview.loading = false
+        }
+      } catch (e) {
+        console.warn('[preview] render fail', e)
+        this.preview.loading = false
+        this.preview.error = '该文件无法预览'
+      }
+    },
+    closePreview() { this.preview.show = false },
+    downloadPreview() {
+      if (this.preview.url) window.open(this.preview.url, '_blank')
     },
     onMsgTap(m) {
       this.msgAction = m
@@ -386,4 +469,29 @@ export default {
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
 .dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }
+/* ── 文件在线预览层 ── */
+.preview-mask { position: absolute; inset: 0; z-index: 45; background: #f6f7f9; display: flex; flex-direction: column; }
+.preview-head { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; background: var(--tg-bg); border-bottom: 1px solid var(--tg-border); flex-shrink: 0; }
+.preview-close { color: var(--tg-text); cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
+.preview-close:active { background: var(--tg-gray-bg); }
+.preview-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--tg-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preview-dl { color: var(--tg-blue); font-size: 14px; font-weight: 500; cursor: pointer; flex-shrink: 0; padding: 6px 8px; }
+.preview-body { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
+.preview-tip { text-align: center; color: var(--tg-text-secondary); padding: 70px 20px 0; font-size: 14px; }
+.preview-tip-btn { display: inline-block; margin-top: 16px; color: #fff; background: var(--tg-blue); border-radius: 8px; padding: 9px 20px; font-size: 14px; cursor: pointer; }
+.preview-doc { background: #fff; min-height: 100%; }
+/* docx-preview：灰底白纸效果 */
+.preview-doc :deep(.docx-wrapper) { background: #f6f7f9 !important; padding: 12px 0 !important; }
+.preview-doc :deep(.docx-wrapper > section.docx) { box-shadow: 0 1px 4px rgba(0,0,0,.08) !important; margin-bottom: 12px !important; }
+/* SheetJS 表格（xls 兜底） */
+.preview-xlsx { padding: 10px; }
+.preview-xlsx :deep(table) { border-collapse: collapse; background: #fff; font-size: 13px; width: max-content; min-width: calc(100% - 20px); }
+.preview-xlsx :deep(td), .preview-xlsx :deep(th) { border: 1px solid #dde1e6; padding: 5px 10px; white-space: pre-wrap; word-break: break-word; min-width: 64px; color: #222; }
+/* exceljs 自渲染表格（xlsx 带样式还原）：fixed 布局严格按 Excel 列宽，超出截断同 Excel */
+.preview-xlsx :deep(.xr-table) { table-layout: fixed; width: max-content; }
+.preview-xlsx :deep(.xr-table td) { border: 1px solid #e3e6ea; padding: 3px 8px; overflow: hidden; min-width: 0; background: #fff; }
+.preview-xlsx :deep(.xr-empty) { color: #999; padding: 40px; text-align: center; }
+.preview-sheet-bar { display: flex; gap: 6px; padding: 8px 10px; overflow-x: auto; background: var(--tg-bg); border-bottom: 1px solid var(--tg-border); position: sticky; top: 0; z-index: 2; }
+.preview-sheet-tab { flex-shrink: 0; font-size: 13px; padding: 5px 13px; border-radius: 14px; background: var(--tg-gray-bg); color: var(--tg-text-secondary); cursor: pointer; }
+.preview-sheet-tab.on { background: var(--tg-blue); color: #fff; }
 </style>
