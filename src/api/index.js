@@ -29,6 +29,7 @@ export const api = {
   // ── 端到端加密（E2E） ──
   uploadIdentityKey: identity_pubkey => http.post('/keys', { identity_pubkey }), // 上传自己的 X25519 公钥（覆盖语义）
   getIdentityKey: userId => http.get(`/keys/${userId}`), // 查对方公钥（需同会话，404=对方未上传）
+  queryIdentityKeys: user_ids => http.post('/keys/query', { user_ids }), // 批量查公钥（TOFU 比对，1~500 个）
   editMessage: (id, content) => http.put(`/messages/${id}`, { content }),
   recallMessage: id => http.post(`/messages/${id}/recall`),
   revealMessage: id => http.post(`/messages/${id}/reveal`), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（返回完整 Message + burn_at/remain_seconds）

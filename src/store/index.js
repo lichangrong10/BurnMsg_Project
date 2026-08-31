@@ -7,9 +7,10 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, memberUid, memberUser, messagePreview } from '../utils/format'
+import { BURN_OPTIONS, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
+import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 
 export const state = reactive({
   view: storage.token ? 'main' : 'login', // login | changePwd | main
@@ -28,6 +29,8 @@ export const state = reactive({
   burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
   burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
+  tofuAlerts: [],        // TOFU 公钥变更告警横幅队列：[{user_id,name,oldPubkey,newPubkey}]
+  pendingKeyChanges: {}, // 待处理密钥变更清单（「稍后处理」收纳处，进会话不再弹横幅）：Map<userId,{user_id,name,oldPubkey,newPubkey,created_at}>
   e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
   e2eReady: false,       // 本机 E2E 密钥已就绪（已生成并上传公钥）
   pwdForm: { old: '', n1: '', n2: '' },
@@ -268,6 +271,97 @@ export function markBurned(m) {
   try { localStorage.setItem('bm_burned_msgs', JSON.stringify(map)) } catch { /* 忽略 */ }
 }
 
+/* ─── TOFU 公钥防替换：告警状态机（实际钉住/比对逻辑在 utils/tofu.js，这里只管 UI 触发的告警队列） ─── */
+/** 用户 id → 可读名字（告警文案用），依次查：自己 / 当前私聊对方 / 群成员 / 通讯录 */
+function tofuDisplayName(uid) {
+  if (uid == null) return '对方'
+  const sid = String(uid)
+  if (state.me && String(state.me.id) === sid) return '我'
+  if (state.chat && state.chat.type === 'private' && state.chat.other_user && String(state.chat.other_user.id) === sid) {
+    return memberName(state.chat.other_user) || '对方'
+  }
+  const gm = state.groupMembers.find(x => String(memberUid(x)) === sid)
+  if (gm) return memberName(gm) || '对方'
+  const ct = (state.contacts || []).find(x => String(x.id) === sid)
+  if (ct) return memberName(ct) || '对方'
+  return '对方'
+}
+
+/* ─── 待处理密钥变更（「稍后处理」收纳处）：持久化，跨会话/重启保留，进会话不再弹横幅 ─── */
+const PENDING_KEY = 'bm_pending_key_changes'
+function readPendingKeys() {
+  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '{}') } catch (e) { return {} }
+}
+function writePendingKeys(map) {
+  state.pendingKeyChanges = map
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(map)) } catch (e) { /* 忽略 */ }
+}
+// 启动即读入内存（供聊天页右上角「密钥待办」与 raiseTofuAlert 拦截判断）
+state.pendingKeyChanges = readPendingKeys()
+
+/** 新增/更新一条公钥变更告警（同 user 去重，仅刷新密钥字段）；已纳入「待办」的 user 不再弹横幅，只刷新待办里的最新密钥 */
+export function raiseTofuAlert(user_id, oldPubkey, newPubkey) {
+  if (user_id == null) return
+  const sid = String(user_id)
+  const pend = state.pendingKeyChanges[sid]
+  if (pend) {
+    pend.oldPubkey = oldPubkey
+    pend.newPubkey = newPubkey
+    writePendingKeys({ ...state.pendingKeyChanges })
+    return
+  }
+  const exist = state.tofuAlerts.find(a => String(a.user_id) === sid)
+  if (exist) {
+    exist.oldPubkey = oldPubkey
+    exist.newPubkey = newPubkey
+    return
+  }
+  state.tofuAlerts.unshift({ user_id: sid, name: tofuDisplayName(sid), oldPubkey, newPubkey })
+}
+
+/** 用户点「确认信任新密钥」→ 更新本地钉住 + 关横幅，加密发送恢复 */
+export function confirmTofuKey(user_id) {
+  const sid = String(user_id)
+  const a = state.tofuAlerts.find(x => String(x.user_id) === sid)
+  if (!a || !a.newPubkey) return
+  confirmNewKey(sid, a.newPubkey)
+  state.tofuAlerts = state.tofuAlerts.filter(x => String(x.user_id) !== sid)
+  showToast('已信任新密钥，加密发送恢复')
+}
+
+/** 用户点「稍后处理」→ 关横幅并收纳进右上角「密钥待办」，此后进会话/收到 key:changed 都不再弹横幅（对方再次轮换仅刷新待办） */
+export function dismissTofuAlert(user_id) {
+  const sid = String(user_id)
+  const a = state.tofuAlerts.find(x => String(x.user_id) === sid)
+  state.tofuAlerts = state.tofuAlerts.filter(x => String(x.user_id) !== sid)
+  if (a) {
+    state.pendingKeyChanges[sid] = { user_id: sid, name: a.name, oldPubkey: a.oldPubkey, newPubkey: a.newPubkey, created_at: Date.now() }
+    writePendingKeys({ ...state.pendingKeyChanges })
+  }
+  showToast('已收纳至聊天页右上角「密钥待办」')
+}
+
+/** 密钥待办：确认信任新密钥 → 更新本地钉住 + 移出待办，加密发送恢复 */
+export function confirmPendingKey(user_id) {
+  const sid = String(user_id)
+  const p = state.pendingKeyChanges[sid]
+  if (!p || !p.newPubkey) return
+  confirmNewKey(sid, p.newPubkey)
+  const map = { ...state.pendingKeyChanges }
+  delete map[sid]
+  writePendingKeys(map)
+  showToast('已信任新密钥，加密发送恢复')
+}
+
+/** 密钥待办：忽略本次变更 → 移出待办，不更新钉住（保持阻断，下次再检测到变更仍会提醒） */
+export function ignorePendingKey(user_id) {
+  const sid = String(user_id)
+  const map = { ...state.pendingKeyChanges }
+  delete map[sid]
+  writePendingKeys(map)
+  showToast('已忽略')
+}
+
 /* ─── 会话最新消息预览（缓存 + 从接口提取） ─── */
 const lastMsgCache = {}
 function getLastMsg(id) { return lastMsgCache[id] || '' }
@@ -384,6 +478,12 @@ export async function openChat(c) {
   if (!state.demoMode) { try { await api.markRead(c.id) } catch (e) { /* 静默 */ } }
   await loadMessages()
   if (!state.demoMode && c.type === 'private') loadReadWatermark()
+  // TOFU：进单聊会话时批量比对对方公钥（兜底 WS 断线期间对方轮换；changed 则告警横幅）
+  if (!state.demoMode && c.type === 'private' && c.other_user && c.other_user.id) {
+    syncPinnedKeys([c.other_user.id], state.me.id).then(changed => {
+      for (const it of changed) raiseTofuAlert(it.user_id, null, it.newPubkey)
+    }).catch(() => {})
+  }
 }
 
 /** 切换当前会话「明文加密」开关（仅单聊、非演示、设备支持时可用） */
@@ -610,6 +710,19 @@ function onWsReceiptRead(p) {
   if (t > state.readWatermark) state.readWatermark = t
 }
 
+/** key:changed：对方轮换公钥 → 拉新公钥本地比对，不一致则告警（自己轮换忽略；payload 只有 user_id+updated_at，不带公钥） */
+async function onWsKeyChanged(p) {
+  if (!p || state.demoMode) return
+  if (String(p.user_id) === String(state.me.id)) return // 自己轮换，忽略
+  try {
+    const vr = await verifyPeerKey(p.user_id)
+    if (vr.status === 'changed') {
+      raiseTofuAlert(p.user_id, vr.oldPubkey, vr.newPubkey)
+      showToast('⚠️ 检测到对方安全密钥变更')
+    }
+  } catch (e) { /* 静默：拉取失败不打扰，启动/进会话批量比对兜底 */ }
+}
+
 /* 模块加载时注册一次（WS 连接由 login/bootstrap 建立，断线重连后事件仍生效） */
 onWs(WS_EVENTS.MESSAGE_NEW, onWsNewMessage)
 onWs(WS_EVENTS.MESSAGE_EDITED, onWsEdited)
@@ -638,6 +751,7 @@ onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
   scheduleConvReload()
 })
 onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
+onWs(WS_EVENTS.KEY_CHANGED, onWsKeyChanged)
 
 /* ─── 系统公告（App 端只读展示） ─── */
 /** 刷新未读公告角标（启动/轮询/收到推送时调用，静默失败） */
@@ -825,14 +939,18 @@ export async function sendText(text) {
   if (state.e2eOn && state.e2eReady && state.chat.type === 'private') {
     try {
       const peerId = state.chat.other_user && state.chat.other_user.id
-      let peerPub
-      try {
-        peerPub = (await api.getIdentityKey(peerId)).identity_pubkey
-      } catch (e) {
-        showToast(/404|不存在|未上传|not\s*found/i.test(e && e.message || '') ? '对方尚未启用加密，请点锁图标关闭后明文发送' : ('获取对方密钥失败：' + (e && e.message)))
+      // TOFU：加密发送前必经公钥比对（首次钉住/一致放行/变更阻断+告警/缺失提示），不再裸调 GET /keys/:id
+      const vr = await verifyPeerKey(peerId)
+      if (vr.status === 'missing') {
+        showToast('对方尚未启用加密，请点锁图标关闭后明文发送')
         return false
       }
-      const enc = await encryptText(text, peerPub, state.chat.id)
+      if (vr.status === 'changed') {
+        raiseTofuAlert(peerId, vr.oldPubkey, vr.newPubkey)
+        showToast('⚠️ 对方安全密钥已变更，本次发送已阻断，请在顶部横幅确认')
+        return false
+      }
+      const enc = await encryptText(text, vr.pubkey, state.chat.id)
       const m = await api.sendMessage({ ...payload, content: '[加密消息]', ...enc })
       cachePlaintext(m.id, text) // 协议上发送方无法再解密自己的消息，明文本地缓存
       m.content = text

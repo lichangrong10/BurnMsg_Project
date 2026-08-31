@@ -9,13 +9,9 @@
         <div class="chat-title">{{ convName(state.chat) }}</div>
         <div class="chat-status">{{ chatStatus }}</div>
       </div>
-      <div class="topbar-icon" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
-        <svg v-if="state.burnSeconds && state.e2eOn" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="#FFB020" stroke-width="2"/>
-          <rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="#fff" stroke="#fff" stroke-width="1.2"/>
-          <path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="#fff" stroke-width="1.5" fill="none"/>
-        </svg>
-        <svg v-else width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#FFB020' : '#fff'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+      <div class="topbar-icon todo-btn" @click="showTofuTodo = true" title="密钥待办">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span v-if="pendingCount" class="todo-dot">{{ pendingCount > 9 ? '9+' : pendingCount }}</span>
       </div>
     </div>
 
@@ -82,13 +78,18 @@
     </div>
 
     <div v-if="!isDissolved" class="input-bar">
-      <button class="attach-btn" @click="$refs.fileInput.click()" title="发送图片/文件">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      <button class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
+      <input type="file" ref="galleryInput" accept="image/*,video/*" style="display:none" @change="onFilePicked">
+      <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
       <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      </button>
+      <button class="fire-btn" :class="{ active: state.burnSeconds }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       </button>
       <button class="send-btn" @click="send">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
@@ -104,6 +105,50 @@
           {{ o.label }}<span v-if="state.burnSeconds === o.v"> ✓</span>
         </div>
         <div class="sheet-item sheet-cancel" @click="showBurnSheet = false">取消</div>
+      </div>
+    </div>
+
+    <!-- ═══════ 附件选择面板（相册 / 拍摄 / 文件） ═══════ -->
+    <div v-if="showAttachSheet" class="overlay" @click.self="showAttachSheet = false">
+      <div class="sheet">
+        <div class="sheet-title">发送图片或文件</div>
+        <div class="attach-grid">
+          <div class="attach-item" @click="pickFrom('gallery')">
+            <div class="attach-ico" style="background:#2CAF4E"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
+            <div class="attach-label">相册</div>
+          </div>
+          <div class="attach-item" @click="pickFrom('camera')">
+            <div class="attach-ico" style="background:#FF9800"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></div>
+            <div class="attach-label">拍摄</div>
+          </div>
+          <div class="attach-item" @click="pickFrom('file')">
+            <div class="attach-ico" style="background:#3390EC"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg></div>
+            <div class="attach-label">文件</div>
+          </div>
+        </div>
+        <div class="sheet-item sheet-cancel" @click="showAttachSheet = false">取消</div>
+      </div>
+    </div>
+
+    <!-- ═══════ 密钥待办（「稍后处理」收纳的密钥变更） ═══════ -->
+    <div v-if="showTofuTodo" class="overlay" @click.self="showTofuTodo = false">
+      <div class="sheet">
+        <div class="sheet-title">{{ pendingCount ? pendingCount + ' 项密钥待确认' : '密钥待办' }}</div>
+        <div class="todo-scroll">
+          <div v-if="!pendingCount" class="todo-empty">暂无待处理的密钥变更</div>
+          <div v-for="p in pendingList" :key="p.user_id" class="todo-item">
+            <div class="todo-item-head">
+              <span class="todo-item-name">🔑 {{ p.name }}</span>
+              <span class="todo-item-time">{{ fmtClock(p.created_at) }}</span>
+            </div>
+            <div class="todo-item-tip">对方的端到端安全密钥已变更，确认信任后才能继续加密收发</div>
+            <div class="todo-item-actions">
+              <button class="todo-trust" @click="trustPending(p)">确认信任新密钥</button>
+              <button class="todo-ignore" @click="ignorePending(p)">忽略</button>
+            </div>
+          </div>
+        </div>
+        <div class="sheet-item sheet-cancel" @click="showTofuTodo = false">关闭</div>
       </div>
     </div>
 
@@ -163,7 +208,7 @@
 
 <script>
 import { nextTick } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -179,6 +224,8 @@ export default {
       burnOptions: BURN_OPTIONS,
       draft: '',
       showBurnSheet: false,
+      showAttachSheet: false,
+      showTofuTodo: false,
       msgAction: null,
       editing: null,       // 正在编辑的消息
       receiptMsg: null,    // 查看回执的消息
@@ -193,6 +240,12 @@ export default {
     }
   },
   computed: {
+    pendingCount() {
+      return Object.keys(state.pendingKeyChanges || {}).length
+    },
+    pendingList() {
+      return Object.values(state.pendingKeyChanges || {}).sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+    },
     canEditAction() {
       const m = this.msgAction
       return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text' && !m.is_encrypted)
@@ -244,7 +297,23 @@ export default {
       if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
       if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
       if (this.showBurnSheet)     { this.showBurnSheet = false; e.preventDefault(); return }
+      if (this.showTofuTodo)      { this.showTofuTodo = false; e.preventDefault(); return }
+      if (this.showAttachSheet)   { this.showAttachSheet = false; e.preventDefault(); return }
       if (this.editing)           { this.editing = null; e.preventDefault(); return }
+    },
+    pickFrom(kind) {
+      this.showAttachSheet = false
+      nextTick(() => {
+        const refs = { gallery: 'galleryInput', camera: 'cameraInput', file: 'fileInput' }
+        const el = this.$refs[refs[kind]]
+        if (el) el.click()
+      })
+    },
+    trustPending(p) {
+      confirmPendingKey(p.user_id)
+    },
+    ignorePending(p) {
+      ignorePendingKey(p.user_id)
     },
     closeChat,
     toggleE2E,
@@ -535,6 +604,28 @@ export default {
 }
 </script>
 <style scoped>
+/* ── 密钥待办（右上角） ── */
+.todo-btn { position: relative; }
+.todo-dot { position: absolute; top: 4px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px; background: #E53935; color: #fff; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; box-sizing: border-box; }
+/* ── 附件选择面板 ── */
+.attach-grid { display: flex; justify-content: space-around; padding: 6px 20px 14px; }
+.attach-item { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 8px 10px; cursor: pointer; border-radius: 12px; }
+.attach-item:active { background: var(--tg-gray-bg); }
+.attach-ico { width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 8px rgba(0,0,0,.12); }
+.attach-label { font-size: 13.5px; color: var(--tg-text); }
+/* ── 密钥待办面板 ── */
+.todo-scroll { overflow-y: auto; }
+.todo-empty { text-align: center; color: var(--tg-text-secondary); font-size: 14px; padding: 40px 20px; }
+.todo-item { margin: 0 16px 10px; padding: 13px 14px; background: var(--tg-gray-bg); border-radius: 12px; }
+.todo-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.todo-item-name { font-size: 15.5px; font-weight: 600; color: var(--tg-text); }
+.todo-item-time { font-size: 12px; color: var(--tg-text-secondary); flex-shrink: 0; }
+.todo-item-tip { font-size: 13px; color: var(--tg-text-secondary); line-height: 1.5; margin-top: 5px; }
+.todo-item-actions { display: flex; gap: 10px; margin-top: 11px; }
+.todo-trust { flex: 1; padding: 9px 0; border: none; border-radius: 8px; background: var(--tg-blue); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+.todo-trust:active { opacity: .85; }
+.todo-ignore { padding: 9px 16px; border: 1px solid var(--tg-border); border-radius: 8px; background: #fff; color: var(--tg-text-secondary); font-size: 14px; cursor: pointer; }
+.todo-ignore:active { background: var(--tg-gray-bg); }
 .edit-bar { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: var(--tg-bg); border-top: 1px solid var(--tg-border); border-left: 3px solid var(--tg-blue); }
 .edit-bar-title { font-size: 13px; color: var(--tg-blue); font-weight: 600; }
 .edit-bar-text { font-size: 13px; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -189,14 +189,15 @@ body {
 
 /* 输入栏 */
 .input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 7px 10px calc(7px + var(--safe-bottom)); background: var(--tg-bg); flex-shrink: 0; }
-.input-bar .attach-btn, .input-bar .burn-btn, .input-bar .send-btn {
+.input-bar .attach-btn, .input-bar .burn-btn, .input-bar .fire-btn, .input-bar .send-btn {
   width: 42px; height: 42px; border-radius: 50%; border: none; background: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .15s;
 }
-.input-bar .attach-btn:active, .input-bar .burn-btn:active { background: var(--tg-gray-bg); }
+.input-bar .attach-btn:active, .input-bar .burn-btn:active, .input-bar .fire-btn:active { background: var(--tg-gray-bg); }
 .input-bar .send-btn { background: var(--tg-blue); transition: opacity .15s, transform .12s; }
 .input-bar .send-btn:active { opacity: .8; transform: scale(.94); }
-.input-bar .burn-btn.active { background: rgba(224,112,0,.12); }
+.input-bar .burn-btn.active { background: rgba(51,144,236,.12); }
+.input-bar .fire-btn.active { background: rgba(224,112,0,.14); }
 .msg-textarea {
   flex: 1; border: none; outline: none; resize: none; font-size: 16px; line-height: 1.35;
   padding: 10px 4px; max-height: 120px; font-family: inherit; background: transparent;
@@ -244,3 +245,22 @@ body {
 .conv-menu-item:active { background: var(--tg-gray-bg); }
 .conv-menu-item.danger { color: #E53935; }
 .conv-menu-item.danger:active { background: rgba(229,57,53,.08); }
+/* ============ TOFU 公钥变更告警横幅 ============ */
+.tofu-banners {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+  display: flex; flex-direction: column;
+}
+.tofu-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; padding-top: calc(10px + var(--safe-top, 0px));
+  background: #fff7e6; border-bottom: 1px solid #ffd591;
+  color: #d46b08; font-size: 13px; line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.tofu-banner-text { flex: 1; min-width: 200px; }
+.tofu-btn {
+  flex: none; padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer;
+  background: #d46b08; color: #fff; font-size: 13px; font-weight: 600;
+}
+.tofu-btn.ghost { background: transparent; color: #d46b08; border: 1px solid #d46b08; }
+.tofu-btn:active { opacity: .85; }

@@ -33,11 +33,20 @@
 
   <!-- 全局 Toast -->
   <div v-if="state.toast" class="toast">{{ state.toast }}</div>
+
+  <!-- TOFU 公钥变更告警横幅（全局，覆盖在任意页面上方） -->
+  <div v-if="state.tofuAlerts.length" class="tofu-banners">
+    <div v-for="a in state.tofuAlerts" :key="a.user_id" class="tofu-banner">
+      <span class="tofu-banner-text">⚠️ 「{{ a.name }}」的安全密钥已变更（可能是对方换了手机/重装，也可能是密钥被替换）</span>
+      <button class="tofu-btn" @click="confirmTofuKey(a.user_id)">确认信任新密钥</button>
+      <button class="tofu-btn ghost" @click="dismissTofuAlert(a.user_id)">稍后处理</button>
+    </div>
+  </div>
 </template>
 
 <script>
 import axios from 'axios'
-import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, showToast } from './store'
+import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, showToast, confirmTofuKey, dismissTofuAlert } from './store'
 import { setupBackHandler } from './utils/back'
 import LoginView from './views/Login.vue'
 import ChangePwdView from './views/ChangePwd.vue'
@@ -70,6 +79,8 @@ export default {
     stopTimers()
   },
   methods: {
+    confirmTofuKey,
+    dismissTofuAlert,
     save() {
       if (saveServer(this.serverInput)) state.showServerDialog = false
     },
