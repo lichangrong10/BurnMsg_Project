@@ -14,6 +14,7 @@ const PRIV_RAW = 'bm_e2e_priv_raw'        // 本地 identity 私钥（raw 32 字
 const PRIV_JWK_LEGACY = 'bm_e2e_priv_jwk' // 旧版 JWK 存储（首次运行自动迁移到 raw）
 const PUB_KEY = 'bm_e2e_pub_b64'          // 本地 identity 公钥 base64
 const PT_CACHE = 'bm_e2e_pt'              // 明文缓存 { msgId: text }
+const FAIL_CACHE = 'bm_e2e_fail'          // 解密失败缓存 { msgId: true }：轮询重拉时同步回填稳定态，避免已点开的失败消息闪回中间态
 const ALGO = { name: 'X25519' }
 
 const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)))
@@ -190,6 +191,21 @@ export function getPlaintext(msgId) {
   if (msgId == null) return null
   const v = ptCache()[msgId]
   return v == null ? null : v
+}
+
+/* ── 解密失败缓存（与明文缓存同理，持久化到 localStorage，轮询重拉时同步回填，避免失败消息每轮重新解密闪中间态） ── */
+function failCache() { try { return JSON.parse(localStorage.getItem(FAIL_CACHE) || '{}') } catch (e) { return {} } }
+export function cachePlaintextFail(msgId) {
+  if (msgId == null) return
+  const c = failCache()
+  c[msgId] = true
+  const keys = Object.keys(c)
+  if (keys.length > 800) delete c[keys[0]] // 容量粗控
+  try { localStorage.setItem(FAIL_CACHE, JSON.stringify(c)) } catch (e) { /* 写满则静默 */ }
+}
+export function getPlaintextFail(msgId) {
+  if (msgId == null) return false
+  return failCache()[msgId] === true
 }
 
 /** 登出/强制登出时清除密钥对与明文缓存（防同设备切换账号串钥） */

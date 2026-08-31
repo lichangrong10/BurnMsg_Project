@@ -168,6 +168,15 @@ body {
 .bubble.out .msg-meta { color: rgba(255,255,255,.68); }
 .bubble .burn-chip { display: inline-flex; align-items: center; gap: 3px; color: #E07000; font-size: 11.5px; margin-top: 4px; font-weight: 500; }
 .bubble.out .burn-chip { color: #FFB763; }
+.bubble .burn-chip.enc { color: #E5484D; font-weight: 700; }
+.bubble.out .burn-chip.enc { color: #FFA39E; }
+.bubble .burn-blur { display: inline-block; color: #E07000; font-size: 14.5px; font-weight: 500; cursor: pointer; }
+.bubble.out .burn-blur { color: #FFB763; }
+.bubble .burn-blur.enc { color: #E5484D; font-weight: 600; }
+.bubble.out .burn-blur.enc { color: #FFA39E; }
+.burn-blur:active { opacity: .7; }
+.burn-blur .blur-ico { display: inline-block; vertical-align: -2px; flex-shrink: 0; }
+.burn-chip .chip-ico { display: inline-block; vertical-align: -1px; flex-shrink: 0; }
 .msg-recalled { font-style: italic; color: var(--tg-text-secondary); font-size: 14px; }
 .bubble.out .msg-recalled { color: rgba(255,255,255,.72); }
 .msg-file { display: flex; align-items: center; gap: 10px; min-width: 200px; }
@@ -233,3 +242,5 @@ body {
   cursor: pointer; white-space: nowrap;
 }
 .conv-menu-item:active { background: var(--tg-gray-bg); }
+.conv-menu-item.danger { color: #E53935; }
+.conv-menu-item.danger:active { background: rgba(229,57,53,.08); }

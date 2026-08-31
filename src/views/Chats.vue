@@ -33,13 +33,14 @@
     <div v-if="menu" class="conv-menu-overlay" @click="closeMenu" @contextmenu.prevent="closeMenu">
       <div class="conv-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @click.stop>
         <div class="conv-menu-item" @click="onTogglePin">{{ menu.conv.pinned ? '取消置顶' : '置顶会话' }}</div>
+        <div class="conv-menu-item danger" @click="onDeleteConv">删除会话</div>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { state, openChat, togglePin } from '../store'
+import { state, openChat, togglePin, deleteConversation } from '../store'
 import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
 
 export default {
@@ -97,6 +98,11 @@ export default {
     onTogglePin() {
       const c = this.menu && this.menu.conv
       if (c) togglePin(c)
+      this.closeMenu()
+    },
+    onDeleteConv() {
+      const c = this.menu && this.menu.conv
+      if (c) deleteConversation(c)
       this.closeMenu()
     },
     touchStart(e, c) {

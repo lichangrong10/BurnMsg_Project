@@ -9,14 +9,19 @@
         <div class="chat-title">{{ convName(state.chat) }}</div>
         <div class="chat-status">{{ chatStatus }}</div>
       </div>
-      <div class="topbar-icon" @click="showBurnSheet = true" title="阅后即焚">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#FFB020' : '#fff'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+      <div class="topbar-icon" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
+        <svg v-if="state.burnSeconds && state.e2eOn" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="#FFB020" stroke-width="2"/>
+          <rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="#fff" stroke="#fff" stroke-width="1.2"/>
+          <path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="#fff" stroke-width="1.5" fill="none"/>
+        </svg>
+        <svg v-else width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#FFB020' : '#fff'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       </div>
     </div>
 
     <div v-if="state.burnSeconds" class="burn-banner">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-      阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁
+      阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="state.e2eOn"> · 明文加密（端到端密文）</span>
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
@@ -27,6 +32,8 @@
           <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
+            <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
+            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico">🔥</span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <img class="msg-image" :src="fileURL(m.file_url)" @load="scrollBottom">
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
@@ -41,15 +48,18 @@
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
             <template v-else>
-              <template v-if="isEnc(m) && reveal[e2eKey(m)]"><span class="e2e-lock" title="端到端加密消息">🔒 </span>{{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
-              <template v-else-if="isEnc(m)"><span class="e2e-reveal">🔒 加密消息 · 点击查看</span></template>
+              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><span class="e2e-lock" title="端到端加密消息">🔒 </span>{{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
+              <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal">🔒 加密消息 · 点击查看</span></template>
               <template v-else>{{ m.content }}</template>
             </template>
             <span class="msg-meta">
               <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
               <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
             </span>
-            <div v-if="m.destroy_at && !m.is_recalled" class="burn-chip">🔥 {{ burnCountdown(m) }}</div>
+            <div v-if="burnVisible(m)" class="burn-chip" :class="{ enc: isEnc(m) }">
+              <svg v-if="isEnc(m)" class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2.2"/><rect x="9.8" y="11.7" width="4.4" height="3.6" rx="1" fill="currentColor"/><path d="M10.8 11.7V9.5a1.2 1.2 0 0 1 2.4 0v2.2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+              <span v-else>🔥</span>{{ burnCountdown(m) }}
+            </div>
           </div>
         </div>
       </template>
@@ -76,7 +86,7 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
-      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? '加密消息 · 端到端' : '消息'" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
+      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       </button>
@@ -153,12 +163,13 @@
 
 <script>
 import { nextTick } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, recallMessage, showToast, editMessage, openChatInfo, asArray, toggleE2E } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
 import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
+import { copyText } from '../utils/clipboard'
 
 export default {
   name: 'ChatRoom',
@@ -268,16 +279,45 @@ export default {
       return avatarSrc(this.senderInfo(m))
     },
     burnCountdown(m) {
-      const left = Math.max(0, new Date(m.destroy_at) - state.nowTick)
+      // 本地倒计时优先：reveal / 历史加载时由后端 remain_seconds 种入 store.burnLeft，摆脱客户端-服务端时钟偏差（10 秒变 20 秒根因）
+      const local = (m.id != null) ? state.burnLeft[m.id] : undefined
+      if (local != null) return local <= 0 ? '已焚毁' : this.fmtBurnLeft(local)
+      // 兜底：demo / 旧数据 / 未点开但已有截止时间，用 burn_at（个人截止）或 destroy_at 绝对时间
+      const endStr = m.burn_at || m.destroy_at
+      if (!endStr) return ''
+      const left = Math.max(0, new Date(endStr) - state.nowTick)
       if (left <= 0) {
-        nextTick(() => { state.messages = state.messages.filter(x => x.id !== m.id) })
         return '已焚毁'
       }
-      const s = Math.ceil(left / 1000)
+      return this.fmtBurnLeft(Math.ceil(left / 1000))
+    },
+    fmtBurnLeft(s) {
       if (s < 60) return s + 's 后焚毁'
       if (s < 3600) return Math.ceil(s / 60) + 'min 后焚毁'
       if (s < 86400) return Math.ceil(s / 3600) + 'h 后焚毁'
       return Math.ceil(s / 86400) + 'd 后焚毁'
+    },
+    /** 是否焚毁消息（burn_ttl_seconds 或 destroy_at 任一即视为焚毁消息） */
+    isBurnMsg(m) {
+      return !!(m && (m.burn_ttl_seconds != null || m.destroy_at != null))
+    },
+    /** 是否已焚毁：倒计时归零后保留「已焚毁」占位（类似撤回），不再显示正文/倒计时 */
+    isBurned(m) {
+      if (!m) return false
+      if (m.is_burned === true) return true
+      const local = (m.id != null) ? state.burnLeft[m.id] : undefined
+      if (local != null) return local <= 0
+      const endStr = m.burn_at || m.destroy_at
+      if (!endStr) return false
+      return new Date(endStr).getTime() <= state.nowTick
+    },
+    /** 焚毁消息的「马赛克占位」态：点开前，点击触发 reveal 拉取内容 */
+    isBlurredBurn(m) {
+      return !!(m && m.is_blurred === true)
+    },
+    /** 是否显示焚毁倒计时角标：非撤回、已点开（非占位）、且有截止时间 */
+    burnVisible(m) {
+      return !!(m && !m.is_recalled && !this.isBurned(m) && !m.is_blurred && (m.burn_at || m.destroy_at))
     },
     autoGrow(e) {
       const el = e.target
@@ -460,7 +500,8 @@ export default {
       return !!(m && (m.e2e === true || m.e2eFail === true || m.is_encrypted === true))
     },
     onBubbleClick(m) {
-      if (this.isEnc(m)) { this.revealE2E(m); return }
+      if (this.isBlurredBurn(m)) { revealBurn(m); return } // 焚毁占位卡：点开才焚，reveal 拉完整内容
+      if (this.isEnc(m) && !this.isBurnMsg(m)) { this.revealE2E(m); return }
       this.onMsgTap(m)
     },
     revealE2E(m) {
@@ -480,9 +521,10 @@ export default {
       }, 1000)
     },
     copyMsg() {
-      const t = this.msgAction.content || ''
-      if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => showToast('已复制'))
+      const t = (this.msgAction.content || this.msgAction.file_name || '').trim()
       this.msgAction = null
+      if (!t) { showToast('无可复制内容'); return }
+      copyText(t).then(ok => showToast(ok ? '已复制' : '复制失败'))
     },
     recallMsg() {
       const m = this.msgAction

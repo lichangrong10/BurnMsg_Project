@@ -9,7 +9,7 @@ import { api } from '../api'
 import { DEMO } from '../mock/demo'
 import { BURN_OPTIONS, memberUid, memberUser, messagePreview } from '../utils/format'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
-import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, clearE2E } from '../utils/e2e'
+import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 
 export const state = reactive({
   view: storage.token ? 'main' : 'login', // login | changePwd | main
@@ -26,6 +26,8 @@ export const state = reactive({
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
   burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
+  burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
+  burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
   e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
   e2eReady: false,       // 本机 E2E 密钥已就绪（已生成并上传公钥）
   pwdForm: { old: '', n1: '', n2: '' },
@@ -88,6 +90,24 @@ function normalizeMsg(m) {
     if (alt != null) m.sender_id = alt
   }
   return m
+}
+
+/* 焚毁本地倒计时种入：优先用后端返回的 remain_seconds（相对剩余秒数），
+   彻底摆脱 burn_at 绝对时间与客户端本地时钟不同步导致的倒计时偏移（如 10 秒变 20 秒）。
+   只在尚未种入时种入一次，之后由全局秒表本地递减，避免轮询重拉时倒计时回跳。 */
+function seedBurnLeft(m) {
+  if (!m || m.id == null || m.is_blurred) return false
+  if (state.burnLeft[m.id] != null) return false
+  state.burnMsgs[String(m.id)] = { id: String(m.id), sender_id: m.sender_id, created_at: m.created_at, conversation_id: (m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id)) }
+  if (m.remain_seconds != null) {
+    state.burnLeft[m.id] = Math.max(1, Math.round(m.remain_seconds))
+    return true
+  }
+  if (m.burn_at) { // 兜底：后端未返回 remain_seconds 时用绝对时间换算一次
+    const left = Math.ceil((new Date(m.burn_at) - Date.now()) / 1000)
+    if (left > 0) { state.burnLeft[m.id] = Math.max(1, left); return true }
+  }
+  return false
 }
 
 /* 调试日志用：一条消息的 id + 解析后的时间（解析失败时打印原始值，便于定位后端字段名/格式问题） */
@@ -208,6 +228,46 @@ export function togglePin(c) {
   showToast(c.pinned ? '已置顶' : '已取消置顶')
 }
 
+/* ─── 会话删除（本地隐藏，不调用后端删除；收到新消息也不恢复显示） ─── */
+export function hiddenConvIds() {
+  try { return JSON.parse(localStorage.getItem('bm_hidden_convs') || '[]') } catch { return [] }
+}
+export function deleteConversation(c) {
+  if (!c) return
+  const id = String(c.id)
+  const ids = hiddenConvIds().map(String)
+  if (!ids.includes(id)) ids.push(id)
+  try { localStorage.setItem('bm_hidden_convs', JSON.stringify(ids)) } catch { /* 忽略 */ }
+  state.convs = state.convs.filter(x => String(x.id) !== id)
+  if (state.chat && String(state.chat.id) === id) closeChat()
+  showToast('已删除会话')
+}
+export function unhideConversation(id) {
+  if (id == null) return
+  const sid = String(id)
+  try {
+    const ids = hiddenConvIds().map(String).filter(x => x !== sid)
+    localStorage.setItem('bm_hidden_convs', JSON.stringify(ids))
+  } catch { /* 忽略 */ }
+}
+
+/* ─── 焚毁占位持久化（像撤回一样常驻：后端焚毁后不再返回该消息，本地记占位，轮询重拉时补回「此消息已焚毁」） ─── */
+export function burnedMsgMap() {
+  try { return JSON.parse(localStorage.getItem('bm_burned_msgs') || '{}') } catch { return {} }
+}
+export function markBurned(m) {
+  if (!m || m.id == null) return
+  if (m.is_burned !== undefined) m.is_burned = true
+  if (m.is_blurred !== undefined) m.is_blurred = false
+  const cid = String(m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id))
+  if (!cid || cid === 'null' || cid === 'undefined') return
+  const map = burnedMsgMap()
+  const arr = (map[cid] || []).filter(x => String(x.id) !== String(m.id))
+  arr.push({ id: String(m.id), sender_id: m.sender_id, created_at: m.created_at, conversation_id: cid })
+  map[cid] = arr
+  try { localStorage.setItem('bm_burned_msgs', JSON.stringify(map)) } catch { /* 忽略 */ }
+}
+
 /* ─── 会话最新消息预览（缓存 + 从接口提取） ─── */
 const lastMsgCache = {}
 function getLastMsg(id) { return lastMsgCache[id] || '' }
@@ -279,24 +339,28 @@ async function initE2E() {
 export async function loadConvs(quiet) {
   if (state.demoMode) {
     const ids = pinnedIds()
+    const hidden = hiddenConvIds().map(String)
     DEMO.convs.forEach(c => { c.pinned = ids.includes(c.id) })
-    state.convs = DEMO.convs
+    state.convs = DEMO.convs.filter(c => !hidden.includes(String(c.id)))
     return
   }
   try {
     const list = asArray(await api.getConversations())
     const ids = pinnedIds()
+    const hidden = hiddenConvIds().map(String)
     const prev = {}
     state.convs.forEach(c => { prev[c.id] = c })
-    state.convs = list.map(c => {
-      const old = prev[c.id]
-      return {
-        ...c,
-        unread: (old && old.unread) ?? c.unread ?? 0,
-        lastMsg: extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || '',
-        pinned: ids.includes(c.id)
-      }
-    })
+    state.convs = list
+      .map(c => {
+        const old = prev[c.id]
+        return {
+          ...c,
+          unread: (old && old.unread) ?? c.unread ?? 0,
+          lastMsg: extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || '',
+          pinned: ids.includes(c.id)
+        }
+      })
+      .filter(c => !hidden.includes(String(c.id)))
     if (!quiet) await fillMissingPreviews()
   } catch (e) { if (!quiet) showToast(e.message) }
 }
@@ -331,7 +395,8 @@ export function toggleE2E() {
   if (!state.e2eReady) { showToast('当前设备不支持端到端加密'); return }
   state.e2eOn = !state.e2eOn
   localStorage.setItem('bm_e2e_on_' + c.id, state.e2eOn ? '1' : '0')
-  showToast(state.e2eOn ? '已开启明文加密：消息将端到端加密发送' : '已关闭明文加密')
+  if (state.e2eOn && state.burnSeconds) showToast('已同时开启阅后焚毁与明文加密模式')
+  else showToast(state.e2eOn ? '已开启明文加密：消息将端到端加密发送' : '已关闭明文加密')
 }
 
 /** 私聊初始已读水位线：取本人最近一条消息的对方回执，已读则以该消息时间为水位 */
@@ -380,7 +445,14 @@ export async function loadMessages(quiet) {
     // 最新时间戳超过基线 → 有新消息到达（首次加载不算，滚底由 msgSeq 负责）
     if (newestStamp > lastNewestStamp) state.newMsgSeq++
     lastNewestStamp = Math.max(lastNewestStamp, newestStamp)
-    state.messages = sorted
+    const ghosts = burnedMsgMap()[String(cid)] || []
+    for (const g of ghosts) {
+      if (!sorted.some(x => String(x.id) === String(g.id))) {
+        sorted.push({ id: g.id, conversation_id: cid, sender_id: g.sender_id, created_at: g.created_at, is_burned: true })
+      }
+    }
+    state.messages = sortByTimeAsc(sorted)
+    sorted.forEach(seedBurnLeft) // 已点开未到期的焚毁消息：用后端 remain_seconds 种入本地倒计时
     syncRestorePlaintext(sorted) // 同步回填已缓存明文，避免轮询重拉时已解密消息闪回密文/占位
     decryptMessagesInList(sorted, cid) // 加密消息后台就地解密（有明文缓存时近乎零开销），不阻塞渲染
     syncChatPreview()
@@ -396,16 +468,17 @@ export async function loadMessages(quiet) {
 /** 同步恢复已缓存的加密明文：重拉/替换消息列表后先就地回填，避免渲染瞬间明文闪回密文（getPlaintext 为同步读 localStorage） */
 function syncRestorePlaintext(list) {
   for (const m of list) {
-    if (m.is_encrypted) {
+    if (m.is_encrypted && !m.is_blurred) {
       const cached = getPlaintext(m.id)
       if (cached != null) { m.content = cached; m.e2e = true }
+      else if (getPlaintextFail(m.id)) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
     }
   }
 }
 
 /** 批量解密列表中的加密消息：先查本地明文缓存，无缓存则拉发送者公钥走 ECDH 解密；失败置占位文案 */
 async function decryptMessagesInList(list, cid) {
-  const targets = list.filter(m => m.is_encrypted && !m.is_recalled)
+  const targets = list.filter(m => m.is_encrypted && !m.is_recalled && !m.is_blurred) // 马赛克占位的焚毁消息等 reveal 后再解密
   if (!targets.length || !(await e2eSupported())) return
   const pubCache = {} // 同一发送者公钥只查一次
   const getPub = async uid => {
@@ -418,6 +491,7 @@ async function decryptMessagesInList(list, cid) {
   const run = async m => {
     const cached = getPlaintext(m.id)
     if (cached != null) { m.content = cached; m.e2e = true; return }
+    if (getPlaintextFail(m.id)) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true; return }
     try {
       const pub = await getPub(m.sender_id)
       if (!pub) throw new Error('no pubkey')
@@ -426,6 +500,7 @@ async function decryptMessagesInList(list, cid) {
       m.content = text
       m.e2e = true
     } catch (e) {
+      cachePlaintextFail(m.id)
       m.content = '🔒 加密消息（本设备无法解密）'
       m.e2eFail = true
     }
@@ -468,9 +543,11 @@ async function onWsNewMessage(p) {
   const m = normalizeMsg({ ...(p.message || {}) })
   const cid = p.conversation_id || m.conversation_id
   if (!m.id || !cid) return
+  // 已删除（本地隐藏）的会话：新消息完全忽略，不响铃、不提示、不重新显示
+  if (hiddenConvIds().map(String).includes(String(cid))) return
   const mine = String(m.sender_id) === String(state.me.id)
   // 加密消息：先解密（或读本地明文缓存）再入列表，预览/toast 同样用明文
-  if (m.is_encrypted && !m.is_recalled) {
+  if (m.is_encrypted && !m.is_recalled && !m.is_blurred) {
     const cached = getPlaintext(m.id)
     if (cached != null) { m.content = cached; m.e2e = true }
     else if (!mine) {
@@ -480,7 +557,7 @@ async function onWsNewMessage(p) {
         cachePlaintext(m.id, text)
         m.content = text
         m.e2e = true
-      } catch (e) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+      } catch (e) { cachePlaintextFail(m.id); m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
     } else {
       // 本人其他设备发的加密消息：协议上本设备无 ephemeral 私钥无法解密
       m.content = '🔒 加密消息（发送于其他设备）'
@@ -717,7 +794,9 @@ export function setBurn(v) {
   state.burnSeconds = v
   if (v) {
     const o = BURN_OPTIONS.find(x => x.v === v)
-    showToast('阅后即焚：' + (o ? o.label : ''))
+    const label = o ? o.label : ''
+    if (state.e2eOn) showToast('已同时开启阅后焚毁与明文加密模式：密文将在 ' + label + ' 后销毁')
+    else showToast('阅后即焚：' + label)
   }
 }
 
@@ -732,9 +811,10 @@ function pushMsgDedup(m) {
 /** 发送文本消息，失败返回 false（调用方恢复草稿） */
 export async function sendText(text) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
-  if (state.burnSeconds) payload.destroy_at = new Date(Date.now() + state.burnSeconds * 1000).toISOString()
+  if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
   if (state.demoMode) {
-    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload }
+    // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
+    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: state.burnSeconds ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
     ;(DEMO.messages[state.chat.id] = DEMO.messages[state.chat.id] || []).push(m)
     state.messages.push(m)
     state.chat.lastMsg = text
@@ -794,7 +874,7 @@ export async function sendFile(file) {
   try {
     const up = await api.upload(file)
     const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
-    if (state.burnSeconds) payload.destroy_at = new Date(Date.now() + state.burnSeconds * 1000).toISOString()
+    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
   } catch (e) {
@@ -809,6 +889,41 @@ export async function recallMessage(m) {
     m.is_recalled = true
   } catch (e) {
     showToast(e.message)
+  }
+}
+
+/** 点开焚毁消息（点开才焚 v2）：调 reveal 拉取完整内容，就地回填明文/密文，开始个人焚毁倒计时 */
+export async function revealBurn(m) {
+  if (!m || m.id == null || state.demoMode) return false
+  try {
+    const full = await api.revealMessage(m.id) // 拦截器已解包 {code,message,data}，返回完整 Message
+    if (!full || typeof full !== 'object') throw new Error('reveal 返回异常')
+    Object.assign(m, normalizeMsg(full))
+    m.is_blurred = false
+    seedBurnLeft(m) // 用后端返回的 remain_seconds 启动本地倒计时（不用 burn_at 绝对时间，避免两端时钟不同步）
+    // 焚毁消息本身可能是 E2E 加密的：拿到密文后走本地解密（有明文缓存则直读）
+    if (m.is_encrypted && !m.is_recalled) {
+      const cached = getPlaintext(m.id)
+      if (cached != null) { m.content = cached; m.e2e = true }
+      else {
+        try {
+          const pub = (await api.getIdentityKey(m.sender_id)).identity_pubkey
+          const text = await decryptMessage(m, pub, state.chat && state.chat.id)
+          cachePlaintext(m.id, text)
+          m.content = text
+          m.e2e = true
+        } catch (e) { cachePlaintextFail(m.id); m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+      }
+    }
+    return true
+  } catch (e) {
+    const msg = (e && e.message) || ''
+    // 已焚毁/非焚毁/已撤回等业务态：占位卡已无意义，就地移除；网络错误保留占位卡可重试
+    if (/404|不存在|焚毁|400|非焚毁|撤回/i.test(msg)) {
+      markBurned(m)
+    }
+    showToast(msg || '点开失败')
+    return false
   }
 }
 
@@ -827,6 +942,7 @@ export async function startChatWith(u) {
   try {
     const c = await api.createPrivate(u.id)
     state.tab = 'chats'
+    unhideConversation(c.id) // 重新发起私聊：解除本地隐藏，会话回到列表
     await loadConvs(true)
     openChat({ ...c, other_user: u })
   } catch (e) {
@@ -1094,6 +1210,22 @@ export function saveServer(url) {
 const timers = []
 export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
+  // 焚毁本地倒计时秒表：每秒递减，到 0 移除消息（独立于绝对时钟，不受客户端-服务端时钟不同步影响）
+  timers.push(setInterval(() => {
+    const ids = Object.keys(state.burnLeft)
+    if (!ids.length) return
+    for (const id of ids) {
+      state.burnLeft[id] -= 1
+      if (state.burnLeft[id] <= 0) {
+        delete state.burnLeft[id]
+        const burned = state.messages.find(x => String(x.id) === String(id))
+        const snap = state.burnMsgs[id]
+        if (burned) { if (!burned.is_burned) markBurned(burned) }
+        else if (snap) markBurned(snap)
+        delete state.burnMsgs[id]
+      }
+    }
+  }, 1000))
   timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   timers.push(setInterval(() => { if (state.chat && !state.demoMode) loadMessages(true) }, 4000))
 }
