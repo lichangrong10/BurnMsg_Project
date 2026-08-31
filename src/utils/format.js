@@ -118,6 +118,7 @@ export function fmtSize(s) {
 export function messagePreview(m) {
   if (!m || typeof m !== 'object') return ''
   if (m.is_recalled) return '此消息已撤回'
+  if (m.is_encrypted || m.e2e === true || m.e2eFail === true) return '🔒 加密消息'
   switch (m.type) {
     case 'text': return m.content || ''
     case 'image': return '[图片]'

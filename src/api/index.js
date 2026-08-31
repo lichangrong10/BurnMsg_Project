@@ -26,6 +26,9 @@ export const api = {
   // ── 消息 ──
   getMessages: (conversationId, params = {}) => http.get(`/messages/${conversationId}`, { params: { limit: 50, ...params } }),
   sendMessage: payload => http.post('/messages', payload),
+  // ── 端到端加密（E2E） ──
+  uploadIdentityKey: identity_pubkey => http.post('/keys', { identity_pubkey }), // 上传自己的 X25519 公钥（覆盖语义）
+  getIdentityKey: userId => http.get(`/keys/${userId}`), // 查对方公钥（需同会话，404=对方未上传）
   editMessage: (id, content) => http.put(`/messages/${id}`, { content }),
   recallMessage: id => http.post(`/messages/${id}/recall`),
   markRead: conversationId => http.post(`/messages/${conversationId}/read`), // 注意：文档约定此处 id 为会话 ID

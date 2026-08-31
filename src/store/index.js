@@ -9,6 +9,7 @@ import { api } from '../api'
 import { DEMO } from '../mock/demo'
 import { BURN_OPTIONS, memberUid, memberUser, messagePreview } from '../utils/format'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
+import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, clearE2E } from '../utils/e2e'
 
 export const state = reactive({
   view: storage.token ? 'main' : 'login', // login | changePwd | main
@@ -25,6 +26,8 @@ export const state = reactive({
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
   burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
+  e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
+  e2eReady: false,       // 本机 E2E 密钥已就绪（已生成并上传公钥）
   pwdForm: { old: '', n1: '', n2: '' },
   pwdErr: '',
   pwdLoading: false,
@@ -163,6 +166,7 @@ export async function changePassword() {
 }
 
 export function logout() {
+  clearE2E() // 清除本机密钥对与明文缓存，防同设备切换账号串钥
   storage.clear()
   forceLogout()
 }
@@ -258,7 +262,18 @@ export async function bootstrap() {
       state.me = await api.getProfile()
       storage.user = state.me
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
+    initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
+}
+
+/** E2E 初始化：本地无密钥对则生成 X25519 key pair，随后上传公钥（覆盖语义，静默失败） */
+async function initE2E() {
+  try {
+    if (!(await e2eSupported())) { console.warn('[焚信] 当前环境不支持 X25519，端到端加密不可用'); return }
+    const pubB64 = await ensureIdentity()
+    await api.uploadIdentityKey(pubB64)
+    state.e2eReady = true
+  } catch (e) { console.warn('[焚信] E2E 初始化失败:', e && e.message) }
 }
 
 export async function loadConvs(quiet) {
@@ -300,10 +315,23 @@ export async function openChat(c) {
   state.messages = []
   state.groupMembers = []
   state.readWatermark = 0 // 重置已读水位线，私聊随后按回执重建
+  state.e2eOn = c.type === 'private' && localStorage.getItem('bm_e2e_on_' + c.id) === '1' // 恢复本会话加密开关
   if (c.type !== 'private') loadGroupMembers() // 预取群成员：消息发送者名称/头像、群管理页共用
   if (!state.demoMode) { try { await api.markRead(c.id) } catch (e) { /* 静默 */ } }
   await loadMessages()
   if (!state.demoMode && c.type === 'private') loadReadWatermark()
+}
+
+/** 切换当前会话「明文加密」开关（仅单聊、非演示、设备支持时可用） */
+export function toggleE2E() {
+  const c = state.chat
+  if (!c) return
+  if (state.demoMode) { showToast('演示模式不支持端到端加密'); return }
+  if (c.type !== 'private') { showToast('群聊/频道暂不支持端到端加密'); return }
+  if (!state.e2eReady) { showToast('当前设备不支持端到端加密'); return }
+  state.e2eOn = !state.e2eOn
+  localStorage.setItem('bm_e2e_on_' + c.id, state.e2eOn ? '1' : '0')
+  showToast(state.e2eOn ? '已开启明文加密：消息将端到端加密发送' : '已关闭明文加密')
 }
 
 /** 私聊初始已读水位线：取本人最近一条消息的对方回执，已读则以该消息时间为水位 */
@@ -353,6 +381,8 @@ export async function loadMessages(quiet) {
     if (newestStamp > lastNewestStamp) state.newMsgSeq++
     lastNewestStamp = Math.max(lastNewestStamp, newestStamp)
     state.messages = sorted
+    syncRestorePlaintext(sorted) // 同步回填已缓存明文，避免轮询重拉时已解密消息闪回密文/占位
+    decryptMessagesInList(sorted, cid) // 加密消息后台就地解密（有明文缓存时近乎零开销），不阻塞渲染
     syncChatPreview()
     if (!quiet) state.msgSeq++
   } catch (e) {
@@ -361,6 +391,47 @@ export async function loadMessages(quiet) {
   } finally {
     state.msgLoading = false
   }
+}
+
+/** 同步恢复已缓存的加密明文：重拉/替换消息列表后先就地回填，避免渲染瞬间明文闪回密文（getPlaintext 为同步读 localStorage） */
+function syncRestorePlaintext(list) {
+  for (const m of list) {
+    if (m.is_encrypted) {
+      const cached = getPlaintext(m.id)
+      if (cached != null) { m.content = cached; m.e2e = true }
+    }
+  }
+}
+
+/** 批量解密列表中的加密消息：先查本地明文缓存，无缓存则拉发送者公钥走 ECDH 解密；失败置占位文案 */
+async function decryptMessagesInList(list, cid) {
+  const targets = list.filter(m => m.is_encrypted && !m.is_recalled)
+  if (!targets.length || !(await e2eSupported())) return
+  const pubCache = {} // 同一发送者公钥只查一次
+  const getPub = async uid => {
+    const k = String(uid)
+    if (!(k in pubCache)) {
+      try { pubCache[k] = (await api.getIdentityKey(uid)).identity_pubkey } catch (e) { pubCache[k] = null }
+    }
+    return pubCache[k]
+  }
+  const run = async m => {
+    const cached = getPlaintext(m.id)
+    if (cached != null) { m.content = cached; m.e2e = true; return }
+    try {
+      const pub = await getPub(m.sender_id)
+      if (!pub) throw new Error('no pubkey')
+      const text = await decryptMessage(m, pub, cid)
+      cachePlaintext(m.id, text)
+      m.content = text
+      m.e2e = true
+    } catch (e) {
+      m.content = '🔒 加密消息（本设备无法解密）'
+      m.e2eFail = true
+    }
+  }
+  const queue = targets.slice()
+  await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await run(queue.shift()) })) // 并发 4
 }
 
 /* ─── WebSocket 实时事件 ─── */
@@ -392,12 +463,30 @@ function scheduleConvReload() {
 }
 
 /** message:new：当前会话去重追加 + 滚动吸附；其他会话只更新预览/未读并重拉列表 */
-function onWsNewMessage(p) {
+async function onWsNewMessage(p) {
   if (!p || state.demoMode) return
   const m = normalizeMsg({ ...(p.message || {}) })
   const cid = p.conversation_id || m.conversation_id
   if (!m.id || !cid) return
   const mine = String(m.sender_id) === String(state.me.id)
+  // 加密消息：先解密（或读本地明文缓存）再入列表，预览/toast 同样用明文
+  if (m.is_encrypted && !m.is_recalled) {
+    const cached = getPlaintext(m.id)
+    if (cached != null) { m.content = cached; m.e2e = true }
+    else if (!mine) {
+      try {
+        const pub = (await api.getIdentityKey(m.sender_id)).identity_pubkey
+        const text = await decryptMessage(m, pub, cid)
+        cachePlaintext(m.id, text)
+        m.content = text
+        m.e2e = true
+      } catch (e) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+    } else {
+      // 本人其他设备发的加密消息：协议上本设备无 ephemeral 私钥无法解密
+      m.content = '🔒 加密消息（发送于其他设备）'
+      m.e2eFail = true
+    }
+  }
   if (!mine) playMsgDing() // 收到对方消息：提示音（当前会话内外都播）
   if (state.chat && String(state.chat.id) === String(cid)) {
     // 去重：本人发送时 sendText 已 push 过同一条（WS 也会推给发送方多端）
@@ -651,6 +740,31 @@ export async function sendText(text) {
     state.chat.lastMsg = text
     state.chat.last_message_at = m.created_at
     return true
+  }
+  // 明文加密（E2E）：仅单聊 + 开关开启 + 密钥就绪；content 存占位，密文走 cipher_* 字段
+  if (state.e2eOn && state.e2eReady && state.chat.type === 'private') {
+    try {
+      const peerId = state.chat.other_user && state.chat.other_user.id
+      let peerPub
+      try {
+        peerPub = (await api.getIdentityKey(peerId)).identity_pubkey
+      } catch (e) {
+        showToast(/404|不存在|未上传|not\s*found/i.test(e && e.message || '') ? '对方尚未启用加密，请点锁图标关闭后明文发送' : ('获取对方密钥失败：' + (e && e.message)))
+        return false
+      }
+      const enc = await encryptText(text, peerPub, state.chat.id)
+      const m = await api.sendMessage({ ...payload, content: '[加密消息]', ...enc })
+      cachePlaintext(m.id, text) // 协议上发送方无法再解密自己的消息，明文本地缓存
+      m.content = text
+      m.e2e = true
+      pushMsgDedup(m)
+      state.chat.lastMsg = text
+      setLastMsg(state.chat.id, text)
+      return true
+    } catch (e) {
+      showToast(e.message)
+      return false
+    }
   }
   try {
     const m = await api.sendMessage(payload)

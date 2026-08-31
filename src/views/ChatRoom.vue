@@ -24,7 +24,7 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click="onMsgTap(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
@@ -40,7 +40,11 @@
               </div>
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
-            <template v-else>{{ m.content }}</template>
+            <template v-else>
+              <template v-if="isEnc(m) && reveal[e2eKey(m)]"><span class="e2e-lock" title="端到端加密消息">🔒 </span>{{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
+              <template v-else-if="isEnc(m)"><span class="e2e-reveal">🔒 加密消息 · 点击查看</span></template>
+              <template v-else>{{ m.content }}</template>
+            </template>
             <span class="msg-meta">
               <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
               <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
@@ -72,9 +76,9 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
-      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" placeholder="消息" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
-      <button class="burn-btn" :class="{ active: state.burnSeconds }" @click="showBurnSheet = true" title="阅后即焚定时器">
-        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>
+      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? '加密消息 · 端到端' : '消息'" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
+      <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       </button>
       <button class="send-btn" @click="send">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
@@ -149,7 +153,7 @@
 
 <script>
 import { nextTick } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, recallMessage, showToast, editMessage, openChatInfo, asArray } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, recallMessage, showToast, editMessage, openChatInfo, asArray, toggleE2E } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -171,13 +175,16 @@ export default {
       receiptLoading: false,
       preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0 }, // 文件在线预览
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
-      newMsgPill: false    // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
+      newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
+      reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
+      revealTickers: {},   // 点按显示倒计时定时器 { msgId: intervalId }
+      revealLeft: {}       // 点按显示剩余秒数 { msgId: n }
     }
   },
   computed: {
     canEditAction() {
       const m = this.msgAction
-      return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text')
+      return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text' && !m.is_encrypted)
     },
     isDissolved() {
       return !!(state.chat && state.chat.dissolved_at)
@@ -217,6 +224,7 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
+    Object.values(this.revealTickers).forEach(clearInterval)
   },
   methods: {
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
@@ -228,6 +236,7 @@ export default {
       if (this.editing)           { this.editing = null; e.preventDefault(); return }
     },
     closeChat,
+    toggleE2E,
     avatarColor,
     convName,
     convInitial,
@@ -442,6 +451,34 @@ export default {
     onMsgTap(m) {
       this.msgAction = m
     },
+    /** 端到端加密消息：点击气泡显示明文 10 秒后自动隐藏；长按/右键仍打开操作菜单 */
+    e2eKey(m) {
+      return String(m && (m.id ?? m.message_id ?? m.messageId))
+    },
+    /** 是否端到端加密消息：解密成功(e2e) / 解密失败(e2eFail) / 后端加密标记(is_encrypted)，三者任一即视为加密 */
+    isEnc(m) {
+      return !!(m && (m.e2e === true || m.e2eFail === true || m.is_encrypted === true))
+    },
+    onBubbleClick(m) {
+      if (this.isEnc(m)) { this.revealE2E(m); return }
+      this.onMsgTap(m)
+    },
+    revealE2E(m) {
+      const key = this.e2eKey(m)
+      if (!key) return
+      this.reveal[key] = true
+      this.revealLeft[key] = 10
+      clearInterval(this.revealTickers[key])
+      this.revealTickers[key] = setInterval(() => {
+        if (this.revealLeft[key] > 1) {
+          this.revealLeft[key] -= 1
+        } else {
+          clearInterval(this.revealTickers[key])
+          this.reveal[key] = false
+          delete this.revealLeft[key]
+        }
+      }, 1000)
+    },
     copyMsg() {
       const t = this.msgAction.content || ''
       if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => showToast('已复制'))
@@ -494,4 +531,10 @@ export default {
 .preview-sheet-bar { display: flex; gap: 6px; padding: 8px 10px; overflow-x: auto; background: var(--tg-bg); border-bottom: 1px solid var(--tg-border); position: sticky; top: 0; z-index: 2; }
 .preview-sheet-tab { flex-shrink: 0; font-size: 13px; padding: 5px 13px; border-radius: 14px; background: var(--tg-gray-bg); color: var(--tg-text-secondary); cursor: pointer; }
 .preview-sheet-tab.on { background: var(--tg-blue); color: #fff; }
+/* 端到端加密消息：点按查看 */
+.e2e-reveal { color: var(--tg-blue); cursor: pointer; }
+.bubble.out .e2e-reveal { color: rgba(255,255,255,.92); }
+.e2e-reveal:active { opacity: .7; }
+.e2e-count { font-size: 10px; line-height: 1; margin-left: 6px; padding: 3px 7px; border-radius: 9px; background: rgba(0,0,0,.10); color: #565c63; font-weight: 600; }
+.bubble.out .e2e-count { background: rgba(0,0,0,.20); color: rgba(255,255,255,.92); }
 </style>
