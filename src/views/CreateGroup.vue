@@ -50,11 +50,15 @@ export default {
   data() {
     return {
       state,
-      isChannel: false,
+      isChannel: state.createGroupAsChannel === true,
       name: '',
       description: '',
       selected: []
     }
+  },
+  mounted() {
+    // 入口预设已被 data 初始化消费，此处复位标记，避免影响下次从其他入口打开
+    state.createGroupAsChannel = false
   },
   computed: {
     contactList() {

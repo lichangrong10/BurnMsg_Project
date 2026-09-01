@@ -14,7 +14,7 @@ import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 
 export const state = reactive({
   view: storage.token ? 'main' : 'login', // login | changePwd | main
-  tab: 'chats',                           // chats | contacts | me
+  tab: 'chats',                           // chats | channels | contacts | me
   keyword: '',
   me: storage.user || {},
   baseURL: storage.baseURL,
@@ -40,6 +40,7 @@ export const state = reactive({
   nowTick: Date.now(),   // 每秒刷新，驱动焚毁倒计时
   showServerDialog: false,
   showCreateGroup: false, // 建群/频道页（覆盖层）
+  createGroupAsChannel: false, // CreateGroup 打开时预设「频道」模式（openCreateGroup 设置，CreateGroup 挂载后消费复位）
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
@@ -139,6 +140,7 @@ export async function login(phone, password) {
   storage.token = d.access_token
   storage.refresh = d.refresh_token
   storage.user = d.user
+  storage.deviceRowId = (d.device && d.device.id) || '' // 登录成功后存后端设备表主键
   storage.demo = false
   state.demoMode = false
   state.me = d.user
@@ -1104,6 +1106,11 @@ export async function editMessage(m, content) {
 }
 
 /* ─── 群组 / 频道 ─── */
+export function openCreateGroup(asChannel) {
+  state.createGroupAsChannel = !!asChannel
+  state.showCreateGroup = true
+}
+
 export async function createGroupAction(name, memberIds, isChannel, description) {
   if (state.demoMode) {
     const c = { id: DEMO.uid(), type: isChannel ? 'channel' : 'group', name, description: description || null, avatar_url: null, is_channel: !!isChannel, member_count: memberIds.length + 1, last_message_at: new Date().toISOString(), unread: 0, lastMsg: '' }
