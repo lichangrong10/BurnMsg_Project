@@ -9,7 +9,7 @@
     <!-- 空状态 -->
     <div v-if="!filteredChannels.length" class="empty-state ch-empty">
       <div class="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div>
-      <div>暂无频道<br><small>频道适合公告、通知等单向广播场景<br>点击上方「创建频道」开始</small></div>
+      <div>暂无频道<br><small>频道适合公告、通知等单向广播场景<br>点击右上角「+」创建频道</small></div>
     </div>
 
     <!-- 频道列表 -->

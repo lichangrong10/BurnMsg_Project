@@ -1103,6 +1103,11 @@ export async function editMessage(m, content) {
 }
 
 /* ─── 群组 / 频道 ─── */
+export function openCreateGroup(asChannel) {
+  state.createGroupAsChannel = !!asChannel
+  state.showCreateGroup = true
+}
+
 export async function createGroupAction(name, memberIds, isChannel, description) {
   if (state.demoMode) {
     const c = { id: DEMO.uid(), type: isChannel ? 'channel' : 'group', name, description: description || null, avatar_url: null, is_channel: !!isChannel, member_count: memberIds.length + 1, last_message_at: new Date().toISOString(), unread: 0, lastMsg: '' }
