@@ -257,8 +257,9 @@ export default {
       const c = state.chat
       if (!c) return ''
       if (c.dissolved_at) return '已解散'
-      if (c.type === 'group') return c.member_count + ' 位成员'
-      if (c.type === 'channel') return c.member_count + ' 位订阅者'
+      const total = state.groupMembers.length || c.member_count || 0
+      if (c.type === 'group') return total + ' 位成员'
+      if (c.type === 'channel') return total + ' 位订阅者'
       return '在线'
     },
     burnLabel() {

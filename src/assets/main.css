@@ -91,7 +91,7 @@ body {
   color: #fff; outline: none;
 }
 .search-input::placeholder { color: rgba(255,255,255,.75); }
-.content-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; background: var(--tg-chat-bg); padding-bottom: 14px; }
+.content-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; background: var(--tg-chat-bg); padding-bottom: 14px; }
 .tabbar {
   display: flex; background: #fff;
   border-radius: 18px 18px 0 0;

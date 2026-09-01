@@ -1,5 +1,11 @@
 <template>
-  <div>
+  <div @touchstart="pullStart" @touchmove="pullMove" @touchend="pullEnd" @touchcancel="pullEnd">
+    <!-- 下拉刷新指示器 -->
+    <div class="pull-indicator" :style="{ height: pullDist + 'px', opacity: pullOpacity }">
+      <svg v-if="pullState !== 'refreshing'" class="pull-arrow" :class="{ up: pullState === 'ready' }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      <span v-else class="pull-spinner"></span>
+      <span>{{ pullText }}</span>
+    </div>
     <div v-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
@@ -40,7 +46,7 @@
 </template>
 
 <script>
-import { state, openChat, togglePin, deleteConversation } from '../store'
+import { state, openChat, togglePin, deleteConversation, loadConvs } from '../store'
 import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
 
 export default {
@@ -48,7 +54,9 @@ export default {
   data() {
     return {
       state,
-      menu: null        // 长按/右键浮层：{ conv, x, y }
+      menu: null,        // 长按/右键浮层：{ conv, x, y }
+      pullDist: 0,       // 下拉距离 px
+      pullState: 'idle'  // idle | pulling | ready | refreshing
     }
   },
   computed: {
@@ -61,6 +69,13 @@ export default {
           if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
           return (new Date(b.last_message_at || 0).getTime()) - (new Date(a.last_message_at || 0).getTime())
         })
+    },
+    pullText() {
+      if (this.pullState === 'refreshing') return '刷新中…'
+      return this.pullState === 'ready' ? '释放刷新' : '下拉刷新'
+    },
+    pullOpacity() {
+      return this.pullDist > 0 ? 1 : 0
     }
   },
   mounted() {
@@ -128,7 +143,76 @@ export default {
     cancelLongPress() {
       clearTimeout(this._lpTimer)
       this._lp = null
+    },
+    // ── 下拉刷新（触屏）──
+    pullStart(e) {
+      if (this.pullState === 'refreshing') return
+      const sc = this.$el.closest('.content-scroll')
+      if (!sc || sc.scrollTop > 0) return
+      const t = e.touches && e.touches[0]
+      if (!t) return
+      this._pull = { startY: t.clientY }
+    },
+    pullMove(e) {
+      if (!this._pull || this.pullState === 'refreshing') return
+      const t = e.touches && e.touches[0]
+      if (!t) return
+      const dy = t.clientY - this._pull.startY
+      if (dy <= 0) { this.pullDist = 0; this.pullState = 'idle'; return }
+      if (e.cancelable) e.preventDefault()
+      const damp = Math.min(dy * 0.5, 90)
+      this.pullDist = damp
+      this.pullState = damp >= 55 ? 'ready' : 'pulling'
+    },
+    pullEnd() {
+      if (!this._pull) return
+      const ready = this.pullState === 'ready'
+      this._pull = null
+      if (ready) this.refreshConvs()
+      else { this.pullDist = 0; this.pullState = 'idle' }
+    },
+    async refreshConvs() {
+      if (this.pullState === 'refreshing') return
+      this.pullState = 'refreshing'
+      this.pullDist = 50
+      const t0 = Date.now()
+      try {
+        await loadConvs(true)
+      } finally {
+        const wait = Math.max(0, 400 - (Date.now() - t0))
+        setTimeout(() => {
+          this.pullDist = 0
+          this.pullState = 'idle'
+        }, wait)
+      }
     }
   }
 }
 </script>
+<style scoped>
+.pull-indicator {
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #909399;
+  font-size: 13px;
+  transition: height .18s ease, opacity .18s ease;
+  user-select: none;
+}
+.pull-arrow { transition: transform .18s ease; }
+.pull-arrow.up { transform: rotate(180deg); }
+.pull-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #c8ccd4;
+  border-top-color: var(--tg-blue);
+  border-radius: 50%;
+  animation: pullSpin .7s linear infinite;
+}
+@keyframes pullSpin {
+  to { transform: rotate(360deg); }
+}
+</style>

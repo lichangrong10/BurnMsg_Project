@@ -737,8 +737,16 @@ onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
     if (c) c.dissolved_at = at
     if (state.chat && String(state.chat.id) === String(cid)) {
       state.chat.dissolved_at = at
-      showToast('该群组已被解散')
     }
+    // 通知：无论是否正打开该群，都提示用户群已被解散（提示音 + 文字）
+    const name = (c && c.name) || (p.conversation && p.conversation.name)
+      || (state.chat && String(state.chat.id) === String(cid) && state.chat.name) || ''
+    const isChannel = (c && c.type === 'channel')
+      || (state.chat && String(state.chat.id) === String(cid) && state.chat.type === 'channel')
+    playMsgDing()
+    showToast(name
+      ? (isChannel ? `频道「${name}」已被解散` : `群聊「${name}」已被群主解散`)
+      : '该群聊已被群主解散')
   }
   // 群主变更（owner 转让群）：当前打开的群重拉成员列表，界面角色徽标/操作菜单即时刷新
   if (p && p.reason === 'owner_changed') {
