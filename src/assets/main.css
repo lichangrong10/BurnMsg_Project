@@ -200,6 +200,16 @@ body {
 .bubble.out .msg-file-size { color: rgba(255,255,255,.65); }
 .msg-image { max-width: 240px; border-radius: 12px; display: block; }
 
+/* 图片消息：裸图直出（无气泡背景），时间戳叠在图片右下角 */
+.bubble.img { background: transparent; padding: 0; box-shadow: none; max-width: 260px; color: var(--tg-text); }
+.bubble.img .sender-name { padding: 0 2px; }
+.bubble.img .msg-image { max-width: 100%; width: auto; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.16); cursor: pointer; }
+.bubble.img .msg-meta { position: absolute; right: 5px; bottom: 5px; float: none; margin: 0; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
+.bubble.img .msg-meta .read-tag { color: #8fd3a8; }
+.bubble.img .msg-meta .read-tag.unread { color: rgba(255,255,255,.7); }
+.bubble.img .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
+.bubble.img .burn-chip { padding-left: 2px; }
+
 /* 输入栏 */
 .input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 7px 10px calc(7px + var(--safe-bottom)); background: var(--tg-bg); flex-shrink: 0; border-top: 1px solid rgba(0,0,0,.05); box-shadow: 0 -3px 12px rgba(0,0,0,.05); position: relative; z-index: 3; }
 .input-bar .attach-btn, .input-bar .burn-btn, .input-bar .fire-btn, .input-bar .send-btn {
