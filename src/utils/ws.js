@@ -16,7 +16,9 @@ export const WS_EVENTS = {
   CONVERSATION_UPDATED: 'conversation:updated',
   ANNOUNCEMENT_NEW: 'announcement:new',
   KEY_CHANGED: 'key:changed',
-  APP_UPDATE: 'app:update'
+  APP_UPDATE: 'app:update',
+  DEVICE_ADDED: 'device:added',
+  DEVICE_REMOVED: 'device:removed'
 }
 
 let socket = null
