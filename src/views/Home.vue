@@ -83,12 +83,12 @@ export default {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: linear-gradient(90deg, #E53935 0%, #FF7043 100%);
+  background: linear-gradient(90deg, var(--tg-urgent) 0%, var(--tg-urgent-light) 100%);
   border-radius: 999px;
   padding: 6px 9px;
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(229, 57, 53, .5);
+  box-shadow: 0 2px 8px rgba(var(--tg-urgent-rgb), .5);
   z-index: 2;
 }
 .uc-icon { flex-shrink: 0; }

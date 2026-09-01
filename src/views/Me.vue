@@ -34,6 +34,11 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         <span class="cell-label">意见反馈</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
       </div>
+      <div class="cell" @click="showTheme = true">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+        <span class="cell-label">主题颜色</span>
+        <span class="cell-value"><span class="theme-dot" :style="{ background: themeColor }"></span>{{ themeColor }}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px"><path d="m9 18 6-6-6-6"/></svg></span>
+      </div>
       <div class="cell" v-if="state.me.role === 'admin'" @click="state.showAdmin = true">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 8 2 2 4-4"/></svg>
         <span class="cell-label">账号管理</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
@@ -61,6 +66,20 @@
           <div v-if="!devices.length" class="sheet-item" style="color:#707579">暂无设备记录</div>
         </div>
         <div class="sheet-item sheet-cancel" @click="showDevices = false">关闭</div>
+      </div>
+    </div>
+
+    <!-- ═══════ 主题颜色 ═══════ -->
+    <div v-if="showTheme" class="overlay" @click.self="showTheme = false">
+      <div class="sheet">
+        <div class="sheet-title">主题颜色 · 顶栏 / 按钮 / 气泡全局联动</div>
+        <div class="theme-picker-body">
+          <div class="theme-circle" :style="{ background: themeColor }" @click="pickThemeColor"></div>
+          <div class="theme-hex">{{ themeColor }}</div>
+          <div class="theme-hint">点击圆形挑选颜色，全 App 实时生效</div>
+        </div>
+        <input ref="colorInput" type="color" :value="themeColor.toLowerCase()" style="display:none" @input="onThemeInput">
+        <div class="sheet-item sheet-cancel" @click="showTheme = false">完成</div>
       </div>
     </div>
 
@@ -111,7 +130,7 @@
 </template>
 
 <script>
-import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback } from '../store'
+import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
 
@@ -125,7 +144,9 @@ export default {
       showEditProfile: false,
       profileForm: { display_name: '', signature: '' },
       showPwd: false,
-      showLogout: false
+      showLogout: false,
+      showTheme: false,
+      themeColor: getThemeColor()
     }
   },
   methods: {
@@ -181,6 +202,15 @@ export default {
       const ok = await changePassword()
       if (ok) this.showPwd = false
     },
+    pickThemeColor() {
+      this.$refs.colorInput && this.$refs.colorInput.click()
+    },
+    onThemeInput(e) {
+      const c = (e.target.value || '').toUpperCase()
+      if (!c) return
+      this.themeColor = c
+      setTheme(c)
+    },
     doLogout() {
       this.showLogout = false
       logout()
@@ -191,4 +221,10 @@ export default {
 <style scoped>
 .avatar-editable { position: relative; cursor: pointer; display: inline-block; }
 .avatar-camera { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--tg-blue); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; }
+.theme-dot { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+.theme-picker-body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 12px; }
+.theme-circle { width: 92px; height: 92px; border-radius: 50%; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.2), inset 0 0 0 1px rgba(0,0,0,.06); transition: transform .15s ease, background .15s ease; }
+.theme-circle:active { transform: scale(.93); }
+.theme-hex { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
+.theme-hint { font-size: 12.5px; color: var(--tg-text-secondary); }
 </style>
