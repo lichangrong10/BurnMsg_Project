@@ -14,7 +14,7 @@ import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 
 export const state = reactive({
   view: storage.token ? 'main' : 'login', // login | changePwd | main
-  tab: 'chats',                           // chats | contacts | me
+  tab: 'chats',                           // chats | channels | contacts | me
   keyword: '',
   me: storage.user || {},
   baseURL: storage.baseURL,
@@ -40,6 +40,7 @@ export const state = reactive({
   nowTick: Date.now(),   // 每秒刷新，驱动焚毁倒计时
   showServerDialog: false,
   showCreateGroup: false, // 建群/频道页（覆盖层）
+  createGroupAsChannel: false, // CreateGroup 打开时预设「频道」模式（openCreateGroup 设置，CreateGroup 挂载后消费复位）
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
