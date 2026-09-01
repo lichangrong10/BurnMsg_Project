@@ -72,5 +72,6 @@ export const api = {
     const fd = new FormData()
     fd.append('file', file)
     return http.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-  }
+  },
+  checkUpdate: (platform, current_code) => http.get('/app-versions/latest', { params: { platform, current_code } })
 }
