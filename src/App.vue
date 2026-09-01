@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <LoginView v-if="state.view === 'login'" />
   <ChangePwdView v-else-if="state.view === 'changePwd'" />
   <HomeView v-else />
@@ -76,9 +76,10 @@
 <script>
 import axios from 'axios'
 import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, showToast, confirmTofuKey, dismissTofuAlert } from './store'
+import { storage } from './utils/storage'
+import { onWs, WS_EVENTS } from './utils/ws'
 import { setupBackHandler } from './utils/back'
 import { checkAppUpdate, downloadAndInstallApk } from './utils/update'
-import { onWs, WS_EVENTS } from './utils/ws'
 import LoginView from './views/Login.vue'
 import ChangePwdView from './views/ChangePwd.vue'
 import HomeView from './views/Home.vue'
@@ -88,6 +89,8 @@ import ChatInfo from './views/ChatInfo.vue'
 import AdminView from './views/Admin.vue'
 import AnnouncementsView from './views/Announcements.vue'
 import FeedbackView from './views/Feedback.vue'
+
+const DEVICE_TYPE_TEXT = { web: '网页版', mobile: '手机版', desktop: '桌面版' }
 
 export default {
   name: 'App',
@@ -109,6 +112,20 @@ export default {
     if (state.view === 'main') bootstrap()
     this.doCheckUpdate()
     onWs(WS_EVENTS.APP_UPDATE, () => this.doCheckUpdate())
+
+    // ═══════ 设备相关推送（后端 events.types.ts：仅真正新建设备/下线设备时推送） ═══════
+    // device:added —— 同账号新设备登录。本设备自己登录不弹（后端 payload.device_id 为设备表主键，
+    // 与登录时存下的 storage.deviceRowId 比对即可识别）
+    onWs(WS_EVENTS.DEVICE_ADDED, p => {
+      if (p && p.device_id && p.device_id === storage.deviceRowId) return
+      const t = DEVICE_TYPE_TEXT[p && p.device_type] || (p && p.device_type) || '未知类型'
+      showToast(`新设备登录：${(p && p.device_name) || '未知设备'}（${t}）`)
+    })
+    // device:removed —— 某设备被下线。本设备被下线 → 直接回登录页；其他设备被下线 → 仅提示
+    onWs(WS_EVENTS.DEVICE_REMOVED, p => {
+      if (p && p.device_id && p.device_id === storage.deviceRowId) { forceLogout(); return }
+      showToast('你的一台设备已被下线')
+    })
   },
   beforeUnmount() {
     window.removeEventListener('bm-logout', forceLogout)

@@ -140,6 +140,7 @@ export async function login(phone, password) {
   storage.token = d.access_token
   storage.refresh = d.refresh_token
   storage.user = d.user
+  storage.deviceRowId = (d.device && d.device.id) || '' // 登录成功后存后端设备表主键
   storage.demo = false
   state.demoMode = false
   state.me = d.user
