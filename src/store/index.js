@@ -410,6 +410,7 @@ async function fillMissingPreviews() {
 }
 
 export async function bootstrap() {
+  applyTheme(curThemeColor) // 进主界面先按本地已存主题色恢复，避免等接口期间闪回默认蓝
   await Promise.all([loadConvs(), loadContacts()])
   refreshAnnUnread()
   if (!state.demoMode) {
@@ -417,6 +418,7 @@ export async function bootstrap() {
     try {
       state.me = await api.getProfile()
       storage.user = state.me
+      if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
     initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
@@ -1307,6 +1309,65 @@ export async function transferOwnership(uid) {
     return false
   }
 }
+
+/* ─── 主题色：一个 CSS 变量驱动全局（顶栏/按钮/气泡/徽标/选中态随之联动） ─── */
+const DEFAULT_THEME_COLOR = '#3390EC'
+/** '#RRGGBB' → [r,g,b]，非法输入返回 null */
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(typeof hex === 'string' ? hex.trim() : '')
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+/** [r,g,b] → '#RRGGBB' */
+function rgbToHex(rgb) {
+  const h = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
+  return ('#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2])).toUpperCase()
+}
+/** 派生色：ratio>0 向白混合（变亮），ratio<0 向黑混合（变暗） */
+function shadeHex(hex, ratio) {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return hex
+  const t = ratio > 0 ? 255 : 0
+  const p = Math.abs(ratio)
+  return rgbToHex(rgb.map(v => v + (t - v) * p))
+}
+
+let curThemeColor = (storage.user && typeof storage.user.topic === 'string' && storage.user.topic.startsWith('#')) ? storage.user.topic : DEFAULT_THEME_COLOR
+
+/** 应用主题色：改写 --tg-blue 系列 CSS 变量，全 App 引用处实时联动 */
+export function applyTheme(color) {
+  const rgb = hexToRgb(color)
+  if (!rgb) return
+  curThemeColor = rgbToHex(rgb)
+  const st = document.documentElement.style
+  st.setProperty('--tg-blue', curThemeColor)
+  st.setProperty('--tg-blue-rgb', rgb.join(','))
+  st.setProperty('--tg-blue-dark', shadeHex(curThemeColor, -0.1))
+  st.setProperty('--tg-blue-light', shadeHex(curThemeColor, 0.14))
+  /* 头像首字符底色：按主题色派生 7 档明暗（深浅交错，白字均可读） */
+  const AV_SHADES = [0, -0.12, 0.12, -0.24, 0.22, -0.18, -0.06]
+  AV_SHADES.forEach((r, i) => st.setProperty('--tg-av-' + i, shadeHex(curThemeColor, r)))
+  /* 紧急公告色：主题色加深（比普通主题元素深一档，保持紧迫感但不脱离主题） */
+  const urg = shadeHex(curThemeColor, -0.22)
+  st.setProperty('--tg-urgent', urg)
+  st.setProperty('--tg-urgent-rgb', hexToRgb(urg).join(','))
+  st.setProperty('--tg-urgent-light', shadeHex(curThemeColor, -0.06))
+}
+
+/** 当前主题色（'#RRGGBB'） */
+export function getThemeColor() { return curThemeColor }
+
+/** 选定主题色：立即全局生效 + 本地持久化 + 同步后端 topic 字段（7 字符，满足 20 字限制） */
+export function setTheme(color) {
+  applyTheme(color)
+  state.me = { ...state.me, topic: curThemeColor }
+  storage.user = state.me
+  if (!state.demoMode) api.updateProfile({ topic: curThemeColor }).catch(() => {})
+}
+
+// 模块加载即应用本地已存主题色（首屏渲染前生效，避免闪回默认蓝）
+applyTheme(curThemeColor)
 
 /* ─── 我的 ─── */
 export async function updateProfile(payload) {

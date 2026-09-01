@@ -10,7 +10,7 @@ export const BURN_OPTIONS = [
 ]
 
 /* Telegram 蓝色系：无头像时的首字符底色（按名字哈希在蓝色族内取稳定色） */
-export const AVATAR_COLORS = ['#3390EC', '#2E8BD6', '#4FA3EF', '#1F7ACC', '#5AADF2', '#3B82C4', '#2A9BE4']
+export const AVATAR_COLORS = ['var(--tg-av-0)', 'var(--tg-av-1)', 'var(--tg-av-2)', 'var(--tg-av-3)', 'var(--tg-av-4)', 'var(--tg-av-5)', 'var(--tg-av-6)'] /* 主题色派生的 7 档明暗（CSS 变量由 store applyTheme 随主题色自动更新，默认值见 main.css --tg-av-*） */
 
 /** 按名字哈希出稳定头像底色 */
 export function avatarColor(name) {

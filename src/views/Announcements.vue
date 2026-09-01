@@ -128,8 +128,8 @@ export default {
 }
 .ann-item:active { transform: scale(.985); box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
 .ann-item.is-urgent {
-  border-left-color: #E53935;
-  background: linear-gradient(90deg, rgba(229, 57, 53, .05), #fff 30%);
+  border-left-color: var(--tg-urgent);
+  background: linear-gradient(90deg, rgba(var(--tg-urgent-rgb), .05), #fff 30%);
 }
 .ann-item-icon {
   width: 38px;
@@ -139,10 +139,10 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(51, 144, 236, .12);
+  background: var(--tg-blue-tint);
   color: var(--tg-blue);
 }
-.ann-item-icon.urgent { background: rgba(229, 57, 53, .12); color: #E53935; }
+.ann-item-icon.urgent { background: rgba(var(--tg-urgent-rgb), .12); color: var(--tg-urgent); }
 .ann-item-main { flex: 1; min-width: 0; }
 .ann-head { display: flex; align-items: center; gap: 7px; }
 .ann-title {
@@ -161,7 +161,7 @@ export default {
   border-radius: 50%;
   background: var(--tg-blue);
   flex-shrink: 0;
-  box-shadow: 0 0 0 3px rgba(51, 144, 236, .15);
+  box-shadow: 0 0 0 3px rgba(var(--tg-blue-rgb), .15);
 }
 .ann-preview {
   margin-top: 4px;
@@ -178,8 +178,8 @@ export default {
 .ann-urgent {
   font-size: 11px;
   font-weight: 600;
-  color: #E53935;
-  background: rgba(229, 57, 53, .1);
+  color: var(--tg-urgent);
+  background: rgba(var(--tg-urgent-rgb), .1);
   border-radius: 6px;
   padding: 1.5px 7px;
 }
@@ -221,11 +221,11 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 13px 16px;
-  background: linear-gradient(120deg, var(--tg-blue) 0%, #5AA9F0 100%);
+  background: linear-gradient(120deg, var(--tg-blue) 0%, var(--tg-blue-light) 100%);
   color: #fff;
   flex-shrink: 0;
 }
-.ann-modal.urgent .ann-modal-banner { background: linear-gradient(120deg, #E53935 0%, #FF6F43 100%); }
+.ann-modal.urgent .ann-modal-banner { background: linear-gradient(120deg, var(--tg-urgent) 0%, var(--tg-urgent-light) 100%); }
 .ann-modal-banner-left {
   display: flex;
   align-items: center;
@@ -261,5 +261,5 @@ export default {
   background: var(--tg-blue);
 }
 .ann-modal-btn:active { filter: brightness(.93); }
-.ann-modal-btn.urgent { background: linear-gradient(90deg, #E53935, #FF6F43); }
+.ann-modal-btn.urgent { background: linear-gradient(90deg, var(--tg-urgent), var(--tg-urgent-light)); }
 </style>
