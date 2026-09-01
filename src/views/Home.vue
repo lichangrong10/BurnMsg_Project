@@ -11,10 +11,14 @@
       <div style="display:flex;align-items:center;gap:2px" v-if="state.tab === 'chats'">
         <div class="topbar-icon" style="position:relative" @click="openAnnouncements" title="公告">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-          <span v-if="state.annUnread" class="badge" style="position:absolute;top:2px;right:0">{{ state.annUnread > 99 ? '99+' : state.annUnread }}</span>
-        </div>
-        <div class="topbar-icon" @click="state.tab = 'contacts'" title="发起聊天">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          <span v-if="state.annUnread" style="    position: absolute;
+    top: 5px;
+    right: 6px;
+    display: inline-block !important;
+    height: 7px;
+    background-color: red;
+    border-radius: 50%;
+    width: 7px;"></span>
         </div>
       </div>
     </div>

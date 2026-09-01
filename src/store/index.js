@@ -637,6 +637,17 @@ function scheduleConvReload() {
   convReloadTimer = setTimeout(() => { loadConvs(true) }, 500)
 }
 
+
+/** 判断消息文本是否 @ 了当前用户（按本人展示名匹配） */
+function mentionsMe(text) {
+  if (!text) return false
+  const me = state.me || {}
+  const names = [me.display_name, me.name, me.username, me.nickname, me.real_name].filter(Boolean)
+  if (!names.length) return false
+  const s = String(text)
+  return names.some(n => s.indexOf('@' + n) !== -1)
+}
+
 /** message:new：当前会话去重追加 + 滚动吸附；其他会话只更新预览/未读并重拉列表 */
 async function onWsNewMessage(p) {
   if (!p || state.demoMode) return
@@ -678,7 +689,7 @@ async function onWsNewMessage(p) {
     if (!mine) {
       const c = state.convs.find(x => String(x.id) === String(cid))
       if (c) c.unread = (c.unread || 0) + 1
-      showToast('新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到消息的文字提示
+      showToast(mentionsMe(m.content) ? '@了你：' + (messagePreview(m) || '').slice(0, 30) : '新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到消息的文字提示
     }
     setLastMsg(cid, messagePreview(m))
   }
