@@ -25,14 +25,14 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
             <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico">🔥</span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <img class="msg-image" :src="fileURL(m.file_url)" @load="scrollBottom">
-              <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
+              <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
             <template v-else-if="m.type === 'file' || m.type === 'voice' || m.type === 'video'">
               <div class="msg-file" @click.stop="openFile(m)">
@@ -203,6 +203,22 @@
         </template>
       </div>
     </div>
+
+    <!-- 图片在线预览层 -->
+    <div v-if="viewer.show" class="img-viewer" @click="closeViewer">
+      <div class="img-viewer-top">
+        <div class="img-viewer-close" @click.stop="closeViewer">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </div>
+        <div class="img-viewer-name">{{ viewer.name }}</div>
+        <div class="img-viewer-dl" @click.stop="downloadViewer">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+        </div>
+      </div>
+      <div class="img-viewer-body">
+        <img class="img-viewer-img" :src="viewer.url" @click.stop>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -232,6 +248,7 @@ export default {
       receiptList: [],
       receiptLoading: false,
       preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0 }, // 文件在线预览
+      viewer: { show: false, url: '', name: '' }, // 图片在线预览
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
       newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
       reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
@@ -558,6 +575,23 @@ export default {
     downloadPreview() {
       if (this.preview.url) window.open(this.preview.url, '_blank')
     },
+    /** 图片在线预览：点开全屏大图查看，可下载；点击遮罩/关闭按钮退出 */
+    openImageView(m) {
+      if (!m || !m.file_url) return
+      this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '' }
+    },
+    closeViewer() { this.viewer.show = false },
+    downloadViewer() {
+      if (!this.viewer.url) return
+      const a = document.createElement('a')
+      a.href = this.viewer.url
+      a.download = this.viewer.name || ''
+      a.rel = 'noopener'
+      a.target = '_blank'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    },
     onMsgTap(m) {
       this.msgAction = m
     },
@@ -569,8 +603,13 @@ export default {
     isEnc(m) {
       return !!(m && (m.e2e === true || m.e2eFail === true || m.is_encrypted === true))
     },
+    /** 是否以裸图渲染（图片消息且未撤回/未焚毁/非模糊占位） */
+    isImgMsg(m) {
+      return !!(m && m.type === 'image' && m.file_url && !m.is_recalled && !this.isBurned(m) && !this.isBlurredBurn(m))
+    },
     onBubbleClick(m) {
       if (this.isBlurredBurn(m)) { revealBurn(m); return } // 焚毁占位卡：点开才焚，reveal 拉完整内容
+      if (m.type === 'image' && m.file_url) { this.openImageView(m); return } // 图片：点开全屏预览
       if (this.isEnc(m) && !this.isBurnMsg(m)) { this.revealE2E(m); return }
       this.onMsgTap(m)
     },
@@ -671,4 +710,13 @@ export default {
 .e2e-reveal:active { opacity: .7; }
 .e2e-count { font-size: 10px; line-height: 1; margin-left: 6px; padding: 3px 7px; border-radius: 9px; background: rgba(0,0,0,.10); color: #565c63; font-weight: 600; }
 .bubble.out .e2e-count { background: rgba(0,0,0,.20); color: rgba(255,255,255,.92); }
+
+/* ── 图片在线预览层 ── */
+.img-viewer { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,.94); display: flex; flex-direction: column; }
+.img-viewer-top { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; color: #fff; flex-shrink: 0; }
+.img-viewer-close, .img-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
+.img-viewer-close:active, .img-viewer-dl:active { background: rgba(255,255,255,.15); }
+.img-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.img-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.img-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; -webkit-user-drag: none; }
 </style>
