@@ -571,7 +571,7 @@ function syncRestorePlaintext(list) {
     if (m.is_encrypted && !m.is_blurred) {
       const cached = getPlaintext(m.id)
       if (cached != null) { m.content = cached; m.e2e = true }
-      else if (getPlaintextFail(m.id)) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+      else if (getPlaintextFail(m.id)) { m.content = '加密消息（本设备无法解密）'; m.e2eFail = true }
     }
   }
 }
@@ -591,7 +591,7 @@ async function decryptMessagesInList(list, cid) {
   const run = async m => {
     const cached = getPlaintext(m.id)
     if (cached != null) { m.content = cached; m.e2e = true; return }
-    if (getPlaintextFail(m.id)) { m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true; return }
+    if (getPlaintextFail(m.id)) { m.content = '加密消息（本设备无法解密）'; m.e2eFail = true; return }
     try {
       const pub = await getPub(m.sender_id)
       if (!pub) throw new Error('no pubkey')
@@ -601,7 +601,7 @@ async function decryptMessagesInList(list, cid) {
       m.e2e = true
     } catch (e) {
       cachePlaintextFail(m.id)
-      m.content = '🔒 加密消息（本设备无法解密）'
+      m.content = '加密消息（本设备无法解密）'
       m.e2eFail = true
     }
   }
@@ -657,10 +657,10 @@ async function onWsNewMessage(p) {
         cachePlaintext(m.id, text)
         m.content = text
         m.e2e = true
-      } catch (e) { cachePlaintextFail(m.id); m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+      } catch (e) { cachePlaintextFail(m.id); m.content = '加密消息（本设备无法解密）'; m.e2eFail = true }
     } else {
       // 本人其他设备发的加密消息：协议上本设备无 ephemeral 私钥无法解密
-      m.content = '🔒 加密消息（发送于其他设备）'
+      m.content = '加密消息（发送于其他设备）'
       m.e2eFail = true
     }
   }
@@ -1038,7 +1038,7 @@ export async function revealBurn(m) {
           cachePlaintext(m.id, text)
           m.content = text
           m.e2e = true
-        } catch (e) { cachePlaintextFail(m.id); m.content = '🔒 加密消息（本设备无法解密）'; m.e2eFail = true }
+        } catch (e) { cachePlaintextFail(m.id); m.content = '加密消息（本设备无法解密）'; m.e2eFail = true }
       }
     }
     return true

@@ -8,7 +8,7 @@
         <div class="chat-title">{{ tab === 'groups' ? '群组管理' : '账号管理' }}</div>
         <div class="chat-status">{{ tab === 'groups' ? ('共 ' + gtotal + ' 个群组') : ('共 ' + total + ' 个账号') }}</div>
       </div>
-      <button v-if="tab === 'accounts'" class="btn-text" style="color:#fff;font-weight:600;font-size:14.5px" @click="openCreate">＋ 开通</button>
+      <button v-if="tab === 'accounts'" class="btn-text topbar-plus" style="color:#fff;font-weight:600;font-size:14.5px" @click="openCreate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>开通</button>
     </div>
 
     <!-- 页签：账号 / 群组 -->
@@ -50,7 +50,7 @@
           </div>
           <div class="contact-sub">{{ u.phone }}<template v-if="u.department"> · {{ u.department }}</template></div>
         </div>
-        <span style="color:var(--tg-text-secondary);margin-right:8px">›</span>
+        <svg style="color:var(--tg-text-secondary);margin-right:8px;flex-shrink:0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
     </div>
 
@@ -68,20 +68,20 @@
           </div>
           <div class="contact-sub">群主 {{ g.owner_name || '—' }} · {{ g.member_count ?? 0 }} 名成员</div>
         </div>
-        <span style="color:var(--tg-text-secondary);margin-right:8px">›</span>
+        <svg style="color:var(--tg-text-secondary);margin-right:8px;flex-shrink:0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
     </div>
 
     <!-- 分页 -->
     <div class="pager" v-if="tab === 'accounts' && total > pageSize">
-      <button class="btn-text" :style="{ opacity: page > 1 ? 1 : .35 }" @click="goPage(page - 1)">‹ 上一页</button>
+      <button class="btn-text pager-btn" :style="{ opacity: page > 1 ? 1 : .35 }" @click="goPage(page - 1)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>上一页</button>
       <span style="font-size:13px;color:var(--tg-text-secondary)">{{ page }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
-      <button class="btn-text" :style="{ opacity: page < Math.ceil(total / pageSize) ? 1 : .35 }" @click="goPage(page + 1)">下一页 ›</button>
+      <button class="btn-text pager-btn" :style="{ opacity: page < Math.ceil(total / pageSize) ? 1 : .35 }" @click="goPage(page + 1)">下一页<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
     </div>
     <div class="pager" v-if="tab === 'groups' && gtotal > gpageSize">
-      <button class="btn-text" :style="{ opacity: gpage > 1 ? 1 : .35 }" @click="goGPage(gpage - 1)">‹ 上一页</button>
+      <button class="btn-text pager-btn" :style="{ opacity: gpage > 1 ? 1 : .35 }" @click="goGPage(gpage - 1)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>上一页</button>
       <span style="font-size:13px;color:var(--tg-text-secondary)">{{ gpage }} / {{ Math.max(1, Math.ceil(gtotal / gpageSize)) }}</span>
-      <button class="btn-text" :style="{ opacity: gpage < Math.ceil(gtotal / gpageSize) ? 1 : .35 }" @click="goGPage(gpage + 1)">下一页 ›</button>
+      <button class="btn-text pager-btn" :style="{ opacity: gpage < Math.ceil(gtotal / gpageSize) ? 1 : .35 }" @click="goGPage(gpage + 1)">下一页<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
     </div>
 
     <!-- ═══ 开通账号（单个 / JSON 批量 / Excel 导入） ═══ -->
@@ -474,6 +474,8 @@ export default {
 .mini-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 7px; margin-left: 5px; font-weight: 500; }
 .mini-tag.admin { color: var(--tg-blue); background: rgba(0,0,0,.07); }
 .mini-tag.off { color: #E53935; background: rgba(229,57,53,.1); }
+.topbar-plus { display: inline-flex; align-items: center; gap: 5px; }
+.pager-btn { display: inline-flex; align-items: center; gap: 4px; }
 .pager { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px calc(10px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); }
 .import-tip { font-size: 12.5px; color: var(--tg-text-secondary); line-height: 1.6; padding: 4px 0; }
 </style>

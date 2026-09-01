@@ -29,7 +29,7 @@
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
-            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico">🔥</span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
+            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <img class="msg-image" :src="fileURL(m.file_url)" @load="scrollBottom">
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
@@ -44,8 +44,8 @@
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
             <template v-else>
-              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><span class="e2e-lock" title="端到端加密消息">🔒 </span>{{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
-              <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal">🔒 加密消息 · 点击查看</span></template>
+              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><svg class="e2e-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" title="端到端加密消息"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> {{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
+              <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
               <template v-else>{{ m.content }}</template>
             </template>
             <span class="msg-meta">
@@ -54,7 +54,7 @@
             </span>
             <div v-if="burnVisible(m)" class="burn-chip" :class="{ enc: isEnc(m) }">
               <svg v-if="isEnc(m)" class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2.2"/><rect x="9.8" y="11.7" width="4.4" height="3.6" rx="1" fill="currentColor"/><path d="M10.8 11.7V9.5a1.2 1.2 0 0 1 2.4 0v2.2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-              <span v-else>🔥</span>{{ burnCountdown(m) }}
+              <svg v-else class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>{{ burnCountdown(m) }}
             </div>
           </div>
         </div>
@@ -74,7 +74,7 @@
         <div class="edit-bar-title">编辑消息</div>
         <div class="edit-bar-text">{{ editing.content }}</div>
       </div>
-      <div class="edit-bar-close" @click="cancelEdit">✕</div>
+      <div class="edit-bar-close" @click="cancelEdit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
     </div>
 
     <div v-if="!isDissolved" class="input-bar">
@@ -102,7 +102,7 @@
       <div class="sheet">
         <div class="sheet-title">阅后即焚 · 消息销毁时间</div>
         <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="state.burnSeconds === o.v ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
-          {{ o.label }}<span v-if="state.burnSeconds === o.v"> ✓</span>
+          {{ o.label }}<svg v-if="state.burnSeconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </div>
         <div class="sheet-item sheet-cancel" @click="showBurnSheet = false">取消</div>
       </div>
@@ -138,7 +138,7 @@
           <div v-if="!pendingCount" class="todo-empty">暂无待处理的密钥变更</div>
           <div v-for="p in pendingList" :key="p.user_id" class="todo-item">
             <div class="todo-item-head">
-              <span class="todo-item-name">🔑 {{ p.name }}</span>
+              <span class="todo-item-name"><svg class="todo-key" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> {{ p.name }}</span>
               <span class="todo-item-time">{{ fmtClock(p.created_at) }}</span>
             </div>
             <div class="todo-item-tip">对方的端到端安全密钥已变更，确认信任后才能继续加密收发</div>
@@ -174,7 +174,7 @@
             <div v-if="!receiptList.length" class="sheet-item" style="color:var(--tg-text-secondary)">暂无回执数据</div>
             <div v-for="(r, i) in receiptList" :key="r.id || r.user_id || i" class="receipt-row">
               <span>{{ r.user_display_name || '成员' }}</span>
-              <span class="receipt-status" :class="{ read: r.is_read }">{{ r.is_read ? '✓✓ 已读' : r.is_delivered ? '✓ 已送达' : '未送达' }}</span>
+              <span class="receipt-status" :class="{ read: r.is_read }"><template v-if="r.is_read"><svg class="receipt-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4 4L14 8"/><path d="M10.5 12.5 12.5 14.5 21 6"/></svg>已读</template><template v-else-if="r.is_delivered"><svg class="receipt-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4 4L14 8"/></svg>已送达</template><template v-else>未送达</template></span>
             </div>
           </template>
         </div>
