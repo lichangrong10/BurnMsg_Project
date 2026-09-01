@@ -182,24 +182,48 @@
       </div>
     </div>
 
-    <!-- 文件在线预览层（Word / Excel） -->
+    <!-- 文件在线预览层（Word / Excel / PDF / 文本 / 音视频） -->
     <div v-if="preview.show" class="preview-mask">
       <div class="preview-head">
         <div class="preview-close" @click="closePreview">
           <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </div>
         <div class="preview-title">{{ preview.name }}</div>
+        <div class="preview-zoom" v-if="isOfficePreview || preview.kind === 'pdf'">
+          <div class="pz-btn" @click="previewZoom(-0.25)">−</div>
+          <div class="pz-val">{{ Math.round(preview.zoom * 100) }}%</div>
+          <div class="pz-btn" @click="previewZoom(0.25)">＋</div>
+        </div>
         <div class="preview-dl" @click="downloadPreview">下载</div>
       </div>
-      <div class="preview-body">
+      <div class="preview-body" @dblclick="onPreviewDbl" @touchstart="onPinchStart('preview', $event)" @touchmove="onPinchMove" @touchend="onPinchEnd">
         <div v-if="preview.loading" class="preview-tip">加载中…</div>
         <div v-else-if="preview.error" class="preview-tip">{{ preview.error }}<div><span class="preview-tip-btn" @click="downloadPreview">下载到本地查看</span></div></div>
         <div v-else-if="preview.kind === 'word'" ref="previewBox" class="preview-doc"></div>
+        <template v-else-if="preview.kind === 'pdf'">
+          <div class="preview-pdf-bar">
+            <button class="pdf-nav" :disabled="pdf.page <= 1" @click="pdfGo(pdf.page - 1)">‹ 上一页</button>
+            <span class="pdf-page-label">{{ pdf.page }} / {{ pdf.numPages }}</span>
+            <button class="pdf-nav" :disabled="pdf.page >= pdf.numPages" @click="pdfGo(pdf.page + 1)">下一页 ›</button>
+          </div>
+          <div ref="pdfScroll" class="preview-pdf-scroll">
+            <canvas ref="pdfCanvas"></canvas>
+          </div>
+        </template>
+        <template v-else-if="preview.kind === 'text'">
+          <pre class="preview-text">{{ preview.text }}</pre>
+        </template>
+        <template v-else-if="preview.kind === 'video'">
+          <video class="preview-media" :src="preview.url" controls autoplay playsinline></video>
+        </template>
+        <template v-else-if="preview.kind === 'audio'">
+          <div class="preview-audio"><audio :src="preview.url" controls autoplay playsinline></audio></div>
+        </template>
         <template v-else>
           <div v-if="preview.sheets.length > 1" class="preview-sheet-bar">
             <div v-for="(s, i) in preview.sheets" :key="i" class="preview-sheet-tab" :class="{ on: i === preview.activeSheet }" @click="preview.activeSheet = i">{{ s.name }}</div>
           </div>
-          <div class="preview-doc preview-xlsx" v-html="preview.sheets[preview.activeSheet] ? preview.sheets[preview.activeSheet].html : ''"></div>
+          <div ref="excelBox" class="preview-doc preview-xlsx" v-html="preview.sheets[preview.activeSheet] ? preview.sheets[preview.activeSheet].html : ''"></div>
         </template>
       </div>
     </div>
@@ -211,19 +235,24 @@
           <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </div>
         <div class="img-viewer-name">{{ viewer.name }}</div>
+        <div class="img-viewer-zoom">
+          <div class="iz-btn" @click.stop="imgZoom(-0.25)">−</div>
+          <div class="iz-val">{{ Math.round(viewer.scale * 100) }}%</div>
+          <div class="iz-btn" @click.stop="imgZoom(0.25)">＋</div>
+        </div>
         <div class="img-viewer-dl" @click.stop="downloadViewer">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
         </div>
       </div>
-      <div class="img-viewer-body">
-        <img class="img-viewer-img" :src="viewer.url" @click.stop>
+      <div class="img-viewer-body" @dblclick="imgToggleZoom" @touchstart="imgTouchStart" @touchmove="imgTouchMove" @touchend="imgTouchEnd">
+        <img class="img-viewer-img" :src="viewer.url" :style="imgStyle" @click.stop>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { nextTick } from 'vue'
+import { nextTick, markRaw } from 'vue'
 import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
@@ -247,8 +276,12 @@ export default {
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
-      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0 }, // 文件在线预览
-      viewer: { show: false, url: '', name: '' }, // 图片在线预览
+      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/excel/pdf/text/video/audio）
+      pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
+      viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
+      imgGesture: null, // 图片查看器手势态（pan/pinch）
+      pinch: null, // 文档预览捏合缩放态 { ctx, active, dist, base }
+      wordFit: 1, // Word 首屏宽度适配系数（渲染后缓存）
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
       newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
       reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
@@ -266,6 +299,12 @@ export default {
     canEditAction() {
       const m = this.msgAction
       return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text' && !m.is_encrypted)
+    },
+    isOfficePreview() {
+      return this.preview.kind === 'word' || this.preview.kind === 'excel'
+    },
+    imgStyle() {
+      return { transform: `translate(${this.viewer.tx}px, ${this.viewer.ty}px) scale(${this.viewer.scale})`, transition: 'transform .1s ease-out' }
     },
     isDissolved() {
       return !!(state.chat && state.chat.dissolved_at)
@@ -311,7 +350,8 @@ export default {
   methods: {
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
     onNativeBack(e) {
-      if (this.preview.show)      { this.preview.show = false; e.preventDefault(); return }
+      if (this.viewer.show)       { this.closeViewer(); e.preventDefault(); return }
+      if (this.preview.show)      { this.closePreview(); e.preventDefault(); return }
       if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
       if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
       if (this.showBurnSheet)     { this.showBurnSheet = false; e.preventDefault(); return }
@@ -515,21 +555,28 @@ export default {
       e.target.value = ''
       if (file) sendFile(file)
     },
-    /** 点击文件消息：Word/Excel 在线预览，其他类型维持原下载/打开逻辑 */
+    /** 点击文件消息：按扩展名路由到对应在线预览（Word/Excel/PDF/文本/图片/音视频），未知类型回退下载 */
     openFile(m) {
       if (!m.file_url) return
       const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
       if (ext === 'docx') this.startPreview(m, 'word')
       else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
+      else if (ext === 'pdf') this.startPreview(m, 'pdf')
+      else if (['txt', 'md', 'csv', 'log', 'json', 'xml', 'yml', 'yaml', 'ini', 'conf', 'cfg', 'sql', 'sh', 'bat', 'js', 'ts', 'html', 'css'].includes(ext)) this.startPreview(m, 'text')
+      else if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) this.startPreview(m, 'video')
+      else if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac', 'amr'].includes(ext)) this.startPreview(m, 'audio')
+      else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) this.startPreview(m, 'image')
       else window.open(fileURL(m.file_url), '_blank')
     },
-    /** 在线预览：拉取文件 blob → docx-preview 渲染 Word / SheetJS 渲染 Excel（库均按需动态加载，不进主包） */
+    /** 在线预览：拉取文件 blob → docx-preview 渲染 Word / SheetJS 渲染 Excel / pdf.js 渲染 PDF / 文本 / 原生音视频（库均按需动态加载，不进主包） */
     async startPreview(m, kind) {
-      this.preview = { show: true, kind, name: m.file_name || '附件', url: fileURL(m.file_url), loading: true, error: '', sheets: [], activeSheet: 0 }
+      if (kind === 'image') { this.openImageView(m); return } // 图片直接走大图查看器
+      this.preview = { show: true, kind, name: m.file_name || '附件', url: fileURL(m.file_url), loading: true, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }
+      if (kind === 'video' || kind === 'audio') { this.preview.loading = false; return } // 音视频用原生播放器直连
       if (state.demoMode) { this.preview.loading = false; this.preview.error = '演示模式暂不支持在线预览'; return }
       let blob
       try {
-        blob = await http.get(this.preview.url, { responseType: 'blob', timeout: 30000 })
+        blob = await http.get(this.preview.url, { responseType: 'blob', timeout: 60000 })
       } catch (e) {
         this.preview.loading = false
         this.preview.error = '文件获取失败'
@@ -541,12 +588,17 @@ export default {
           this.preview.loading = false
           await nextTick()
           await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true })
-          // 纸张比屏幕宽时整页缩放适配（Chrome/WebView 支持 zoom，布局随缩放重排），观感同微信
+          // 缓存首屏宽度适配系数，缩放时在 fit 基础上叠加用户 zoom
           const box = this.$refs.previewBox
+          const sec = box ? box.querySelector('section.docx') : null
           const pw = box ? box.clientWidth : 0
-          if (pw > 0) box.querySelectorAll('section.docx').forEach(sec => {
-            if (sec.offsetWidth > pw) sec.style.zoom = (pw / sec.offsetWidth).toFixed(3)
-          })
+          this.wordFit = (sec && pw > 0 && sec.offsetWidth > pw) ? pw / sec.offsetWidth : 1
+          this.applyWordZoom()
+        } else if (kind === 'pdf') {
+          await this.openPdf(blob)
+        } else if (kind === 'text') {
+          this.preview.text = await blob.text()
+          this.preview.loading = false
         } else {
           const buf = await blob.arrayBuffer()
           const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
@@ -564,6 +616,8 @@ export default {
           }
           if (!this.preview.sheets.length) throw new Error('empty workbook')
           this.preview.loading = false
+          await nextTick()
+          this.applyExcelZoom()
         }
       } catch (e) {
         console.warn('[preview] render fail', e)
@@ -571,16 +625,138 @@ export default {
         this.preview.error = '该文件无法预览'
       }
     },
-    closePreview() { this.preview.show = false },
+    /** PDF 预览：pdf.js 绘制到 canvas（跨平台，Android WebView 亦可用），支持翻页与缩放 */
+    async openPdf(blob) {
+      const pdfjsLib = await import('pdfjs-dist')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+      const buf = await blob.arrayBuffer()
+      const docBase = document.baseURI || location.href
+      const doc = await pdfjsLib.getDocument({
+        data: new Uint8Array(buf),
+        cMapUrl: new URL('pdfjs/cmaps/', docBase).href,
+        cMapPacked: true,
+        standardFontDataUrl: new URL('pdfjs/standard_fonts/', docBase).href,
+        isEvalSupported: false
+      }).promise
+      this.pdf = { doc: markRaw(doc), page: 1, numPages: doc.numPages, fitScale: 1, rendering: false }
+      const first = await doc.getPage(1)
+      const base = first.getViewport({ scale: 1 })
+      const scroll = this.$refs.pdfScroll
+      const cw = scroll ? scroll.clientWidth : 0
+      this.pdf.fitScale = cw > 0 ? Math.min(3, cw / base.width) : 1
+      this.preview.loading = false
+      await nextTick()
+      await this.renderPdfPage()
+    },
+    async renderPdfPage() {
+      const doc = this.pdf.doc
+      const canvas = this.$refs.pdfCanvas
+      if (!doc || !canvas) return
+      if (this.pdf.rendering) { this.pdf._rerender = true; return } // 合并高频缩放请求
+      this.pdf.rendering = true
+      try {
+        const page = await doc.getPage(this.pdf.page)
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        const scale = this.pdf.fitScale * (this.preview.zoom || 1) * dpr
+        const viewport = page.getViewport({ scale })
+        canvas.width = Math.floor(viewport.width)
+        canvas.height = Math.floor(viewport.height)
+        canvas.style.width = Math.floor(viewport.width / dpr) + 'px'
+        canvas.style.height = Math.floor(viewport.height / dpr) + 'px'
+        const ctx = canvas.getContext('2d')
+        await page.render({ canvasContext: ctx, viewport }).promise
+      } catch (e) {
+        console.error('[pdf] render fail', e)
+        this.preview.error = 'PDF 渲染失败：' + (e && e.message ? e.message : String(e))
+      } finally {
+        this.pdf.rendering = false
+        if (this.pdf._rerender) { this.pdf._rerender = false; this.renderPdfPage() }
+      }
+    },
+    async pdfGo(p) {
+      if (!this.pdf.doc || p < 1 || p > this.pdf.numPages) return
+      this.pdf.page = p
+      await nextTick()
+      await this.renderPdfPage()
+      const scroll = this.$refs.pdfScroll
+      if (scroll) scroll.scrollTop = 0
+    },
+    /** 文档预览统一缩放：word（zoom 重排，清晰）、excel（zoom）、pdf（canvas 重绘） */
+    applyWordZoom() {
+      const box = this.$refs.previewBox
+      if (!box) return
+      const z = (this.wordFit || 1) * (this.preview.zoom || 1)
+      box.querySelectorAll('section.docx').forEach(sec => { sec.style.zoom = z.toFixed(4) })
+    },
+    applyExcelZoom() {
+      const el = this.$refs.excelBox
+      if (el) el.style.zoom = String(this.preview.zoom || 1)
+    },
+    previewZoom(d) { this.setPreviewZoom(this.preview.zoom + d) },
+    setPreviewZoom(v) {
+      this.preview.zoom = Math.max(0.25, Math.min(5, v))
+      if (this.preview.kind === 'word') this.applyWordZoom()
+      else if (this.preview.kind === 'pdf') this.renderPdfPage()
+      else this.applyExcelZoom()
+    },
+    onPreviewDbl() {
+      if (this.isOfficePreview || this.preview.kind === 'pdf') this.setPreviewZoom(this.preview.zoom > 1.25 ? 1 : 2)
+    },
+    onPinchStart(ctx, e) {
+      if (e.touches.length !== 2) return
+      this.pinch = { ctx, active: true, dist: this._dist(e.touches), base: ctx === 'img' ? this.viewer.scale : this.preview.zoom }
+    },
+    onPinchMove(e) {
+      if (!this.pinch || !this.pinch.active || e.touches.length !== 2) return
+      const d = this._dist(e.touches)
+      if (d <= 0) return
+      const scale = this.pinch.base * (d / this.pinch.dist)
+      if (this.pinch.ctx === 'img') this.setImgScale(scale)
+      else this.setPreviewZoom(scale)
+    },
+    onPinchEnd() { if (this.pinch) this.pinch.active = false },
+    _dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) },
+    closePreview() {
+      this.preview.show = false
+      if (this.pdf.doc) { try { this.pdf.doc.destroy() } catch (e) {} }
+      this.pdf = { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }
+      this.pinch = null
+    },
     downloadPreview() {
       if (this.preview.url) window.open(this.preview.url, '_blank')
     },
-    /** 图片在线预览：点开全屏大图查看，可下载；点击遮罩/关闭按钮退出 */
+    /** 图片在线预览：点开全屏大图查看，可缩放/平移/下载；点击遮罩/关闭按钮退出 */
     openImageView(m) {
       if (!m || !m.file_url) return
-      this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '' }
+      this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '', scale: 1, tx: 0, ty: 0 }
     },
-    closeViewer() { this.viewer.show = false },
+    closeViewer() { this.viewer.show = false; this.imgGesture = null },
+    /** 图片缩放 */
+    setImgScale(v) {
+      this.viewer.scale = Math.max(0.5, Math.min(5, v))
+      if (this.viewer.scale <= 1) { this.viewer.tx = 0; this.viewer.ty = 0 }
+    },
+    imgZoom(d) { this.setImgScale(this.viewer.scale + d) },
+    imgToggleZoom() { this.setImgScale(this.viewer.scale > 1.2 ? 1 : 2.5) },
+    /** 图片单指平移 / 双指捏合缩放 */
+    imgTouchStart(e) {
+      if (e.touches.length === 1) {
+        this.imgGesture = { mode: 'pan', sx: e.touches[0].clientX, sy: e.touches[0].clientY, tx0: this.viewer.tx, ty0: this.viewer.ty }
+      } else if (e.touches.length === 2) {
+        this.imgGesture = { mode: 'pinch', dist: this._dist(e.touches), scale0: this.viewer.scale }
+      }
+    },
+    imgTouchMove(e) {
+      if (!this.imgGesture) return
+      if (this.imgGesture.mode === 'pan' && e.touches.length === 1 && this.viewer.scale > 1) {
+        this.viewer.tx = this.imgGesture.tx0 + (e.touches[0].clientX - this.imgGesture.sx)
+        this.viewer.ty = this.imgGesture.ty0 + (e.touches[0].clientY - this.imgGesture.sy)
+      } else if (this.imgGesture.mode === 'pinch' && e.touches.length === 2) {
+        const d = this._dist(e.touches)
+        if (d > 0) this.setImgScale(this.imgGesture.scale0 * d / this.imgGesture.dist)
+      }
+    },
+    imgTouchEnd() { this.imgGesture = null },
     downloadViewer() {
       if (!this.viewer.url) return
       const a = document.createElement('a')
@@ -717,6 +893,26 @@ export default {
 .img-viewer-close, .img-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
 .img-viewer-close:active, .img-viewer-dl:active { background: rgba(255,255,255,.15); }
 .img-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.img-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.img-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; -webkit-user-drag: none; }
+.img-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+.img-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; -webkit-user-drag: none; transform-origin: center center; will-change: transform; }
+.img-viewer-zoom { display: flex; align-items: center; gap: 4px; margin: 0 2px; }
+.iz-btn { color: #fff; font-size: 17px; line-height: 1; cursor: pointer; padding: 6px 9px; border-radius: 8px; user-select: none; }
+.iz-btn:active { background: rgba(255,255,255,.15); }
+.iz-val { color: rgba(255,255,255,.85); font-size: 12px; min-width: 42px; text-align: center; }
+
+/* ── 文档预览：缩放按钮 / PDF / 文本 / 音视频 ── */
+.preview-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-shrink: 0; }
+.pz-btn { color: var(--tg-text); font-size: 16px; line-height: 1; cursor: pointer; padding: 5px 9px; border-radius: 8px; user-select: none; }
+.pz-btn:active { background: var(--tg-gray-bg); }
+.pz-val { color: var(--tg-text-secondary); font-size: 12px; min-width: 42px; text-align: center; }
+.preview-pdf-bar { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 8px 10px; background: #fff; border-bottom: 1px solid var(--tg-border); position: sticky; top: 0; z-index: 2; flex-shrink: 0; }
+.pdf-nav { border: 1px solid var(--tg-border); background: #fff; color: var(--tg-text); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+.pdf-nav:disabled { opacity: .4; cursor: default; }
+.pdf-page-label { font-size: 13px; color: var(--tg-text-secondary); min-width: 56px; text-align: center; }
+.preview-pdf-scroll { flex: 1; overflow: auto; background: #3a3f45; padding: 10px 0 24px; text-align: center; }
+.preview-pdf-scroll canvas { margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,.35); background: #fff; }
+.preview-text { margin: 0; padding: 16px; background: #fff; min-height: 100%; white-space: pre-wrap; word-break: break-word; font-family: Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 13px; line-height: 1.7; color: #222; }
+.preview-media { width: 100%; max-height: 100%; background: #000; }
+.preview-audio { padding: 40px 20px; text-align: center; }
+.preview-audio audio { width: 100%; }
 </style>
