@@ -19,6 +19,7 @@
     "axios": "^1.7.7",
     "docx-preview": "^0.3.7",
     "exceljs": "^4.4.0",
+    "pdfjs-dist": "^6.3.289",
     "socket.io-client": "^4.8.3",
     "vue": "^3.4.38",
     "xlsx": "^0.18.5"
