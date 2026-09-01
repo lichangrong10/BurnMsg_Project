@@ -87,7 +87,7 @@ import ChatRoom from './views/ChatRoom.vue'
 import CreateGroup from './views/CreateGroup.vue'
 import ChatInfo from './views/ChatInfo.vue'
 import AdminView from './views/Admin.vue'
-import AnnouncementsView from './views/AnnouncementsView.vue'
+import AnnouncementsView from './views/Announcements.vue'
 import FeedbackView from './views/Feedback.vue'
 
 const DEVICE_TYPE_TEXT = { web: '网页版', mobile: '手机版', desktop: '桌面版' }
