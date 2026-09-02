@@ -27,11 +27,13 @@
       <input class="search-input" v-model.trim="state.keyword" :placeholder="state.tab === 'chats' ? '搜索' : state.tab === 'channels' ? '搜索频道' : '搜索姓名 / 手机号'">
     </div>
 
-    <div class="content-scroll">
-      <Chats v-if="state.tab === 'chats'" />
-      <Channels v-else-if="state.tab === 'channels'" />
-      <Contacts v-else-if="state.tab === 'contacts'" />
+    <div class="content-scroll tab-anim">
+      <transition :name="tabTransition">
+      <Chats v-if="state.tab === 'chats'" class="pad-search" />
+      <Channels v-else-if="state.tab === 'channels'" class="pad-search" />
+      <Contacts v-else-if="state.tab === 'contacts'" class="pad-search" />
       <Me v-else />
+      </transition>
     </div>
     <div style="height: 10%;background: #E8EBEE;">
 
@@ -69,11 +71,18 @@ export default {
   name: 'HomeView',
   components: { Chats, Channels, Contacts, Me },
   data() {
-    return { state }
+    return { state, tabTransition: 'tab-slide-left' }
   },
   computed: {
     totalUnread() {
       return state.convs.reduce((s, c) => s + (c.unread || 0), 0)
+    }
+  },
+  watch: {
+    // 按 tab 顺序判断滑动方向：切到更靠右的 tab 左滑入，反之右滑入
+    'state.tab'(to, from) {
+      const order = ['chats', 'channels', 'contacts', 'me']
+      this.tabTransition = order.indexOf(to) >= order.indexOf(from) ? 'tab-slide-left' : 'tab-slide-right'
     }
   },
   methods: {
