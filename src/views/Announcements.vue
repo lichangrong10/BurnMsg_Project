@@ -11,6 +11,7 @@
     </div>
 
     <div class="chat-body ann-body">
+      <div v-if="state.annUnread" class="ann-readall" @click="readAll">全部已读</div>
       <div v-if="!state.announcements.length" class="empty-state" style="margin-top:90px">
         <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
         <div>暂无公告</div>
@@ -62,7 +63,7 @@
 </template>
 
 <script>
-import { state, readAnnouncement } from '../store'
+import { state, readAnnouncement, markAllAnnouncementsRead } from '../store'
 import { fmtDateTime } from '../utils/format'
 
 export default {
@@ -103,6 +104,7 @@ export default {
       this.detail = a
       readAnnouncement(a)
     },
+    readAll() { markAllAnnouncementsRead() },
     closeDetail() { this.detail = null }
   }
 }
@@ -110,6 +112,8 @@ export default {
 
 <style scoped>
 .ann-page { background: var(--tg-gray-bg); }
+.ann-readall { display: flex; align-items: center; justify-content: center; margin: 0 0 10px; padding: 10px 0; font-size: 14px; font-weight: 600; color: #fff; background: var(--tg-blue); border-radius: 12px; cursor: pointer; }
+.ann-readall:active { filter: brightness(.93); }
 .ann-body { padding: 12px 12px 24px; }
 
 /* ── 列表卡片 ── */
