@@ -84,7 +84,8 @@
       <input type="file" ref="galleryInput" accept="image/*,video/*" style="display:none" @change="onFilePicked">
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
-      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="autoGrow" @keydown.enter.exact.prevent="send"></textarea>
+      <button v-if="state.chat && state.chat.type !== 'private'" class="attach-btn at-btn" @click="openMention" title="@ 群成员">@</button>
+      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send"></textarea>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       </button>
@@ -127,6 +128,24 @@
           </div>
         </div>
         <div class="sheet-item sheet-cancel" @click="showAttachSheet = false">取消</div>
+      </div>
+    </div>
+
+    <!-- ═══════ @ 成员选择器 ═══════ -->
+    <div v-if="mentionPick" class="overlay" @click.self="closeMention">
+      <div class="sheet mention-sheet">
+        <div class="sheet-title">选择要 @ 的成员</div>
+        <div class="mention-list">
+          <div class="mention-item" @click="selectMention({ name: '所有人' })">
+            <div class="mention-avatar" style="background:var(--tg-blue)">全</div>
+            <span class="mention-name">所有人</span>
+          </div>
+          <div v-for="m in mentionMembers" :key="m.uid || m.name" class="mention-item" @click="selectMention(m)">
+            <div class="mention-avatar" :style="{ background: avatarColor(m.name) }">{{ m.name[0] }}</div>
+            <span class="mention-name">{{ m.name }}</span>
+          </div>
+        </div>
+        <div class="sheet-item sheet-cancel" @click="closeMention">取消</div>
       </div>
     </div>
 
@@ -268,6 +287,8 @@ export default {
       state,
       burnOptions: BURN_OPTIONS,
       draft: '',
+      mentionPick: false,   // @ 成员选择器是否打开
+      mentionIndex: -1,     // @ 触发位置（待插入处）
       showBurnSheet: false,
       showAttachSheet: false,
       showTofuTodo: false,
@@ -308,6 +329,20 @@ export default {
     },
     isDissolved() {
       return !!(state.chat && state.chat.dissolved_at)
+    },
+    mentionMembers() {
+      if (!state.chat || state.chat.type === 'private') return []
+      const list = Array.isArray(state.groupMembers) ? state.groupMembers : []
+      const seen = {}
+      const out = []
+      for (const m of list) {
+        const u = memberUser(m)
+        const name = (u && (u.display_name || u.name || u.username || u.nickname || u.phone)) || m.display_name || m.name || ''
+        if (!name || seen[name]) continue
+        seen[name] = true
+        out.push({ uid: memberUid(m), name })
+      }
+      return out
     },
     chatStatus() {
       const c = state.chat
@@ -358,6 +393,7 @@ export default {
       if (this.showTofuTodo)      { this.showTofuTodo = false; e.preventDefault(); return }
       if (this.showAttachSheet)   { this.showAttachSheet = false; e.preventDefault(); return }
       if (this.editing)           { this.editing = null; e.preventDefault(); return }
+      if (this.mentionPick) { this.closeMention(); e.preventDefault(); return }
     },
     pickFrom(kind) {
       this.showAttachSheet = false
@@ -450,6 +486,75 @@ export default {
       const el = e.target
       el.style.height = 'auto'
       el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+    },
+    onDraftInput(e) {
+      this.autoGrow(e)
+      this.tryOpenMention()
+    },
+    tryOpenMention() {
+      if (!state.chat || state.chat.type === 'private') return
+      const el = this.$refs.msgInput
+      if (!el) return
+      const pos = el.selectionStart
+      const before = this.draft.slice(0, pos)
+      if (before.endsWith('@') && (before.length === 1 || /[\s]$/.test(before.slice(0, -1)))) {
+        this.mentionIndex = pos - 1
+        this.mentionPick = true
+      }
+    },
+    openMention() {
+      const el = this.$refs.msgInput
+      this.mentionIndex = el ? el.selectionStart : this.draft.length
+      this.mentionPick = true
+    },
+    selectMention(m) {
+      const name = (m && m.name) || ''
+      const idx = this.mentionIndex
+      this.closeMention()
+      if (!name) return
+      const insert = '@' + name + ' '
+      const pos = (idx >= 0 && idx <= this.draft.length) ? idx : this.draft.length
+      const before = this.draft.slice(0, pos)
+      const after = this.draft.slice(pos + (this.draft.slice(pos).startsWith('@') ? 1 : 0))
+      this.draft = before + insert + after
+      nextTick(() => {
+        const el = this.$refs.msgInput
+        if (!el) return
+        const p = pos + insert.length
+        el.focus()
+        el.setSelectionRange(p, p)
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+      })
+    },
+    closeMention() {
+      this.mentionPick = false
+      this.mentionIndex = -1
+    },
+    escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    },
+    mentionNames() {
+      const s = new Set(['所有人'])
+      this.mentionMembers.forEach(m => m.name && s.add(m.name))
+      return Array.from(s).sort((a, b) => b.length - a.length)
+    },
+    isMyName(name) {
+      const me = state.me || {}
+      return !!name && [me.display_name, me.name, me.username, me.nickname].filter(Boolean).includes(name)
+    },
+    renderMentionHtml(text) {
+      if (!text) return ''
+      const esc = this.escapeHtml(String(text))
+      if (!state.chat || state.chat.type === 'private') return esc
+      const names = this.mentionNames()
+      if (!names.length) return esc
+      return esc.replace(/@[^\s@，。,.!?！？:：;；、"'（）()[\]<>]+/g, whole => {
+        const name = whole.slice(1)
+        if (!names.includes(name)) return whole
+        const cls = this.isMyName(name) ? 'mention mention-me' : 'mention'
+        return '<span class="' + cls + '">' + whole + '</span>'
+      })
     },
     onMsgScroll() {
       const b = this.$refs.msgBox
