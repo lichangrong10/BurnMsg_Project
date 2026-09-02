@@ -1,4 +1,4 @@
-﻿package com.burnmsg.app;
+package com.burnmsg.app;
 
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
