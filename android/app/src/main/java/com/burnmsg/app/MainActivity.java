@@ -48,6 +48,8 @@ public class MainActivity extends BridgeActivity {
 
         private Long downloadId = null;
         private BroadcastReceiver downloadReceiver;
+        private android.os.Handler progressHandler;
+        private Runnable progressRunnable;
 
         @PluginMethod
         public void downloadAndInstall(PluginCall call) {
@@ -80,6 +82,36 @@ public class MainActivity extends BridgeActivity {
 
                 downloadId = dm.enqueue(request);
 
+                // 进度轮询（每 500ms 查询 DownloadManager 推送百分比）
+                progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+                progressRunnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        DownloadManager.Query q = new DownloadManager.Query();
+                        q.setFilterById(downloadId);
+                        Cursor c = dm.query(q);
+                        boolean keep = false;
+                        if (c != null && c.moveToFirst()) {
+                            int st = c.getInt(c.getColumnIndex(DownloadManager.COLUMN_STATUS));
+                            if (st == DownloadManager.STATUS_RUNNING) {
+                                long done = c.getLong(c.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                                long total = c.getLong(c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                                if (total > 0) {
+                                    com.getcapacitor.JSObject d = new com.getcapacitor.JSObject();
+                                    d.put("progress", (int)(done * 100 / total));
+                                    notifyListeners("downloadProgress", d);
+                                }
+                                keep = true;
+                            } else if (st == DownloadManager.STATUS_PENDING) {
+                                keep = true;
+                            }
+                            c.close();
+                        }
+                        if (keep) progressHandler.postDelayed(this, 500);
+                    }
+                };
+                progressHandler.postDelayed(progressRunnable, 500);
+
                 // 注册下载完成广播
                 if (downloadReceiver != null) {
                     try { ctx.unregisterReceiver(downloadReceiver); } catch (Exception e) { /* ignore */ }
@@ -99,9 +131,12 @@ public class MainActivity extends BridgeActivity {
                                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
                                     String path = cursor.getString(cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI));
                                     cursor.close();
+                                    if (progressHandler != null && progressRunnable != null) progressHandler.removeCallbacks(progressRunnable);
+                                    notifyListeners("downloadComplete", new com.getcapacitor.JSObject());
                                     installApk(context, path);
                                 } else if (status == DownloadManager.STATUS_FAILED) {
                                     cursor.close();
+                                    if (progressHandler != null && progressRunnable != null) progressHandler.removeCallbacks(progressRunnable);
                                     notifyError("下载失败");
                                 }
                             }
