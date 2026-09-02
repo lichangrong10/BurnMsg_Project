@@ -13,7 +13,7 @@ import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlainte
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 
 export const state = reactive({
-  view: storage.token ? 'main' : 'login', // login | changePwd | main
+  view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
   tab: 'chats',                           // chats | channels | contacts | me
   keyword: '',
   me: storage.user || {},
@@ -146,6 +146,7 @@ export async function login(phone, password) {
   state.me = d.user
   if (d.force_change_pwd || d.user.force_change_pwd) {
     state.view = 'changePwd'
+    storage.forceChangePwd = true
     state.pwdForm.old = password
   } else {
     state.view = 'main'
@@ -173,6 +174,7 @@ export async function changePassword() {
   if (state.pwdForm.n1 !== state.pwdForm.n2) { state.pwdErr = '两次输入的新密码不一致'; return false }
   if (state.demoMode) {
     if (state.view === 'changePwd') { state.view = 'main'; bootstrap() }
+    storage.forceChangePwd = false
     showToast('演示模式：密码已修改（模拟）')
     return true
   }
@@ -180,6 +182,7 @@ export async function changePassword() {
   try {
     await api.changePassword(state.pwdForm.old, state.pwdForm.n1)
     if (state.view === 'changePwd') { state.view = 'main'; bootstrap() }
+    storage.forceChangePwd = false
     showToast('密码修改成功')
     return true
   } catch (e) {

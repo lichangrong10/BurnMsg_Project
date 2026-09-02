@@ -39,8 +39,12 @@ export const storage = {
   get demo() { return localStorage.getItem('bm_demo') === '1' },
   set demo(v) { localStorage.setItem('bm_demo', v ? '1' : '0') },
 
+  // 强制改密标记：登录时后端返回 force_change_pwd=true 则置 1，改密成功后清除
+  get forceChangePwd() { return localStorage.getItem('bm_force_change_pwd') === '1' },
+  set forceChangePwd(v) { v ? localStorage.setItem('bm_force_change_pwd', '1') : localStorage.removeItem('bm_force_change_pwd') },
+
   // 注意：bm_device_id 故意不在清理清单里——清了它，每次登录都会变成"新设备"
   clear() {
-    ['bm_access_token', 'bm_refresh_token', 'bm_user', 'bm_demo'].forEach(k => localStorage.removeItem(k))
+    ['bm_access_token', 'bm_refresh_token', 'bm_user', 'bm_demo', 'bm_force_change_pwd'].forEach(k => localStorage.removeItem(k))
   }
 }
