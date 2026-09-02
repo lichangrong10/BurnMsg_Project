@@ -1,12 +1,13 @@
 <template>
   <div class="main-page">
     <div class="topbar">
-      <div class="topbar-title">{{ state.tab === 'chats' ? '焚信' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
-      <!-- 紧急公告小条：相对手机屏幕居中，点击查看详情卡片，× 掉不再显示 -->
-      <div v-if="state.tab === 'chats' && state.urgentBanner" class="urgent-chip" @click="openUrgentBanner">
-        <svg class="uc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 21h14"/><path d="M12 2v1"/><path d="m4.2 4.2.7.7"/><path d="m19.8 4.2-.7.7"/><path d="M2 13h1"/><path d="M21 13h1"/></svg>
-        <span class="uc-text">【紧急】{{ state.urgentBanner.title }}</span>
-        <svg class="uc-close" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" @click.stop="dismissUrgentBanner"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      <div class="topbar-title" :class="{ 'with-notice': state.tab === 'chats' && state.urgentBanner }">{{ state.tab === 'chats' ? '焚信' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
+      <div v-if="state.tab === 'chats' && state.urgentBanner" class="notice-bar" :class="{ 'is-normal': state.urgentBanner.priority !== 'urgent' }" @click="openUrgentBanner">
+        <svg class="nb-icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M11 5 6 9H2v6h4l5 4V5Z"/></svg>
+        <svg class="nb-wave" width="16" height="14" viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 4.5c3.2 2.3 3.2 4.7 0 7"/><path d="M4 1.5c5.8 4.2 5.8 8.8 0 13"/></svg>
+        <span class="nb-comma">,</span>
+        <span class="nb-text">{{ state.urgentBanner.title }}</span>
+        <svg class="nb-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
       <div style="display:flex;align-items:center;gap:2px" v-if="state.tab === 'chats'">
         <div class="topbar-icon" style="position:relative" @click="openAnnouncements" title="公告">
@@ -51,7 +52,7 @@
 </template>
 
 <script>
-import { state, openAnnouncements, openUrgentBanner, dismissUrgentBanner } from '../store'
+import { state, openAnnouncements, openUrgentBanner } from '../store'
 import Chats from './Chats.vue'
 import Contacts from './Contacts.vue'
 import Me from './Me.vue'
@@ -69,43 +70,40 @@ export default {
   },
   methods: {
     openAnnouncements,
-    openUrgentBanner,
-    dismissUrgentBanner
+    openUrgentBanner
   }
 }
 </script>
 <style scoped>
-/* ── 紧急公告小条：相对手机屏幕居中 ── */
-.topbar { position: relative; }
-.urgent-chip {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 46%;
-  max-width: 220px;
+/* ── 首页公告横幅：极简复古（黑边 + 暗豆沙紫底 + 亮红前景）── */
+.topbar-title.with-notice { flex: 0 0 auto; white-space: nowrap; }
+.notice-bar {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
-  background: linear-gradient(90deg, #E53935 0%, #FF7043 100%);
-  border-radius: 999px;
-  padding: 6px 9px;
-  color: #fff;
+  gap: 7px;
+  padding: 5px 9px;
+  background: #6E5A63;
+  border: 1px solid #000;
+  border-radius: 2px;
+  color: #FF3B30;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(229, 57, 53, .5);
-  z-index: 2;
+  overflow: hidden;
 }
-.uc-icon { flex-shrink: 0; }
-.uc-text {
+.notice-bar.is-normal { background: #DCF0E3; color: #2E9E50; }
+.nb-icon { flex-shrink: 0; }
+.nb-wave { flex-shrink: 0; }
+.nb-comma { flex-shrink: 0; font-size: 15px; font-weight: 700; line-height: 1; transform: translateY(-1px); }
+.nb-text {
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: .5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: center;
 }
-.uc-close { flex-shrink: 0; opacity: .92; border-radius: 50%; padding: 1px; box-sizing: content-box; }
-.uc-close:active { background: rgba(255, 255, 255, .28); }
+.nb-arrow { flex-shrink: 0; }
 </style>

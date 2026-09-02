@@ -811,7 +811,7 @@ function annDismissedId() {
 /** 从公告列表计算首页紧急横幅：最新一条未读且未被 × 掉的 urgent 公告 */
 function updateUrgentBanner() {
   const list = state.announcements || []
-  state.urgentBanner = list.find(a => a.priority === 'urgent' && !a.is_read && a.id !== annDismissedId()) || null
+  state.urgentBanner = (list.find(a => a.priority === 'urgent' && !a.is_read && a.id !== annDismissedId()) || list.find(a => !a.is_read && a.id !== annDismissedId())) || null
 }
 
 /** 打开公告中心 */
@@ -847,6 +847,18 @@ export async function readAnnouncement(a) {
   } catch (e) { /* 静默：已读上报失败不影响阅读 */ }
 }
 
+/** 全部已读：本地立即置已读并清首页横幅，后台并发上报（幂等静默） */
+export async function markAllAnnouncementsRead() {
+  const list = state.announcements || []
+  const unread = list.filter(a => !a.is_read)
+  if (!unread.length) return
+  list.forEach(a => { a.is_read = true })
+  state.annUnread = 0
+  state.urgentBanner = null
+  if (state.demoMode) return
+  await Promise.all(unread.map(a => api.markAnnouncementRead(a.id).catch(() => {})))
+}
+
 /** announcement:new：公告实时推送 → 提示音 + toast + 角标/列表联动；urgent 立即上首页跑马灯 */
 onWs(WS_EVENTS.ANNOUNCEMENT_NEW, p => {
   if (state.demoMode) return
@@ -854,7 +866,7 @@ onWs(WS_EVENTS.ANNOUNCEMENT_NEW, p => {
   const ann = (p && (p.announcement || p.data || p)) || {}
   showToast('新公告：' + (ann.title || '点击查看'))
   if (state.showAnnouncements) loadAnnouncements()
-  else refreshAnnUnread()
+  else { refreshAnnUnread(); loadAnnouncements(true) }
   // urgent：payload 带完整公告时立即上首页跑马灯，并静默拉列表同步角标/横幅
   if (ann.priority === 'urgent') {
     if (ann.id && ann.title && ann.content && ann.id !== annDismissedId()) {
