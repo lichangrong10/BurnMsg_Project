@@ -13,7 +13,7 @@ import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlainte
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 
 export const state = reactive({
-  view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
+  view: storage.token ? 'main' : 'login', // login | changePwd | main
   tab: 'chats',                           // chats | channels | contacts | me
   keyword: '',
   me: storage.user || {},
@@ -48,7 +48,7 @@ export const state = reactive({
   showAnnouncements: false, // 公告中心页（覆盖层）
   announcements: [],      // 公告列表（含 is_read 标记）
   annUnread: 0,           // 未读公告数（首页铃铛角标）
-  annPopup: null,         // 首页弹窗展示的最新未读公告
+  urgentBanner: null,     // 首页紧急跑马灯展示的公告（最新未读 urgent）
   annFocusId: null,       // 进公告中心后自动展开的公告 id（从紧急横幅跳入时用）
   showFeedback: false,    // 意见反馈页（覆盖层）
   feedbackList: [],       // 我的反馈列表（含管理员回复）
@@ -146,7 +146,6 @@ export async function login(phone, password) {
   state.me = d.user
   if (d.force_change_pwd || d.user.force_change_pwd) {
     state.view = 'changePwd'
-    storage.forceChangePwd = true
     state.pwdForm.old = password
   } else {
     state.view = 'main'
@@ -174,7 +173,6 @@ export async function changePassword() {
   if (state.pwdForm.n1 !== state.pwdForm.n2) { state.pwdErr = '两次输入的新密码不一致'; return false }
   if (state.demoMode) {
     if (state.view === 'changePwd') { state.view = 'main'; bootstrap() }
-    storage.forceChangePwd = false
     showToast('演示模式：密码已修改（模拟）')
     return true
   }
@@ -182,7 +180,6 @@ export async function changePassword() {
   try {
     await api.changePassword(state.pwdForm.old, state.pwdForm.n1)
     if (state.view === 'changePwd') { state.view = 'main'; bootstrap() }
-    storage.forceChangePwd = false
     showToast('密码修改成功')
     return true
   } catch (e) {
@@ -212,8 +209,7 @@ export function forceLogout() {
   state.showAnnouncements = false
   state.announcements = []
   state.annUnread = 0
-  state.annPopup = null
-  state.showAnnPopup = false
+  state.urgentBanner = null
   state.annFocusId = null
   state.showFeedback = false
   state.feedbackList = []
@@ -416,7 +412,7 @@ async function fillMissingPreviews() {
 export async function bootstrap() {
   applyTheme(curThemeColor) // 进主界面先按本地已存主题色恢复，避免等接口期间闪回默认蓝
   await Promise.all([loadConvs(), loadContacts()])
-  loadAnnouncements(true).then(maybeAutoPopup)
+  refreshAnnUnread()
   if (!state.demoMode) {
     if (storage.token) connectWs(storage.token) // 刷新页面后凭本地 token 恢复 WS 连接
     try {
@@ -646,14 +642,10 @@ function scheduleConvReload() {
 }
 
 
-/** 判断消息是否 @ 了当前用户：优先用后端 Message.mentions（被@成员 uid 数组）精确判定，兜底按文本「@昵称」匹配 */
-function mentionsMe(m) {
-  if (!m) return false
+/** 判断消息文本是否 @ 了当前用户（按本人展示名匹配） */
+function mentionsMe(text) {
+  if (!text) return false
   const me = state.me || {}
-  if (Array.isArray(m.mentions) && m.mentions.length && me.id != null) {
-    if (m.mentions.some(uid => String(uid) === String(me.id))) return true
-  }
-  const text = m.content || ''
   const names = [me.display_name, me.name, me.username, me.nickname, me.real_name].filter(Boolean)
   if (!names.length) return false
   const s = String(text)
@@ -701,7 +693,7 @@ async function onWsNewMessage(p) {
     if (!mine) {
       const c = state.convs.find(x => String(x.id) === String(cid))
       if (c) c.unread = (c.unread || 0) + 1
-      showToast(mentionsMe(m) ? '@了你：' + (messagePreview(m) || '').slice(0, 30) : '新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到消息的文字提示
+      showToast(mentionsMe(m.content) ? '@了你：' + (messagePreview(m) || '').slice(0, 30) : '新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到消息的文字提示
     }
     setLastMsg(cid, messagePreview(m))
   }
@@ -801,33 +793,29 @@ export async function refreshAnnUnread() {
 export async function loadAnnouncements(quiet) {
   if (state.demoMode) {
     state.announcements = (DEMO.announcements || []).slice()
-    updateAnnPopup()
+    updateUrgentBanner()
     refreshAnnUnread()
     return
   }
   try {
     const d = await api.getAnnouncements()
     state.announcements = asArray(d)
-    updateAnnPopup()
+    updateUrgentBanner()
     refreshAnnUnread()
   } catch (e) {
     if (!quiet) showToast(e.message)
   }
 }
 
-/** 从公告列表取最新未读公告，用于首页弹窗 */
-function updateAnnPopup() {
-  const list = state.announcements || []
-  const unread = list.filter(a => !a.is_read)
-  const latest = sortByTimeAsc(unread).pop() || null
-  state.annPopup = latest
+/** 用户 × 掉的紧急横幅公告 id（本地持久化，防重拉列表后复活） */
+function annDismissedId() {
+  try { return localStorage.getItem('bm_ann_dismissed') || '' } catch { return '' }
 }
 
-/** 进入主页时若有最新未读公告则自动弹出 */
-function maybeAutoPopup() {
-  if (!state.annPopup) return
-  if (state.view !== 'main' || state.chat) return
-  state.showAnnPopup = true
+/** 从公告列表计算首页紧急横幅：最新一条未读且未被 × 掉的 urgent 公告 */
+function updateUrgentBanner() {
+  const list = state.announcements || []
+  state.urgentBanner = (list.find(a => a.priority === 'urgent' && !a.is_read && a.id !== annDismissedId()) || list.find(a => !a.is_read && a.id !== annDismissedId())) || null
 }
 
 /* 打开建群/频道弹窗；asChannel=true 预设「频道」模式（CreateGroup 挂载后消费复位） */
@@ -842,18 +830,20 @@ export function openAnnouncements() {
   loadAnnouncements()
 }
 
-/** 弹窗「知道了」：标记已读并关闭 */
-export function ackAnnPopup() {
-  const a = state.annPopup
-  state.annPopup = null
-  state.showAnnPopup = false
-  if (a) readAnnouncement(a)
+/** 点击首页紧急横幅：进公告中心并自动展开该条公告详情卡片 */
+export function openUrgentBanner() {
+  if (!state.urgentBanner) return
+  state.annFocusId = state.urgentBanner.id
+  openAnnouncements()
 }
 
-/** 弹窗「待会处理」：仅关闭，不标记已读（下次进入仍会弹出） */
-export function laterAnnPopup() {
-  state.annPopup = null
-  state.showAnnPopup = false
+/** × 掉首页紧急横幅：本地记录 + 标记已读 + 立即隐藏 */
+export function dismissUrgentBanner() {
+  const a = state.urgentBanner
+  if (!a) return
+  try { localStorage.setItem('bm_ann_dismissed', a.id) } catch { /* 忽略 */ }
+  state.urgentBanner = null
+  readAnnouncement(a)
 }
 
 /** 点开公告详情：未读则上报已读（一人一公告幂等），并本地同步角标 */
@@ -874,21 +864,26 @@ export async function markAllAnnouncementsRead() {
   if (!unread.length) return
   list.forEach(a => { a.is_read = true })
   state.annUnread = 0
-  state.annPopup = null
-  state.showAnnPopup = false
+  state.urgentBanner = null
   if (state.demoMode) return
   await Promise.all(unread.map(a => api.markAnnouncementRead(a.id).catch(() => {})))
 }
 
-/** announcement:new：公告实时推送 → 提示音 + toast + 角标/列表联动 */
+/** announcement:new：公告实时推送 → 提示音 + toast + 角标/列表联动；urgent 立即上首页跑马灯 */
 onWs(WS_EVENTS.ANNOUNCEMENT_NEW, p => {
   if (state.demoMode) return
   playMsgDing()
   const ann = (p && (p.announcement || p.data || p)) || {}
   showToast('新公告：' + (ann.title || '点击查看'))
   if (state.showAnnouncements) loadAnnouncements()
-  else refreshAnnUnread()
-  loadAnnouncements(true)
+  else { refreshAnnUnread(); loadAnnouncements(true) }
+  // urgent：payload 带完整公告时立即上首页跑马灯，并静默拉列表同步角标/横幅
+  if (ann.priority === 'urgent') {
+    if (ann.id && ann.title && ann.content && ann.id !== annDismissedId()) {
+      state.urgentBanner = { ...ann, is_read: false }
+    }
+    loadAnnouncements(true)
+  }
 })
 
 /* ─── 意见反馈 ─── */
@@ -969,9 +964,8 @@ function pushMsgDedup(m) {
 }
 
 /** 发送文本消息，失败返回 false（调用方恢复草稿） */
-export async function sendText(text, mentions) {
+export async function sendText(text) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
-  if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
   if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
   if (state.demoMode) {
     // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
