@@ -478,6 +478,7 @@ export async function loadContacts() {
 export async function openChat(c) {
   state.chat = c
   c.unread = 0
+  c.mentionFlag = 0
   state.messages = []
   state.groupMembers = []
   state.readWatermark = 0 // 重置已读水位线，私聊随后按回执重建
@@ -688,6 +689,12 @@ async function onWsNewMessage(p) {
     }
   }
   if (!mine) playMsgDing() // 收到对方消息：提示音（当前会话内外都播）
+  // 有人 @ 我：无论是否正在看该会话，都打上会话 @ 标记（会话列表显示红字「有人@我」）并弹强提示
+  if (!mine && mentionsMe(m)) {
+    const mc = state.convs.find(x => String(x.id) === String(cid))
+    if (mc) mc.mentionFlag = (mc.mentionFlag || 0) + 1
+    showToast('有人@你：' + (messagePreview(m) || '').slice(0, 30))
+  }
   if (state.chat && String(state.chat.id) === String(cid)) {
     // 去重：本人发送时 sendText 已 push 过同一条（WS 也会推给发送方多端）
     if (!state.messages.some(x => String(x.id) === String(m.id))) {
@@ -701,7 +708,7 @@ async function onWsNewMessage(p) {
     if (!mine) {
       const c = state.convs.find(x => String(x.id) === String(cid))
       if (c) c.unread = (c.unread || 0) + 1
-      showToast(mentionsMe(m) ? '@了你：' + (messagePreview(m) || '').slice(0, 30) : '新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到消息的文字提示
+      if (!mentionsMe(m)) showToast('新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到普通消息的文字提示（@ 已在上面统一提示）
     }
     setLastMsg(cid, messagePreview(m))
   }
