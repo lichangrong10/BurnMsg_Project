@@ -819,7 +819,7 @@ function updateUrgentBanner() {
 }
 
 /* 打开建群/频道弹窗；asChannel=true 预设「频道」模式（CreateGroup 挂载后消费复位） */
-export function openCreateGroup(asChannel = false) {
+function openCreateGroup_X_DUPLICATE(asChannel = false) { /* 重复定义，已被下方群组区块版本取代 */
   state.createGroupAsChannel = asChannel
   state.showCreateGroup = true
 }
