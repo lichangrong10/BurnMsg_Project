@@ -30,7 +30,9 @@
       <Contacts v-else-if="state.tab === 'contacts'" />
       <Me v-else />
     </div>
+    <div style="height: 10%;background: #E8EBEE;">
 
+    </div>
     <!-- 底部 Tab -->
     <div class="tabbar">
       <div class="tab-item" :class="{ active: state.tab === 'chats' }" @click="state.tab = 'chats'">
