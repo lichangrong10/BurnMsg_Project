@@ -44,9 +44,9 @@
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
             <template v-else>
-              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><svg class="e2e-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" title="端到端加密消息"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> {{ m.content }}<span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
+              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><svg class="e2e-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" title="端到端加密消息"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> <span v-html="renderMentionHtml(m.content)"></span><span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
               <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
-              <template v-else>{{ m.content }}</template>
+              <template v-else><span v-html="renderMentionHtml(m.content)"></span></template>
             </template>
             <span class="msg-meta">
               <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
@@ -556,6 +556,19 @@ export default {
         return '<span class="' + cls + '">' + whole + '</span>'
       })
     },
+    extractMentions(text) {
+      if (!text || !state.chat || state.chat.type === 'private') return []
+      const ids = []
+      const seen = {}
+      // 长名优先，避免「李四」误匹配到「李四丰」这类前缀
+      const members = [...this.mentionMembers].sort((a, b) => String(b.name).length - String(a.name).length)
+      for (const m of members) {
+        if (m.uid == null || seen[m.uid]) continue
+        const re = new RegExp('@' + String(m.name).replace(/[.*+?^${}()|[\]\\]/g, ch => '\\' + ch) + '(?![\\w\\u4e00-\\u9fa5])')
+        if (re.test(text)) { seen[m.uid] = true; ids.push(m.uid) }
+      }
+      return ids
+    },
     onMsgScroll() {
       const b = this.$refs.msgBox
       if (!b) return
@@ -652,7 +665,7 @@ export default {
       if (!state.chat) return
       this.draft = ''
       if (this.$refs.msgInput) this.$refs.msgInput.style.height = 'auto'
-      const ok = await sendText(text)
+      const ok = await sendText(text, this.extractMentions(text))
       if (!ok) this.draft = text
     },
     onFilePicked(e) {
@@ -1020,4 +1033,14 @@ export default {
 .preview-media { width: 100%; max-height: 100%; background: #000; }
 .preview-audio { padding: 40px 20px; text-align: center; }
 .preview-audio audio { width: 100%; }
+/* ── @ 提及 ── */
+.mention { color: var(--tg-blue); font-weight: 500; }
+.mention-me { background: rgba(51, 144, 236, .16); color: var(--tg-blue); font-weight: 600; border-radius: 4px; padding: 0 2px; }
+.bubble.out .mention { color: #e3f0ff; }
+.bubble.out .mention-me { background: rgba(255, 255, 255, .24); color: #fff; }
+.mention-list { overflow-y: auto; padding: 2px 16px 6px; }
+.mention-item { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; border-radius: 10px; }
+.mention-item:active { background: var(--tg-gray-bg); }
+.mention-avatar { width: 40px; height: 40px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; flex-shrink: 0; }
+.mention-name { font-size: 16px; color: var(--tg-text); }
 </style>
