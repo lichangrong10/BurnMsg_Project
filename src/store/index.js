@@ -818,6 +818,12 @@ function updateUrgentBanner() {
   state.urgentBanner = (list.find(a => a.priority === 'urgent' && !a.is_read && a.id !== annDismissedId()) || list.find(a => !a.is_read && a.id !== annDismissedId())) || null
 }
 
+/* 打开建群/频道弹窗；asChannel=true 预设「频道」模式（CreateGroup 挂载后消费复位） */
+function openCreateGroup_X_DUPLICATE(asChannel = false) { /* 重复定义，已被下方群组区块版本取代 */
+  state.createGroupAsChannel = asChannel
+  state.showCreateGroup = true
+}
+
 /** 打开公告中心 */
 export function openAnnouncements() {
   state.showAnnouncements = true

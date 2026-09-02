@@ -6,6 +6,11 @@
       <span v-else class="pull-spinner"></span>
       <span>{{ pullText }}</span>
     </div>
+    <div class="chat-tabs" style="margin-top: 10px;">
+      <div class="chat-tab" :class="{ active: chatTab === 'all' }" @click="chatTab = 'all'">全部</div>
+      <div class="chat-tab" :class="{ active: chatTab === 'unread' }" @click="chatTab = 'unread'">未读</div>
+      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'">群组</div>
+    </div>
     <div v-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
@@ -54,6 +59,7 @@ export default {
   data() {
     return {
       state,
+      chatTab: 'all',    // all | unread | group
       menu: null,        // 长按/右键浮层：{ conv, x, y }
       pullDist: 0,       // 下拉距离 px
       pullState: 'idle'  // idle | pulling | ready | refreshing
@@ -63,8 +69,13 @@ export default {
     filteredConvs() {
       const k = state.keyword.toLowerCase()
       const list = Array.isArray(state.convs) ? state.convs : []
+      const tab = this.chatTab
       return list
-        .filter(c => !k || convName(c).toLowerCase().includes(k))
+        .filter(c => {
+          if (tab === 'unread' && !c.unread) return false
+          if (tab === 'group' && (c.is_channel || c.type !== 'group')) return false
+          return !k || convName(c).toLowerCase().includes(k)
+        })
         .sort((a, b) => {
           if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
           return (new Date(b.last_message_at || 0).getTime()) - (new Date(a.last_message_at || 0).getTime())
@@ -214,5 +225,32 @@ export default {
 }
 @keyframes pullSpin {
   to { transform: rotate(360deg); }
+}
+
+/* ── 会话 Tab 栏 ── */
+.chat-tabs {
+  display: flex;
+  align-items: center;
+  margin: 0 12px 8px;
+  background: #E8EBEE;
+  border-radius: 10px;
+  padding: 3px;
+}
+.chat-tab {
+  flex: 1;
+  text-align: center;
+  padding: 7px 0;
+  font-size: 14px;
+  color: #707579;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease, font-weight .2s ease;
+  user-select: none;
+}
+.chat-tab.active {
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
 }
 </style>
