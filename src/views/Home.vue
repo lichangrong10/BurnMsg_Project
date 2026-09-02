@@ -35,9 +35,9 @@
       <Me v-else />
       </transition>
     </div>
-    <div style="height: 10%;background: #E8EBEE;">
+    <!-- <div style="height: 10%;background: #E8EBEE;">
 
-    </div>
+    </div> -->
     <!-- 底部 Tab -->
     <div class="tabbar">
       <div class="tab-item" :class="{ active: state.tab === 'chats' }" @click="state.tab = 'chats'">
