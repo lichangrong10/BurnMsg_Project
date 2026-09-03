@@ -28,8 +28,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
+        // super.onCreate(savedInstanceState);
+        // registerPlugin(AppUpdaterPlugin.class);
+        registerPlugin(DownloadApkPlugin.class);
         super.onCreate(savedInstanceState);
-        registerPlugin(AppUpdaterPlugin.class);
     }
 
     @Override
