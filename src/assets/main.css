@@ -237,9 +237,9 @@ body {
 .msg-video-play span { width: 46px; height: 46px; border-radius: 50%; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; }
 .msg-video-play svg { position: relative; left: 2px; }
 .msg-video-size { position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
-.bubble.video .msg-meta { position: absolute; right: 5px; bottom: 5px; float: none; margin: 0; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
-.bubble.video .msg-meta .read-tag { color: #8fd3a8; }
-.bubble.video .msg-meta .read-tag.unread { color: rgba(255,255,255,.7); }
+.bubble.video .msg-meta { position: static; float: right; margin: 5px 0 0 6px; padding: 0; background: transparent; color: var(--tg-text-secondary); font-size: 11px; }
+.bubble.video .msg-meta .read-tag { color: var(--tg-green-check); }
+.bubble.video .msg-meta .read-tag.unread { color: var(--tg-text-secondary); }
 .bubble.video .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
 .bubble.video .burn-chip { padding-left: 2px; }
 

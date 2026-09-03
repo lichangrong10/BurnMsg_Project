@@ -239,6 +239,7 @@
         <div v-if="preview.loading" class="preview-tip">加载中…</div>
         <div v-else-if="preview.error" class="preview-tip">{{ preview.error }}<div><span class="preview-tip-btn" @click="downloadPreview">下载到本地查看</span></div></div>
         <div v-else-if="preview.kind === 'word'" ref="previewBox" class="preview-doc"></div>
+        <div v-else-if="preview.kind === 'ppt'" ref="pptBox" class="preview-doc preview-ppt"></div>
         <template v-else-if="preview.kind === 'pdf'">
           <div class="preview-pdf-bar">
             <button class="pdf-nav" :disabled="pdf.page <= 1" @click="pdfGo(pdf.page - 1)">‹ 上一页</button>
@@ -335,13 +336,15 @@ export default {
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
-      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/excel/pdf/text/video/audio）
+      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/ppt/excel/pdf/text/video/audio）
       pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
       viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
       videoViewer: { show: false, url: '', name: '' }, // 视频播放层（全屏遮罩 + 居中撑满播放 + 下载）
       imgGesture: null, // 图片查看器手势态（pan/pinch）
       pinch: null, // 文档预览捏合缩放态 { ctx, active, dist, base }
       wordFit: 1, // Word 首屏宽度适配系数（渲染后缓存）
+      pptFit: 1,  // PPT 首屏宽度适配系数（渲染后缓存）
+      pptViewer: null, // pptx-preview 预览器实例（关闭时销毁）
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
       newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
       reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
@@ -361,7 +364,7 @@ export default {
       return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text' && !m.is_encrypted)
     },
     isOfficePreview() {
-      return this.preview.kind === 'word' || this.preview.kind === 'excel'
+      return this.preview.kind === 'word' || this.preview.kind === 'excel' || this.preview.kind === 'ppt'
     },
     imgStyle() {
       return { transform: `translate(${this.viewer.tx}px, ${this.viewer.ty}px) scale(${this.viewer.scale})`, transition: 'transform .1s ease-out' }
@@ -831,6 +834,7 @@ export default {
       if (!m.file_url) return
       const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
       if (ext === 'docx') this.startPreview(m, 'word')
+      else if (ext === 'pptx' || ext === 'ppt') this.startPreview(m, 'ppt')
       else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
       else if (ext === 'pdf') this.startPreview(m, 'pdf')
       else if (['txt', 'md', 'csv', 'log', 'json', 'xml', 'yml', 'yaml', 'ini', 'conf', 'cfg', 'sql', 'sh', 'bat', 'js', 'ts', 'html', 'css'].includes(ext)) this.startPreview(m, 'text')
@@ -858,13 +862,25 @@ export default {
           const { renderAsync } = await import('docx-preview')
           this.preview.loading = false
           await nextTick()
-          await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true })
+          await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true, breakPages: true })
           // 缓存首屏宽度适配系数，缩放时在 fit 基础上叠加用户 zoom
           const box = this.$refs.previewBox
           const sec = box ? box.querySelector('section.docx') : null
-          const pw = box ? box.clientWidth : 0
-          this.wordFit = (sec && pw > 0 && sec.offsetWidth > pw) ? pw / sec.offsetWidth : 1
+          const cw = box ? box.clientWidth : 0
+          this.wordFit = (sec && cw > 0 && sec.offsetWidth > cw) ? cw / sec.offsetWidth : 1
           this.applyWordZoom()
+        } else if (kind === 'ppt') {
+          const { init } = await import('pptx-preview')
+          this.preview.loading = false
+          await nextTick()
+          const buffer = await blob.arrayBuffer()
+          this.pptViewer = init(this.$refs.pptBox, { width: this.$refs.pptBox.clientWidth || 720, mode: 'list' })
+          await this.pptViewer.preview(buffer)
+          const box = this.$refs.pptBox
+          const slide = box ? box.querySelector('.pptx-preview-slide-wrapper') : null
+          const cw = box ? box.clientWidth : 0
+          this.pptFit = (slide && cw > 0 && slide.offsetWidth > cw) ? cw / slide.offsetWidth : 1
+          this.applyPptZoom()
         } else if (kind === 'pdf') {
           await this.openPdf(blob)
         } else if (kind === 'text') {
@@ -959,6 +975,12 @@ export default {
       const z = (this.wordFit || 1) * (this.preview.zoom || 1)
       box.querySelectorAll('section.docx').forEach(sec => { sec.style.zoom = z.toFixed(4) })
     },
+    applyPptZoom() {
+      const box = this.$refs.pptBox
+      if (!box) return
+      const z = (this.pptFit || 1) * (this.preview.zoom || 1)
+      box.querySelectorAll('.pptx-preview-slide-wrapper').forEach(s => { s.style.zoom = z.toFixed(4) })
+    },
     applyExcelZoom() {
       const el = this.$refs.excelBox
       if (el) el.style.zoom = String(this.preview.zoom || 1)
@@ -968,6 +990,7 @@ export default {
       this.preview.zoom = Math.max(0.25, Math.min(5, v))
       if (this.preview.kind === 'word') this.applyWordZoom()
       else if (this.preview.kind === 'pdf') this.renderPdfPage()
+      else if (this.preview.kind === 'ppt') this.applyPptZoom()
       else this.applyExcelZoom()
     },
     onPreviewDbl() {
@@ -989,6 +1012,8 @@ export default {
     _dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) },
     closePreview() {
       this.preview.show = false
+      if (this.pptViewer) { try { this.pptViewer.destroy() } catch (e) {} }
+      this.pptViewer = null
       if (this.pdf.doc) { try { this.pdf.doc.destroy() } catch (e) {} }
       this.pdf = { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }
       this.pinch = null
@@ -1202,8 +1227,12 @@ export default {
 .preview-tip-btn { display: inline-block; margin-top: 16px; color: #fff; background: var(--tg-blue); border-radius: 8px; padding: 9px 20px; font-size: 14px; cursor: pointer; }
 .preview-doc { background: #fff; min-height: 100%; }
 /* docx-preview：灰底白纸效果 */
-.preview-doc :deep(.docx-wrapper) { background: #f6f7f9 !important; padding: 12px 0 !important; }
-.preview-doc :deep(.docx-wrapper > section.docx) { box-shadow: 0 1px 4px rgba(0,0,0,.08) !important; margin-bottom: 12px !important; }
+.preview-doc :deep(.docx-wrapper) { display: block !important; background: #f6f7f9 !important; padding: 12px 0 !important; }
+.preview-doc :deep(.docx-wrapper > section.docx) { margin-left: auto !important; margin-right: auto !important; box-shadow: 0 1px 4px rgba(0,0,0,.08) !important; margin-bottom: 12px !important; }
+/* pptx-preview：深灰放映底 + 白色幻灯片卡片，每页居中留间距 */
+.preview-ppt { background: #3a3f45; padding: 18px 0 30px; }
+.preview-ppt :deep(.pptx-preview-wrapper) { background: transparent !important; }
+.preview-ppt :deep(.pptx-preview-slide-wrapper) { margin: 0 auto 18px !important; box-shadow: 0 2px 14px rgba(0,0,0,.4) !important; }
 /* SheetJS 表格（xls 兜底） */
 .preview-xlsx { padding: 10px; }
 .preview-xlsx :deep(table) { border-collapse: collapse; background: #fff; font-size: 13px; width: max-content; min-width: calc(100% - 20px); }
