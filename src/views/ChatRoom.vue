@@ -41,7 +41,15 @@
                 <span class="voice-dur">{{ voiceDur(m) }}&#8243;</span>
               </div>
             </template>
-            <template v-else-if="m.type === 'file' || m.type === 'video'">
+            <template v-else-if="isVideoMsg(m)">
+              <div class="msg-video" @click.stop="openFile(m)">
+                <video class="msg-video-thumb" :src="fileURL(m.file_url)" preload="metadata" muted playsinline webkit-playsinline @loadedmetadata="seekVideoThumb"></video>
+                <div class="msg-video-play"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l11-6.5z"/></svg></span></div>
+                <div class="msg-video-size">{{ fmtSize(m.file_size) }}</div>
+              </div>
+              <div v-if="m.content" class="img-caption">{{ m.content }}</div>
+            </template>
+            <template v-else-if="m.type === 'file'">
               <div class="msg-file" @click.stop="openFile(m)">
                 <div class="msg-file-icon">
                   <svg width="36" height="44" viewBox="0 0 36 44" aria-hidden="true">
@@ -303,6 +311,21 @@
         <img class="img-viewer-img" :src="viewer.url" :style="imgStyle" @click.stop>
       </div>
     </div>
+    <!-- 视频播放层：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） -->
+    <div v-if="videoViewer.show" class="video-viewer" @click="closeVideoViewer">
+      <div class="video-viewer-top">
+        <div class="video-viewer-close" @click.stop="closeVideoViewer">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </div>
+        <div class="video-viewer-name">{{ videoViewer.name }}</div>
+        <div class="video-viewer-dl" @click.stop="downloadVideo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+        </div>
+      </div>
+      <div class="video-viewer-body">
+        <video class="video-viewer-media" :src="videoViewer.url" controls autoplay playsinline @click.stop></video>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -312,7 +335,7 @@ import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, thumbURLOf, fmtClock, fmtSize, memberUser, memberUid, getFileTypeInfo } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid, getFileTypeInfo } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 
@@ -338,6 +361,7 @@ export default {
       preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/excel/pdf/text/video/audio）
       pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
       viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
+      videoViewer: { show: false, url: '', name: '' }, // 视频播放层（全屏遮罩 + 居中撑满播放 + 下载）
       imgGesture: null, // 图片查看器手势态（pan/pinch）
       pinch: null, // 文档预览捏合缩放态 { ctx, active, dist, base }
       wordFit: 1, // Word 首屏宽度适配系数（渲染后缓存）
@@ -450,6 +474,7 @@ export default {
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
     onNativeBack(e) {
       if (this.viewer.show)       { this.closeViewer(); e.preventDefault(); return }
+      if (this.videoViewer.show)  { this.closeVideoViewer(); e.preventDefault(); return }
       if (this.preview.show)      { this.closePreview(); e.preventDefault(); return }
       if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
       if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
@@ -977,7 +1002,7 @@ export default {
       else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
       else if (ext === 'pdf') this.startPreview(m, 'pdf')
       else if (['txt', 'md', 'csv', 'log', 'json', 'xml', 'yml', 'yaml', 'ini', 'conf', 'cfg', 'sql', 'sh', 'bat', 'js', 'ts', 'html', 'css'].includes(ext)) this.startPreview(m, 'text')
-      else if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) this.startPreview(m, 'video')
+      else if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) this.openVideo(m)
       else if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac', 'amr'].includes(ext)) this.startPreview(m, 'audio')
       else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) this.startPreview(m, 'image')
       else window.open(fileURL(m.file_url), '_blank')
@@ -1140,12 +1165,12 @@ export default {
       if (this.preview.url) window.open(this.preview.url, '_blank')
     },
     /** 图片在线预览：点开全屏大图查看，可缩放/平移/下载；点击遮罩/关闭按钮退出 */
-    /** 聊天列表图片：一律先取缩略图（消息自带的 thumb_url，或按服务端路径约定推导），
-        为 null（历史消息/gif/生成失败）或加载失败时回退用 url 原图 */
+    /** 聊天列表图片：只信消息自带的 thumb_url（历史消息/gif/生成失败为 null），
+        加载失败回退原图；不再按路径推导缩略图（老图无 thumb 文件，推导必 404 刷后端日志） */
     imgSrc(m) {
       if (!m || !m.file_url) return ''
       if (m._thumbFail) return fileURL(m.file_url)
-      const t = m.thumb_url || thumbURLOf(m.file_url)
+      const t = m.thumb_url
       return t ? fileURL(t) : fileURL(m.file_url)
     },
     onImgErr(m) { m._thumbFail = true }, // 缩略图 404/加载失败：回退原图
@@ -1202,6 +1227,24 @@ export default {
       }
     },
     
+    /** 视频在线播放：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） */
+    openVideo(m) {
+      if (!m || !m.file_url) return
+      this.videoViewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '视频' }
+    },
+    closeVideoViewer() { this.videoViewer.show = false },
+    /** 下载视频：a 标签 download 触发保存（跨域时退化为新开标签页） */
+    downloadVideo() {
+      if (!this.videoViewer.url) return
+      const a = document.createElement('a')
+      a.href = this.videoViewer.url
+      a.download = this.videoViewer.name || 'video'
+      a.rel = 'noopener'
+      a.target = '_blank'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    },
     onMsgTap(m) {
       this.msgAction = m
     },
@@ -1217,9 +1260,24 @@ export default {
     isImgMsg(m) {
       return !!(m && m.type === 'image' && m.file_url && !m.is_recalled && !this.isBurned(m) && !this.isBlurredBurn(m))
     },
+    /** 是否视频消息：file/video 类型 + 视频扩展名 + 未撤回/未焚毁/非模糊占位（裸媒体直出样式用，不依赖后端 type 细化）——lichangrong b81ab71 原版实现 */
+    isVideoMsg(m) {
+      if (!m || !m.file_url || m.is_recalled || this.isBurned(m) || this.isBlurredBurn(m)) return false
+      if (m.type !== 'file' && m.type !== 'video') return false
+      const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
+      return ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)
+    },
+    /** 视频封面：loadedmetadata 后 seek 到 0.1s 显示首帧缩略图（仅一次） */
+    seekVideoThumb(e) {
+      const v = e && e.target
+      if (!v || v.dataset.seeked) return
+      v.dataset.seeked = '1'
+      try { if (v.readyState >= 1) v.currentTime = 0.1 } catch (err) {}
+    },
     onBubbleClick(m) {
       if (this.isBlurredBurn(m)) { revealBurn(m); return } // 焚毁占位卡：点开才焚，reveal 拉完整内容
       if (m.type === 'image' && m.file_url) { this.openImageView(m); return } // 图片：点开全屏预览
+      if (this.isVideoMsg(m)) { this.openVideo(m); return } // 视频：全屏遮罩居中播放（可下载）
       if (this.isEnc(m) && !this.isBurnMsg(m)) { this.revealE2E(m); return }
       this.onMsgTap(m)
     },
@@ -1346,6 +1404,15 @@ export default {
 .iz-btn { color: #fff; font-size: 17px; line-height: 1; cursor: pointer; padding: 6px 9px; border-radius: 8px; user-select: none; }
 .iz-btn:active { background: rgba(255,255,255,.15); }
 .iz-val { color: rgba(255,255,255,.85); font-size: 12px; min-width: 42px; text-align: center; }
+/* ── 视频播放层 ── */
+.video-viewer { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,.94); display: flex; flex-direction: column; }
+.video-viewer-top { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; color: #fff; flex-shrink: 0; }
+.video-viewer-close, .video-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
+.video-viewer-close:active, .video-viewer-dl:active { background: rgba(255,255,255,.15); }
+.video-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.video-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.video-viewer-media { width: 100%; max-height: 100%; object-fit: contain; background: #000; }
+
 
 /* ── 文档预览：缩放按钮 / PDF / 文本 / 音视频 ── */
 .preview-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-shrink: 0; }
