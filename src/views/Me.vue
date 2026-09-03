@@ -34,6 +34,16 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         <span class="cell-label">意见反馈</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
       </div>
+      <div class="cell" @click="manualCheckUpdate">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="cell-label">检查更新</span>
+        <span class="cell-value">
+          <span v-if="updateStatus === 'checking'" style="color:var(--tg-text-secondary)">检查中…</span>
+          <span v-else-if="updateStatus === 'latest'" style="color:var(--tg-green-check)">已是最新 v{{ appVersionName }}</span>
+          <span v-else-if="updateStatus === 'available'" style="color:var(--tg-blue);font-weight:600" @click.stop="downloadUpdate">v{{ updateInfo.version_name }} 可更新</span>
+          <span v-else>v{{ appVersionName }}</span>
+        </span>
+      </div>
       <div class="cell" @click="showTheme = true">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
         <span class="cell-label">主题颜色</span>
@@ -51,7 +61,7 @@
         <span class="cell-label">退出登录</span>
       </div>
     </div>
-    <div style="text-align:center;color:#707579;font-size:12px;padding:18px 0">焚信 BurnMsg · v1.0{{ state.demoMode ? ' · 演示模式' : '' }}</div>
+    <div style="text-align:center;color:#707579;font-size:12px;padding:18px 0">焚信 BurnMsg · v{{ appVersionName }}{{ state.demoMode ? ' · 演示模式' : '' }}</div>
 
     <!-- ═══════ 设备管理 ═══════ -->
     <div v-if="showDevices" class="overlay" @click.self="showDevices = false">
@@ -115,6 +125,30 @@
       </div>
     </div>
 
+    <!-- ═══════ 发现新版本弹窗 ═══════ -->
+    <div v-if="showUpdateDialog" class="dialog-overlay" @click.self="showUpdateDialog = false">
+      <div class="dialog">
+        <div class="dialog-title">发现新版本 v{{ updateInfo.version_name }}</div>
+        <div class="dialog-body" style="display:flex;flex-direction:column;gap:8px">
+          <div v-if="updateInfo.notes" style="color:var(--tg-text-secondary);font-size:13.5px;line-height:1.6;white-space:pre-line">{{ updateInfo.notes }}</div>
+          <div style="color:var(--tg-text-secondary);font-size:12px">
+            <span v-if="updateInfo.file_size">安装包 {{ (updateInfo.file_size / 1048576).toFixed(1) }} MB</span>
+            <span v-if="updateInfo.force" style="color:#E53935;font-weight:600;margin-left:8px">此版本为强制更新</span>
+          </div>
+          <div v-if="downloading" style="margin-top:4px">
+            <div style="background:var(--tg-border);border-radius:4px;height:6px;overflow:hidden">
+              <div :style="{ width: downloadProgress + '%', background: 'var(--tg-blue)', height: '100%', transition: 'width .3s' }"></div>
+            </div>
+            <div style="font-size:12px;color:var(--tg-text-secondary);margin-top:4px;text-align:center">{{ downloadProgress }}%</div>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="showUpdateDialog = false" :disabled="downloading && updateInfo.force">稍后再说</button>
+          <button class="btn-text" style="font-weight:600" @click="downloadUpdate" :disabled="downloading">{{ downloading ? '下载中…' : '立即更新' }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══════ 退出确认 ═══════ -->
     <div v-if="showLogout" class="dialog-overlay" @click.self="showLogout = false">
       <div class="dialog">
@@ -133,6 +167,7 @@
 import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
+import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
 
 export default {
   name: 'MeView',
@@ -146,8 +181,26 @@ export default {
       showPwd: false,
       showLogout: false,
       showTheme: false,
-      themeColor: getThemeColor()
+      themeColor: getThemeColor(),
+      // 检查更新相关
+      appVersionName: '1.0',
+      updateStatus: '',          // '' | 'checking' | 'latest' | 'available'
+      updateInfo: null,
+      showUpdateDialog: false,
+      downloading: false,
+      downloadProgress: 0
     }
+  },
+  async mounted() {
+    // 获取当前 App 版本号
+    try {
+      const cap = window.Capacitor
+      if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+        const { App } = await import('@capacitor/app')
+        const info = await App.getInfo()
+        this.appVersionName = info.version || '1.0'
+      }
+    } catch (e) { /* 浏览器环境忽略 */ }
   },
   methods: {
     avatarColor,
@@ -214,6 +267,44 @@ export default {
     doLogout() {
       this.showLogout = false
       logout()
+    },
+    async manualCheckUpdate() {
+      // 非原生环境提示
+      const cap = window.Capacitor
+      if (!cap || !cap.isNativePlatform || !cap.isNativePlatform()) {
+        showToast('仅 App 端支持检查更新')
+        return
+      }
+      this.updateStatus = 'checking'
+      try {
+        const result = await checkAppUpdate()
+        if (result) {
+          this.updateStatus = 'available'
+          this.updateInfo = result
+          this.showUpdateDialog = true
+        } else {
+          this.updateStatus = 'latest'
+          showToast('已是最新版本')
+        }
+      } catch (e) {
+        this.updateStatus = ''
+        showToast('检查更新失败：' + (e.message || '未知错误'))
+      }
+    },
+    async downloadUpdate() {
+      if (!this.updateInfo || this.downloading) return
+      this.downloading = true
+      this.downloadProgress = 0
+      this.showUpdateDialog = true
+      try {
+        await downloadAndInstallApk(this.updateInfo.apk_url, (pct) => {
+          this.downloadProgress = pct
+        })
+      } catch (e) {
+        showToast('下载失败：' + (e.message || '未知错误'))
+      } finally {
+        this.downloading = false
+      }
     }
   }
 }
@@ -223,7 +314,7 @@ export default {
 .avatar-camera { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--tg-blue); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; }
 .theme-dot { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
 .theme-picker-body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 12px; }
-.theme-circle { width: 92px; height: 92px; border-radius: 50%; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.2), inset 0 0 0 1px rgba(0,0,0,.06); transition: transform .15s ease, background .15s ease; }
+.theme-circle { width: 92px; height: 92px; border-radius: 50%; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.2), inset 0 0 0 1px rgba(0,0,0,.1); }
 .theme-circle:active { transform: scale(.93); }
 .theme-hex { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
 .theme-hint { font-size: 12.5px; color: var(--tg-text-secondary); }
