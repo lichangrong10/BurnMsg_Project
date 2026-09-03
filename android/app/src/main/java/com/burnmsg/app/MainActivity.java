@@ -32,6 +32,13 @@ public class MainActivity extends BridgeActivity {
         // registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(DownloadApkPlugin.class);
         super.onCreate(savedInstanceState);
+        // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
+        // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{ android.Manifest.permission.RECORD_AUDIO }, 1001);
+        }
     }
 
     @Override

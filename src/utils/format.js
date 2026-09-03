@@ -134,7 +134,7 @@ export function messagePreview(m) {
     case 'text': return m.content || ''
     case 'image': return '[图片]'
     case 'file': return '[文件]'
-    case 'voice': return '[语音]'
+    case 'voice': return '[语音]' + (/^\d+$/.test(m.content || '') ? ` ${m.content}″` : '')
     case 'video': return '[视频]'
     default: return m.content || '[消息]'
   }

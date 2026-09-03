@@ -455,19 +455,9 @@ export async function loadConvs(quiet) {
     state.convs = list
       .map(c => {
         const old = prev[c.id]
-        const convUnread = (old && old.unread) ?? c.unread ?? 0
-        let mentionFlag = Number(c.mentionFlag ?? c.mention_flag ?? (old && old.mentionFlag)) || 0
-        if (!mentionFlag && convUnread > 0 && c.type !== 'private') {
-          const raw = c.last_message ?? c.lastMessage ?? c.last_msg ?? c.last_message_text ?? c.lastMsg
-          if (raw != null) {
-            const probe = (typeof raw === 'object') ? normalizeMsg({ ...raw }) : { content: String(raw) }
-            if (mentionsMe(probe)) mentionFlag = 1
-          }
-        }
         return {
           ...c,
-          unread: convUnread,
-          mentionFlag,
+          unread: (old && old.unread) ?? c.unread ?? 0,
           lastMsg: extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || '',
           pinned: ids.includes(c.id)
         }
@@ -663,13 +653,11 @@ function mentionsMe(m) {
   const me = state.me || {}
   if (Array.isArray(m.mentions) && m.mentions.length && me.id != null) {
     if (m.mentions.some(uid => String(uid) === String(me.id))) return true
-    if (m.mentions.some(uid => ['all', 'everyone', '所有人', '@all', '@所有人'].includes(String(uid)))) return true
   }
   const text = m.content || ''
   const names = [me.display_name, me.name, me.username, me.nickname, me.real_name].filter(Boolean)
   if (!names.length) return false
   const s = String(text)
-  if (s.indexOf('@所有人') !== -1) return true // @所有人：全体成员（含我）都算被 @
   return names.some(n => s.indexOf('@' + n) !== -1)
 }
 
@@ -1062,6 +1050,24 @@ export async function sendFile(file) {
     if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
     const m = await api.sendMessage(payload)
     if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
+    pushMsgDedup(m)
+  } catch (e) {
+    showToast(e.message)
+  }
+}
+
+/** 发送语音消息（V5.8.4）：file 为录音 Blob 包装的 File，duration 秒。
+ *  约定：voice 消息的 content 存时长秒数（纯数字字符串，ChatRoom.voiceDur parseInt 渲染气泡）；
+ *  openapi.yaml 待补该约定（V5.8.4 文档项）。语音同样支持阅后即焚（burn_ttl_seconds）。 */
+export async function sendVoice(file, duration) {
+  if (!state.chat) return
+  if (state.demoMode) { showToast('演示模式暂不支持语音'); return }
+  showToast('发送中…')
+  try {
+    const up = await api.upload(file)
+    const payload = { conversation_id: state.chat.id, type: 'voice', file_url: up.url, file_name: up.file_name, file_size: up.file_size, content: String(duration) }
+    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds
+    const m = await api.sendMessage(payload)
     pushMsgDedup(m)
   } catch (e) {
     showToast(e.message)

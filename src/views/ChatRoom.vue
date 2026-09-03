@@ -25,7 +25,7 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
@@ -35,15 +35,13 @@
               <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
               <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
-            <template v-else-if="isVideoMsg(m)">
-              <div class="msg-video" @click.stop="openFile(m)">
-                <video class="msg-video-thumb" :src="fileURL(m.file_url)" preload="metadata" muted playsinline webkit-playsinline @loadedmetadata="seekVideoThumb"></video>
-                <div class="msg-video-play"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l11-6.5z"/></svg></span></div>
-                <div class="msg-video-size">{{ fmtSize(m.file_size) }}</div>
+            <template v-else-if="m.type === 'voice' && m.file_url">
+              <div class="msg-voice" :class="{ playing: playVoiceId === m.id }" :style="{ width: voiceBarWidth(m) }" @click.stop="togglePlayVoice(m)" title="点击播放">
+                <svg class="voice-wave" width="20" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="9" width="3" height="6" rx="1.5"/><rect x="10" y="5" width="3" height="14" rx="1.5"/><rect x="17" y="8" width="3" height="8" rx="1.5"/></svg>
+                <span class="voice-dur">{{ voiceDur(m) }}&#8243;</span>
               </div>
-              <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
-            <template v-else-if="m.type === 'file' || m.type === 'voice'">
+            <template v-else-if="m.type === 'file' || m.type === 'video'">
               <div class="msg-file" @click.stop="openFile(m)">
                 <div class="msg-file-icon">
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg>
@@ -100,11 +98,15 @@
       <button class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
+      <button class="attach-btn voice-toggle-btn" :class="{ active: voiceMode }" @click="toggleVoiceMode" title="语音 / 文字切换">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" :stroke="voiceMode ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
+      </button>
       <input type="file" ref="galleryInput" accept="image/*,video/*" style="display:none" @change="onFilePicked">
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
       
-      <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send"></textarea>
+      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus"></textarea>
+      <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       </button>
@@ -116,6 +118,15 @@
       </button>
     </div>
     <div v-else class="dissolved-bar">群组已解散，无法发送消息</div>
+
+    <!-- ═══════ 语音录制浮层：长按录入时居中显示，上滑进入取消区 ═══════ -->
+    <div v-if="recording" class="voice-rec-mask">
+      <div class="voice-rec-box" :class="{ cancel: voiceCancelMode }">
+        <svg class="voice-rec-mic" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
+        <div class="voice-rec-time">{{ voiceSec }}&#8243;</div>
+        <div class="voice-rec-tip">{{ voiceCancelMode ? '松开手指，取消发送' : '上滑取消，松开发送' }}</div>
+      </div>
+    </div>
 
     <!-- ═══════ 阅后即焚定时器选择 ═══════ -->
     <div v-if="showBurnSheet" class="overlay" @click.self="showBurnSheet = false">
@@ -287,28 +298,12 @@
         <img class="img-viewer-img" :src="viewer.url" :style="imgStyle" @click.stop>
       </div>
     </div>
-
-    <!-- 视频播放层：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） -->
-    <div v-if="videoViewer.show" class="video-viewer" @click="closeVideoViewer">
-      <div class="video-viewer-top">
-        <div class="video-viewer-close" @click.stop="closeVideoViewer">
-          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </div>
-        <div class="video-viewer-name">{{ videoViewer.name }}</div>
-        <div class="video-viewer-dl" @click.stop="downloadVideo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
-        </div>
-      </div>
-      <div class="video-viewer-body">
-        <video class="video-viewer-media" :src="videoViewer.url" controls autoplay playsinline @click.stop></video>
-      </div>
-    </div>
   </div>
 </template>
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -338,7 +333,6 @@ export default {
       preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/excel/pdf/text/video/audio）
       pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
       viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
-      videoViewer: { show: false, url: '', name: '' }, // 视频播放层（全屏遮罩 + 居中撑满播放 + 下载）
       imgGesture: null, // 图片查看器手势态（pan/pinch）
       pinch: null, // 文档预览捏合缩放态 { ctx, active, dist, base }
       wordFit: 1, // Word 首屏宽度适配系数（渲染后缓存）
@@ -346,7 +340,19 @@ export default {
       newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
       reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
       revealTickers: {},   // 点按显示倒计时定时器 { msgId: intervalId }
-      revealLeft: {}       // 点按显示剩余秒数 { msgId: n }
+      revealLeft: {},      // 点按显示剩余秒数 { msgId: n }
+      // ══ 语音消息（V5.8.4）══
+      voiceMode: false,        // 语音/文字输入模式（输入框前的麦克风按钮切换）
+      recording: false,        // 正在长按录音
+      voiceSec: 0,             // 已录秒数（最长 60 自动断）
+      voiceCancelMode: false,  // 手指上滑进入取消区
+      voiceStartY: 0,          // 录音起始触点 Y（判定上滑距离）
+      voiceTimer: null,        // 计秒 interval
+      voiceRecorder: null,     // MediaRecorder 实例
+      voiceStream: null,       // 麦克风 MediaStream（停录后关轨释放）
+      voiceMime: '',           // 实际采用的录音 mimeType（webm/opus 优先）
+      playVoiceId: null,       // 正在播放的语音消息 id（气泡动画）
+      playVoiceEl: null        // 单例 audio 播放器（同时只播一条）
     }
   },
   computed: {
@@ -416,16 +422,29 @@ export default {
   },
   mounted() {
     window.addEventListener('bm-back', this.onNativeBack)
+    // 键盘遮挡修复（V5.8.4）：软键盘弹出时 visualViewport.height 缩短（AndroidManifest 已配 adjustResize 双保险），
+    // 把聊天页高度实时钳制到可视高度 → 输入栏抬到键盘上方、内容区压缩；吸附底部时同步滚到最新
+    this.vvResize = () => {
+      const vv = window.visualViewport
+      if (!vv || !this.$el) return
+      this.$el.style.height = Math.round(vv.height) + 'px'
+      window.scrollTo(0, 0) // 防 WebView 整页被键盘顶起后漂移
+      if (this.stickBottom) this.scrollBottom()
+    }
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', this.vvResize)
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
     Object.values(this.revealTickers).forEach(clearInterval)
+    if (window.visualViewport && this.vvResize) window.visualViewport.removeEventListener('resize', this.vvResize)
+    if (this.voiceTimer) clearInterval(this.voiceTimer)
+    if (this.voiceStream) { try { this.voiceStream.getTracks().forEach(t => t.stop()) } catch (e) { /* ignore */ } }
+    if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
     onNativeBack(e) {
       if (this.viewer.show)       { this.closeViewer(); e.preventDefault(); return }
-      if (this.videoViewer.show)  { this.closeVideoViewer(); e.preventDefault(); return }
       if (this.preview.show)      { this.closePreview(); e.preventDefault(); return }
       if (this.receiptMsg)        { this.receiptMsg = null; e.preventDefault(); return }
       if (this.msgAction)         { this.msgAction = null; e.preventDefault(); return }
@@ -728,7 +747,7 @@ export default {
       if (this.isBurned(t)) return '此消息已焚毁'
       if (t.type === 'image') return '[图片]' + (t.content ? ' ' + t.content : '')
       if (t.type === 'file') return '[文件] ' + (t.file_name || '')
-      if (t.type === 'voice') return '[语音]'
+      if (t.type === 'voice') return '[语音]' + (/^\d+$/.test(t.content || '') ? ` ${t.content}″` : '')
       if (t.type === 'video') return '[视频]'
       return (t.content || '').replace(/\n/g, ' ').slice(0, 60)
     },
@@ -826,6 +845,116 @@ export default {
       e.target.value = ''
       if (file) sendFile(file)
     },
+    // ═══════ 语音消息：模式切换 / 长按录音 / 上滑取消 / 点击播放 ═══════
+    /** 麦克风按钮：语音/文字输入切换（录音进行中不响应） */
+    toggleVoiceMode() {
+      if (this.recording) return
+      this.voiceMode = !this.voiceMode
+    },
+    /** 长按开始录音：getUserMedia 取麦克风流 → MediaRecorder 录 webm/opus（不支持时回退 mp4） */
+    async voiceStart(e) {
+      if (this.recording) return
+      if (!state.chat) return
+      if (state.demoMode) { showToast('演示模式暂不支持语音'); return }
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) { showToast('当前环境不支持录音'); return }
+      const touch = e.touches && e.touches[0]
+      this.voiceStartY = touch ? touch.clientY : 0
+      this.voiceCancelMode = false
+      this.voiceSec = 0
+      this._voiceChunks = []
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        this.voiceStream = stream
+        const cand = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+        this.voiceMime = cand.find(t => MediaRecorder.isTypeSupported(t)) || ''
+        const rec = this.voiceMime ? new MediaRecorder(stream, { mimeType: this.voiceMime }) : new MediaRecorder(stream)
+        rec.ondataavailable = ev => { if (ev.data && ev.data.size) this._voiceChunks.push(ev.data) }
+        rec.start(250) // 250ms 切片，停止时最多丢 0.25s 尾音
+        this.voiceRecorder = rec
+        this.recording = true
+        this.voiceTimer = setInterval(() => { if (++this.voiceSec >= 60) this.voiceEnd() }, 1000) // 60 秒自动结束并发送
+      } catch (err) {
+        this.voiceCleanup()
+        const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
+        showToast(denied ? '麦克风权限被拒绝：请到 系统设置 → 应用 → 焚信 → 权限 → 允许麦克风' : '录音启动失败：' + ((err && err.message) || err))
+      }
+    },
+    /** 录音中移动手指：上滑超过 50px 进入取消区（滑回可恢复） */
+    voiceMove(e) {
+      if (!this.recording) return
+      const touch = e.touches && e.touches[0]
+      if (touch) this.voiceCancelMode = (this.voiceStartY - touch.clientY) > 50
+    },
+    /** 松开手指：上滑状态丢弃，正常状态上传发送；短于 1 秒提示太短 */
+    voiceEnd() {
+      if (!this.recording) return
+      const sec = this.voiceSec
+      const cancel = this.voiceCancelMode
+      const rec = this.voiceRecorder
+      const mime = this.voiceMime
+      this.recording = false
+      this.voiceCancelMode = false
+      if (this.voiceTimer) { clearInterval(this.voiceTimer); this.voiceTimer = null }
+      if (!rec || rec.state === 'inactive') { this.voiceCleanup(); return }
+      rec.onstop = () => {
+        const blob = new Blob(this._voiceChunks || [], { type: mime || 'audio/webm' })
+        this.voiceCleanup()
+        if (cancel) return
+        if (sec < 1) { showToast('说话时间太短'); return }
+        const ext = mime && mime.includes('mp4') ? 'm4a' : 'webm'
+        sendVoice(new File([blob], `语音_${Date.now()}.${ext}`, { type: blob.type }), sec)
+      }
+      try { rec.stop() } catch (e2) { this.voiceCleanup() }
+    },
+    /** 系统打断（来电/切后台等 touchcancel）：直接丢弃 */
+    voiceCancel() {
+      if (!this.recording) return
+      const rec = this.voiceRecorder
+      this.recording = false
+      if (this.voiceTimer) { clearInterval(this.voiceTimer); this.voiceTimer = null }
+      this.voiceCancelMode = false
+      if (rec && rec.state !== 'inactive') { try { rec.onstop = null; rec.stop() } catch (e) { /* ignore */ } }
+      this.voiceCleanup()
+      showToast('录音已取消')
+    },
+    /** 释放麦克风轨道，复位录音态 */
+    voiceCleanup() {
+      if (this.voiceStream) { try { this.voiceStream.getTracks().forEach(t => t.stop()) } catch (e) { /* ignore */ } this.voiceStream = null }
+      this.voiceRecorder = null
+      this.voiceSec = 0
+    },
+    /** 点击语音气泡：单实例播放器，再点同一条停止，点另一条切换 */
+    togglePlayVoice(m) {
+      if (!m || !m.file_url) return
+      if (!this.playVoiceEl) {
+        this.playVoiceEl = new Audio()
+        this.playVoiceEl.addEventListener('ended', () => { this.playVoiceId = null })
+      }
+      const a = this.playVoiceEl
+      if (this.playVoiceId === m.id) {
+        try { a.pause(); a.currentTime = 0 } catch (e) { /* ignore */ }
+        this.playVoiceId = null
+      } else {
+        try { a.pause() } catch (e) { /* ignore */ }
+        a.src = fileURL(m.file_url)
+        a.currentTime = 0
+        this.playVoiceId = m.id
+        a.play().catch(() => { this.playVoiceId = null; showToast('语音播放失败') })
+      }
+    },
+    /** 语音时长（秒）：约定 voice 消息 content 存纯数字字符串 */
+    voiceDur(m) {
+      const n = parseInt(m && m.content, 10)
+      return Number.isFinite(n) && n > 0 ? n : 0
+    },
+    /** 气泡宽度按时长微调（1~60s → 88~228px，微信风格） */
+    voiceBarWidth(m) {
+      return Math.round(88 + Math.min(this.voiceDur(m), 60) / 60 * 140) + 'px'
+    },
+    /** 输入框聚焦（键盘弹起）兜底滚底：仅吸附底部时跟随，不打扰上滑看历史的用户 */
+    onInputFocus() {
+      if (this.stickBottom) this.scrollBottom()
+    },
     /** 点击文件消息：按扩展名路由到对应在线预览（Word/Excel/PDF/文本/图片/音视频），未知类型回退下载 */
     openFile(m) {
       if (!m.file_url) return
@@ -834,7 +963,7 @@ export default {
       else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
       else if (ext === 'pdf') this.startPreview(m, 'pdf')
       else if (['txt', 'md', 'csv', 'log', 'json', 'xml', 'yml', 'yaml', 'ini', 'conf', 'cfg', 'sql', 'sh', 'bat', 'js', 'ts', 'html', 'css'].includes(ext)) this.startPreview(m, 'text')
-      else if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) this.openVideo(m)
+      else if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) this.startPreview(m, 'video')
       else if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac', 'amr'].includes(ext)) this.startPreview(m, 'audio')
       else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) this.startPreview(m, 'image')
       else window.open(fileURL(m.file_url), '_blank')
@@ -1058,24 +1187,7 @@ export default {
         this.viewer.saving = false
       }
     },
-    /** 视频在线播放：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） */
-    openVideo(m) {
-      if (!m || !m.file_url) return
-      this.videoViewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '视频' }
-    },
-    closeVideoViewer() { this.videoViewer.show = false },
-    /** 下载视频：a 标签 download 触发保存（跨域时退化为新开标签页） */
-    downloadVideo() {
-      if (!this.videoViewer.url) return
-      const a = document.createElement('a')
-      a.href = this.videoViewer.url
-      a.download = this.videoViewer.name || 'video'
-      a.rel = 'noopener'
-      a.target = '_blank'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-    },
+    
     onMsgTap(m) {
       this.msgAction = m
     },
@@ -1091,24 +1203,9 @@ export default {
     isImgMsg(m) {
       return !!(m && m.type === 'image' && m.file_url && !m.is_recalled && !this.isBurned(m) && !this.isBlurredBurn(m))
     },
-    /** 是否视频消息：file/video 类型 + 视频扩展名 + 未撤回/未焚毁/非模糊占位（裸媒体直出样式用，不依赖后端 type 细化） */
-    isVideoMsg(m) {
-      if (!m || !m.file_url || m.is_recalled || this.isBurned(m) || this.isBlurredBurn(m)) return false
-      if (m.type !== 'file' && m.type !== 'video') return false
-      const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
-      return ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)
-    },
-    /** 视频封面：loadedmetadata 后 seek 到 0.1s 显示首帧缩略图（仅一次） */
-    seekVideoThumb(e) {
-      const v = e && e.target
-      if (!v || v.dataset.seeked) return
-      v.dataset.seeked = '1'
-      try { if (v.readyState >= 1) v.currentTime = 0.1 } catch (err) {}
-    },
     onBubbleClick(m) {
       if (this.isBlurredBurn(m)) { revealBurn(m); return } // 焚毁占位卡：点开才焚，reveal 拉完整内容
       if (m.type === 'image' && m.file_url) { this.openImageView(m); return } // 图片：点开全屏预览
-      if (this.isVideoMsg(m)) { this.openVideo(m); return } // 视频：全屏遮罩居中播放（可下载）
       if (this.isEnc(m) && !this.isBurnMsg(m)) { this.revealE2E(m); return }
       this.onMsgTap(m)
     },
@@ -1236,15 +1333,6 @@ export default {
 .iz-btn:active { background: rgba(255,255,255,.15); }
 .iz-val { color: rgba(255,255,255,.85); font-size: 12px; min-width: 42px; text-align: center; }
 
-/* ── 视频播放层 ── */
-.video-viewer { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,.94); display: flex; flex-direction: column; }
-.video-viewer-top { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; color: #fff; flex-shrink: 0; }
-.video-viewer-close, .video-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
-.video-viewer-close:active, .video-viewer-dl:active { background: rgba(255,255,255,.15); }
-.video-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.video-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.video-viewer-media { width: 100%; max-height: 100%; object-fit: contain; background: #000; }
-
 /* ── 文档预览：缩放按钮 / PDF / 文本 / 音视频 ── */
 .preview-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-shrink: 0; }
 .pz-btn { color: var(--tg-text); font-size: 16px; line-height: 1; cursor: pointer; padding: 5px 9px; border-radius: 8px; user-select: none; }
@@ -1271,4 +1359,29 @@ export default {
 .mention-item:active { background: var(--tg-gray-bg); }
 .mention-avatar { width: 40px; height: 40px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; flex-shrink: 0; }
 .mention-name { font-size: 16px; color: var(--tg-text); }
+/* ═══════ 语音消息（V5.8.4）═══════ */
+.voice-toggle-btn.active { background: rgba(51, 144, 236, .14); }
+.voice-hold { flex: 1; height: 42px; margin: 0; border-radius: 20px; background: var(--tg-gray-bg); color: var(--tg-text); font-size: 15.5px; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+.msg-textarea { min-height: 42px; }
+.voice-hold.cancel { background: #E53935; color: #fff; }
+.msg-voice { display: flex; align-items: center; justify-content: center; gap: 8px; max-width: 240px; min-width: 88px; padding: 9px 12px; cursor: pointer; user-select: none; -webkit-user-select: none; box-sizing: border-box; }
+.voice-dur { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.msg-voice .voice-wave { opacity: .9; flex-shrink: 0; }
+.msg-voice.playing .voice-wave rect { animation: voiceWave 1s ease-in-out infinite; }
+.msg-voice.playing .voice-wave rect:nth-child(2) { animation-delay: .25s; }
+.msg-voice.playing .voice-wave rect:nth-child(3) { animation-delay: .5s; }
+@keyframes voiceWave {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(.45); }
+}
+.voice-rec-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.voice-rec-box { width: 150px; padding: 22px 16px 18px; border-radius: 18px; background: rgba(0, 0, 0, .78); color: #fff; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.voice-rec-mic { animation: voicePulse 1.4s ease-in-out infinite; }
+@keyframes voicePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.14); opacity: .72; }
+}
+.voice-rec-box.cancel .voice-rec-mic { animation: none; color: #ff6e6e; }
+.voice-rec-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.voice-rec-tip { font-size: 12.5px; opacity: .85; }
 </style>
