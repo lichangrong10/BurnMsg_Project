@@ -37,6 +37,16 @@ export function fileURL(u) {
   return /^https?:|^data:/.test(u) ? u : storage.baseURL.replace(/\/api\/v1\/?$/, '') + u
 }
 
+/** 图片缩略图路径推导（V5.8.3 服务端约定）：/uploads/<uuid>.<ext> → /uploads/thumb/<uuid>_thumb.webp；
+    gif / 非 uploads 路径返回 null（调用方回退用原图 url）。消息接口不传输 thumb_url，
+    接收方与老消息都靠这个约定推导，加载 404 时由 <img @error> 回退原图 */
+export function thumbURLOf(fileUrl) {
+  if (!fileUrl || typeof fileUrl !== 'string') return null
+  const mm = fileUrl.match(/^(.*\/uploads\/)([^/?#]+)\.([a-zA-Z0-9]+)(\?.*)?$/)
+  if (!mm || mm[3].toLowerCase() === 'gif') return null
+  return `${mm[1]}thumb/${mm[2]}_thumb.webp`
+}
+
 /** 用户头像完整 URL；无头像返回 null（调用方回落为首字符底色块） */
 export function avatarSrc(u) {
   const url = u && u.avatar_url

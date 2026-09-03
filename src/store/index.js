@@ -1041,6 +1041,7 @@ export async function sendFile(file) {
     const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
     if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
     const m = await api.sendMessage(payload)
+    if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
     pushMsgDedup(m)
   } catch (e) {
     showToast(e.message)

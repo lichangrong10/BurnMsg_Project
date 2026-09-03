@@ -31,7 +31,7 @@
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
             <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
-              <img class="msg-image" :src="fileURL(m.file_url)" @load="scrollBottom">
+              <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
               <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
             <template v-else-if="m.type === 'file' || m.type === 'voice' || m.type === 'video'">
@@ -259,8 +259,8 @@
           <div class="iz-val">{{ Math.round(viewer.scale * 100) }}%</div>
           <div class="iz-btn" @click.stop="imgZoom(0.25)">＋</div>
         </div>
-        <div class="img-viewer-dl" @click.stop="downloadViewer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+        <div class="img-viewer-dl img-viewer-dl-text" @click.stop="downloadViewer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>{{ viewer.saving ? '保存中…' : '保存到相册' }}
         </div>
       </div>
       <div class="img-viewer-body" @dblclick="imgToggleZoom" @touchstart="imgTouchStart" @touchmove="imgTouchMove" @touchend="imgTouchEnd">
@@ -276,7 +276,7 @@ import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBur
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, thumbURLOf, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 
@@ -844,6 +844,15 @@ export default {
       if (this.preview.url) window.open(this.preview.url, '_blank')
     },
     /** 图片在线预览：点开全屏大图查看，可缩放/平移/下载；点击遮罩/关闭按钮退出 */
+    /** 聊天列表图片：一律先取缩略图（消息自带的 thumb_url，或按服务端路径约定推导），
+        为 null（历史消息/gif/生成失败）或加载失败时回退用 url 原图 */
+    imgSrc(m) {
+      if (!m || !m.file_url) return ''
+      if (m._thumbFail) return fileURL(m.file_url)
+      const t = m.thumb_url || thumbURLOf(m.file_url)
+      return t ? fileURL(t) : fileURL(m.file_url)
+    },
+    onImgErr(m) { m._thumbFail = true }, // 缩略图 404/加载失败：回退原图
     openImageView(m) {
       if (!m || !m.file_url) return
       this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '', scale: 1, tx: 0, ty: 0 }
@@ -875,17 +884,28 @@ export default {
       }
     },
     imgTouchEnd() { this.imgGesture = null },
-    downloadViewer() {
-      if (!this.viewer.url) return
-      const a = document.createElement('a')
-      a.href = this.viewer.url
-      a.download = this.viewer.name || ''
-      a.rel = 'noopener'
-      a.target = '_blank'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+    /** 保存原图到本地：先取 blob 再触发下载（跨域直链 <a download> 会被浏览器忽略，blob 才可靠） */
+    async downloadViewer() {
+      if (!this.viewer.url || this.viewer.saving) return
+      this.viewer.saving = true
+      try {
+        const blob = await http.get(this.viewer.url, { responseType: 'blob', timeout: 60000 })
+        const objUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objUrl
+        a.download = this.viewer.name || 'image.jpg'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
+        showToast('已保存到本地')
+      } catch (e) {
+        showToast('保存失败：' + (e && e.message ? e.message : ''))
+      } finally {
+        this.viewer.saving = false
+      }
     },
+    
     onMsgTap(m) {
       this.msgAction = m
     },
@@ -1010,6 +1030,7 @@ export default {
 .img-viewer-top { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; color: #fff; flex-shrink: 0; }
 .img-viewer-close, .img-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
 .img-viewer-close:active, .img-viewer-dl:active { background: rgba(255,255,255,.15); }
+.img-viewer-dl-text { font-size: 13px; line-height: 1.4; padding: 6px 10px; align-items: center; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; white-space: nowrap; }
 .img-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .img-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
 .img-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; -webkit-user-drag: none; transform-origin: center center; will-change: transform; }
