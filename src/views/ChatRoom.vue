@@ -1,5 +1,5 @@
 <template>
-  <div v-if="state.chat" class="chat-page">
+<div v-if="state.chat" class="chat-page">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="closeChat">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -25,7 +25,7 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m), file: m.type === 'file' || m.type === 'voice' }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
@@ -46,9 +46,14 @@
             <template v-else-if="m.type === 'file' || m.type === 'voice'">
               <div class="msg-file" @click.stop="openFile(m)">
                 <div class="msg-file-icon">
-                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg>
+                  <svg width="36" height="44" viewBox="0 0 36 44" aria-hidden="true">
+                    <path d="M0 6 Q0 0 6 0 H22 L36 16 V38 Q36 44 30 44 H6 Q0 44 0 38 Z" :fill="fileTypeInfo(m).bgColor"/>
+                    <path d="M22 0 L36 16 L20 14 Z" fill="rgba(0,0,0,.25)"/>
+                    <path d="M22 0 L36 16" stroke="rgba(255,255,255,.35)" stroke-width="1" fill="none"/>
+                  </svg>
+                  <span class="msg-file-icon-text">{{ fileTypeInfo(m).label }}</span>
                 </div>
-                <div style="min-width:0"><div class="msg-file-name">{{ m.file_name || '附件' }}</div><div class="msg-file-size">{{ fmtSize(m.file_size) }}</div></div>
+                <div class="msg-file-info"><div class="msg-file-name">{{ m.file_name || '附件' }}</div><div class="msg-file-size">{{ fmtSize(m.file_size) }}</div></div>
               </div>
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
@@ -312,7 +317,7 @@ import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBur
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, thumbURLOf, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, thumbURLOf, fmtClock, fmtSize, memberUser, memberUid, getFileTypeInfo } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 
@@ -459,7 +464,16 @@ export default {
     fileURL,
     fmtClock,
     fmtSize,
-    /** 发送者用户对象：通讯录 → 会话对方 → 群成员（兼容嵌套/平铺）→ 演示数据 */
+    /** 文件消息图标信息：角标文字 + 图标底色 */
+    fileTypeInfo(m) {
+      const info = getFileTypeInfo(m && m.file_name)
+      return {
+        label: info.label,
+        bgColor: info.bg,
+        cat: info.cat
+      }
+    },
+/** 发送者用户对象：通讯录 → 会话对方 → 群成员（兼容嵌套/平铺）→ 演示数据 */
     senderInfo(m) {
       if (m.sender_id === state.me.id) return state.me
       const c = state.contacts.find(x => x.id === m.sender_id)
@@ -896,7 +910,7 @@ export default {
         this.preview.error = '该文件无法预览'
       }
     },
-    /** PDF 预览：pdf.js 绘制到 canvas（跨平台，Android WebView 亦可用），支持翻页与缩放 */
+/** PDF 预览：pdf.js 绘制到 canvas（跨平台，Android WebView 亦可用），支持翻页与缩放 */
     async openPdf(blob) {
       const pdfjsLib = await import('pdfjs-dist')
       pdfjsLib.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
