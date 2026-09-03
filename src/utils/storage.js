@@ -9,7 +9,7 @@ export const storage = {
   get refresh() { return localStorage.getItem('bm_refresh_token') || '' },
   set refresh(v) { v ? localStorage.setItem('bm_refresh_token', v) : localStorage.removeItem('bm_refresh_token') },
 
-  get baseURL() { return localStorage.getItem('bm_base_url') || 'http://192.168.9.116:9091/api/v1' },
+  get baseURL() { return localStorage.getItem('bm_base_url') || 'http://192.168.9.253:9091/api/v1' },
   set baseURL(v) { localStorage.setItem('bm_base_url', v) },
 
   // 设备编号：首次访问自动生成并永久保存（clear 不清除），服务端按 (用户, 设备编号) 复用设备记录

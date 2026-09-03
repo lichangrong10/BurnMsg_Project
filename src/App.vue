@@ -18,7 +18,7 @@
     <div class="dialog">
       <div class="dialog-title">后端地址</div>
       <div class="dialog-body">
-        <input class="input" v-model.trim="serverInput" placeholder="http://192.168.9.116:9091/api/v1">
+        <input class="input" v-model.trim="serverInput" placeholder="http://192.168.9.253:9091/api/v1">
         <div style="font-size:12px;margin-top:8px;line-height:1.5">
           打包 APK 后 WebView 直连无跨域限制；浏览器调试可填 <b>/api/v1</b> 走 vite 开发代理，或确保后端已开启 CORS。
         </div>
