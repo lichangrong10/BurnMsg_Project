@@ -40,7 +40,9 @@ export async function checkAppUpdate() {
   if (currentCode <= 0) return null
   try {
     const data = await api.checkUpdate('android', currentCode)
-    return data || null
+    // 防御：后端可能返回当前版本或更低版本，只有真正的新版本才弹窗
+    if (data && Number(data.version_code) > currentCode) return data
+    return null
   } catch (e) {
     console.warn('[焚信] 检查更新失败:', e)
     return null
