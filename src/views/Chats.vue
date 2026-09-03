@@ -29,7 +29,7 @@
           <div class="conv-time">{{ fmtTime(c.last_message_at) }}</div>
         </div>
         <div class="conv-row" style="align-items:center">
-          <div class="conv-preview"><svg v-if="c.burning" class="burn-tag" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>{{ c.lastMsg || '开始聊天吧' }}</div>
+          <div class="conv-preview"><svg v-if="c.burning" class="burn-tag" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg><span v-if="c.mentionFlag" style="color:#E53935;font-weight:600">[有人@我]</span><template v-else>{{ c.lastMsg || '开始聊天吧' }}</template></div>
           <div class="conv-right">
             <span v-if="c.dissolved_at" class="type-tag" style="color:#E53935;background:rgba(229,57,53,.1)">已解散</span>
             <span v-else-if="c.unread" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
