@@ -71,6 +71,7 @@
 
 .main-page > .topbar {
   min-height: calc(58px + var(--safe-top));
+  z-index: 3; /* 高于滑动页(z2)：切换时 topbar 阴影不被新页盖住，避免闪烁 */
   box-sizing: border-box;
 }
 
@@ -86,6 +87,8 @@
   background: transparent;
   padding: 8px 12px;
   pointer-events: none; /* 输入框以外区域不挡内容点击 */
+  transition: opacity .18s ease, transform .18s ease;
+  will-change: transform;
 }
 
 /* 悬浮搜索框：白底 + 阴影，浮在白色内容上也清晰 */
@@ -100,3 +103,14 @@
 
 /* 有搜索框的 tab：内容顶部预留悬浮搜索框的位置（padding 跟随页面一起滑动） */
 .content-scroll.tab-anim > .pad-search { padding-top: 61px; }
+
+/* ============================================================
+   「我的」tab：搜索框淡出上移（始终渲染只切 class，
+   避免 v-if 造成的瞬间消失/瞬间出现，无动画感）
+   ============================================================ */
+.main-page > .search-wrap.search-off {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+.main-page > .search-wrap.search-off .search-input { pointer-events: none; }
