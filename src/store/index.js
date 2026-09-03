@@ -987,9 +987,10 @@ function pushMsgDedup(m) {
   return true
 }
 
-/** 发送文本消息，失败返回 false（调用方恢复草稿） */
-export async function sendText(text, mentions) {
+/** 发送文本消息，失败返回 false（调用方恢复草稿）。replyToId：引用回复时传入被回复消息 id（对应后端 reply_to_id 字段） */
+export async function sendText(text, mentions, replyToId) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
+  if (replyToId) payload.reply_to_id = replyToId // 引用回复：被回复的 Message.id
   if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
   if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
   if (state.demoMode) {
@@ -1060,6 +1061,7 @@ export async function sendFile(file) {
     const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
     if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
     const m = await api.sendMessage(payload)
+    if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
     pushMsgDedup(m)
   } catch (e) {
     showToast(e.message)

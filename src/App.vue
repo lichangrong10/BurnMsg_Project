@@ -57,8 +57,8 @@
         <div style="text-align:center;font-size:12px;color:var(--tg-text-secondary);margin-top:4px">下载中 {{ updateProgress }}%</div>
       </div>
       <div class="dialog-actions">
-        <button v-if="!updateInfo.force" class="btn-text" :disabled="updateDownloading" @click="dismissUpdate">{{ updateDownloading ? '下载中…' : '暂不更新' }}</button>
-        <button class="btn-text" style="font-weight:600" :disabled="updateDownloading" @click="doUpdate">{{ updateDownloading ? '下载中…' : '立即更新' }}</button>
+        <button v-if="!updateInfo.force" class="btn-text" :disabled="updateDownloading" @click="dismissUpdate">{{ updateDownloading ? '' : '暂不更新' }}</button>
+        <button class="btn-text" style="font-weight:600" :disabled="updateDownloading" @click="doUpdate">{{ updateDownloading ? '' : '立即更新' }}</button>
       </div>
     </div>
   </div>

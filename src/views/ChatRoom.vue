@@ -27,11 +27,12 @@
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
           <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
+            
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
             <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
-              <img class="msg-image" :src="fileURL(m.file_url)" @load="scrollBottom">
+              <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
               <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
             <template v-else-if="isVideoMsg(m)">
@@ -66,6 +67,7 @@
             </div>
           </div>
         </div>
+        <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
       </template>
       <div v-if="!state.messages.length && !state.msgLoading" class="empty-state" style="padding-top:60px"><div>暂无消息<br><small>发出第一条消息，开始加密通讯</small></div></div>
     </div>
@@ -83,6 +85,15 @@
         <div class="edit-bar-text">{{ editing.content }}</div>
       </div>
       <div class="edit-bar-close" @click="cancelEdit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+    </div>
+
+    <!-- 引用回复提示条 -->
+    <div v-if="replyTo" class="edit-bar reply-bar">
+      <div style="flex:1;min-width:0">
+        <div class="edit-bar-title">回复 {{ senderName(replyTo) }}</div>
+        <div class="edit-bar-text">{{ msgPreviewText(replyTo) }}</div>
+      </div>
+      <div class="edit-bar-close" @click="cancelReply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
     </div>
 
     <div v-if="!isDissolved" class="input-bar">
@@ -183,6 +194,7 @@
     <div v-if="msgAction" class="overlay" @click.self="msgAction = null">
       <div class="sheet">
         <div class="sheet-title" style="max-height:60px;overflow:hidden">{{ msgAction.is_recalled ? '消息已撤回' : (msgAction.content || msgAction.file_name || '').slice(0, 60) }}</div>
+        <div class="sheet-item" v-if="!msgAction.is_recalled" @click="startReply">回复</div>
         <div class="sheet-item" v-if="!msgAction.is_recalled" @click="copyMsg">复制</div>
         <div class="sheet-item" v-if="canEditAction" @click="startEdit">编辑</div>
         <div class="sheet-item" v-if="msgAction.sender_id === state.me.id && !msgAction.is_recalled" @click="showReceipt">已读回执</div>
@@ -267,8 +279,8 @@
           <div class="iz-val">{{ Math.round(viewer.scale * 100) }}%</div>
           <div class="iz-btn" @click.stop="imgZoom(0.25)">＋</div>
         </div>
-        <div class="img-viewer-dl" @click.stop="downloadViewer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+        <div class="img-viewer-dl img-viewer-dl-text" @click.stop="downloadViewer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>{{ viewer.saving ? '保存中…' : '保存到相册' }}
         </div>
       </div>
       <div class="img-viewer-body" @dblclick="imgToggleZoom" @touchstart="imgTouchStart" @touchmove="imgTouchMove" @touchend="imgTouchEnd">
@@ -300,7 +312,7 @@ import { state, closeChat, setBurn, sendText, sendFile, recallMessage, revealBur
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, thumbURLOf, fmtClock, fmtSize, memberUser, memberUid } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 
@@ -318,6 +330,8 @@ export default {
       showTofuTodo: false,
       msgAction: null,
       editing: null,       // 正在编辑的消息
+      replyTo: null,       // 引用回复：正在回复的消息
+      replyCache: {},      // 引用快照缓存：reply_to_id -> { name, text }（原文不在当前已加载列表时也能正常显示引用块）
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
@@ -420,6 +434,7 @@ export default {
       if (this.showAttachSheet)   { this.showAttachSheet = false; e.preventDefault(); return }
       if (this.editing)           { this.editing = null; e.preventDefault(); return }
       if (this.mentionPick) { this.closeMention(); e.preventDefault(); return }
+      if (this.replyTo)       { this.replyTo = null; e.preventDefault(); return }
     },
     pickFrom(kind) {
       this.showAttachSheet = false
@@ -683,6 +698,81 @@ export default {
       this.editing = null
       this.draft = ''
     },
+    startReply() {
+      const m = this.msgAction
+      this.msgAction = null
+      // 若正处在编辑态，切到回复态前先退出编辑
+      if (this.editing && !this.draft.trim()) this.editing = null
+      // 立即缓存被回复原文的快照：即使后续切分页/原文被焚毁移除，引用块也能正常显示摘要
+      if (m && m.id != null) this.replyCache[String(m.id)] = { name: this.senderName(m), text: this.msgPreviewText(m) }
+      this.replyTo = m
+      nextTick(() => { if (this.$refs.msgInput) this.$refs.msgInput.focus() })
+    },
+    cancelReply() {
+      this.replyTo = null
+    },
+    /** 在当前会话消息里定位一条消息（供回复引用展示与被回复跳转） */
+    findMessage(id) {
+      if (id == null) return null
+      const s = String(id)
+      const hit = state.messages.find(x => String(x.id ?? x.message_id ?? x.messageId) === s)
+      if (hit) return hit
+      const arr = state.chat && DEMO.messages[state.chat.id]
+      if (Array.isArray(arr)) return arr.find(x => String(x.id) === s) || null
+      return null
+    },
+    /** 一条消息自身的摘要文本（媒体/已焚毁/已撤回做占位），不依赖 reply_to_id 反查 */
+    msgPreviewText(t) {
+      if (!t || typeof t !== 'object') return ''
+      if (t.is_recalled) return '此消息已撤回'
+      if (this.isBurned(t)) return '此消息已焚毁'
+      if (t.type === 'image') return '[图片]' + (t.content ? ' ' + t.content : '')
+      if (t.type === 'file') return '[文件] ' + (t.file_name || '')
+      if (t.type === 'voice') return '[语音]'
+      if (t.type === 'video') return '[视频]'
+      return (t.content || '').replace(/\n/g, ' ').slice(0, 60)
+    },
+    /** 回复者显示名（引用条/气泡引用块的标题）：先读快照，再回退当前列表 */
+    replyName(m) {
+      const id = m && m.reply_to_id
+      if (id != null && this.replyCache[String(id)]) return this.replyCache[String(id)].name
+      const target = this.findMessage(id)
+      return target ? this.senderName(target) : ''
+    },
+    /** 被回复消息的摘录文本：先读快照，再回退当前列表 */
+    replyText(m) {
+      const id = m && m.reply_to_id
+      if (id != null && this.replyCache[String(id)]) return this.replyCache[String(id)].text
+      const target = this.findMessage(id)
+      if (!target) return ''
+      return this.msgPreviewText(target)
+    },
+    /** 气泡内引用块：有 reply_to_id → 返回 { name, text }；原文与快照都拿不到时返回 null（不渲染空引用块） */
+    replyQuote(m) {
+      if (!m || m.reply_to_id == null) return null
+      const name = this.replyName(m)
+      const text = this.replyText(m)
+      if (!name && !text) return null
+      return { name, text }
+    },
+    /** 点击气泡引用块：滚动并高亮被回复消息 */
+    async jumpToReply(m) {
+      const target = this.findMessage(m && m.reply_to_id)
+      if (!target) { showToast('原消息不可用'); return }
+      const box = this.$refs.msgBox
+      await nextTick()
+      const idx = state.messages.indexOf(target)
+      const el = box && box.querySelectorAll('.msg-row')[idx]
+      if (!el) { this.scrollBottom(); return }
+      const wasAtBottom = this.stickBottom
+      const top = el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2
+      box.scrollTop = Math.max(0, top)
+      this.stickBottom = wasAtBottom && (box.scrollHeight - box.scrollTop - box.clientHeight < 60)
+      // 高亮闪烁
+      el.classList.add('highlight')
+      clearTimeout(this._hlTimer)
+      this._hlTimer = setTimeout(() => el.classList.remove('highlight'), 1200)
+    },
     async showReceipt() {
       const m = this.msgAction
       this.msgAction = null
@@ -724,9 +814,11 @@ export default {
         return
       }
       if (!state.chat) return
+      const replyId = this.replyTo ? (this.replyTo.id ?? this.replyTo.message_id) : null
       this.draft = ''
+      this.replyTo = null
       if (this.$refs.msgInput) this.$refs.msgInput.style.height = 'auto'
-      const ok = await sendText(text, this.extractMentions(text))
+      const ok = await sendText(text, this.extractMentions(text), replyId)
       if (!ok) this.draft = text
     },
     onFilePicked(e) {
@@ -905,6 +997,15 @@ export default {
       if (this.preview.url) window.open(this.preview.url, '_blank')
     },
     /** 图片在线预览：点开全屏大图查看，可缩放/平移/下载；点击遮罩/关闭按钮退出 */
+    /** 聊天列表图片：一律先取缩略图（消息自带的 thumb_url，或按服务端路径约定推导），
+        为 null（历史消息/gif/生成失败）或加载失败时回退用 url 原图 */
+    imgSrc(m) {
+      if (!m || !m.file_url) return ''
+      if (m._thumbFail) return fileURL(m.file_url)
+      const t = m.thumb_url || thumbURLOf(m.file_url)
+      return t ? fileURL(t) : fileURL(m.file_url)
+    },
+    onImgErr(m) { m._thumbFail = true }, // 缩略图 404/加载失败：回退原图
     openImageView(m) {
       if (!m || !m.file_url) return
       this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '', scale: 1, tx: 0, ty: 0 }
@@ -936,16 +1037,26 @@ export default {
       }
     },
     imgTouchEnd() { this.imgGesture = null },
-    downloadViewer() {
-      if (!this.viewer.url) return
-      const a = document.createElement('a')
-      a.href = this.viewer.url
-      a.download = this.viewer.name || ''
-      a.rel = 'noopener'
-      a.target = '_blank'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+    /** 保存原图到本地：先取 blob 再触发下载（跨域直链 <a download> 会被浏览器忽略，blob 才可靠） */
+    async downloadViewer() {
+      if (!this.viewer.url || this.viewer.saving) return
+      this.viewer.saving = true
+      try {
+        const blob = await http.get(this.viewer.url, { responseType: 'blob', timeout: 60000 })
+        const objUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objUrl
+        a.download = this.viewer.name || 'image.jpg'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
+        showToast('已保存到本地')
+      } catch (e) {
+        showToast('保存失败：' + (e && e.message ? e.message : ''))
+      } finally {
+        this.viewer.saving = false
+      }
     },
     /** 视频在线播放：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） */
     openVideo(m) {
@@ -1058,6 +1169,18 @@ export default {
 .edit-bar-title { font-size: 13px; color: var(--tg-blue); font-weight: 600; }
 .edit-bar-text { font-size: 13px; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .edit-bar-close { cursor: pointer; color: var(--tg-text-secondary); padding: 2px 8px; font-size: 15px; flex-shrink: 0; }
+/* ── 引用回复 ── */
+.reply-bar { border-left-color: var(--tg-blue); }          /* 绿色左边条区分「编辑」 */
+.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; }
+.reply-quote:active { opacity: .72; }
+.rq-name { font-size: 12.5px; font-weight: 600; color: var(--tg-blue); line-height: 1.3; }
+.rq-text { font-size: 12.5px; line-height: 1.35; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-quote.out { text-align: right; margin-left: 40%; border-right: 2px solid var(--tg-blue); }
+.reply-quote.in { text-align: left; margin-right: 40%; border-left: 2px solid var(--tg-blue); }
+
+
+.msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
+@keyframes replyFlash { 0%, 60% { box-shadow: 0 0 0 3px rgba(51,144,236,.35); } 100% { box-shadow: 0 1px 2px rgba(0,0,0,.09); } }
 .receipt-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; font-size: 15px; }
 .receipt-status { color: var(--tg-text-secondary); font-size: 13.5px; }
 .receipt-status.read { color: var(--tg-blue); font-weight: 500; }
@@ -1104,6 +1227,7 @@ export default {
 .img-viewer-top { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 12px 8px; color: #fff; flex-shrink: 0; }
 .img-viewer-close, .img-viewer-dl { color: #fff; cursor: pointer; display: flex; padding: 5px; border-radius: 8px; }
 .img-viewer-close:active, .img-viewer-dl:active { background: rgba(255,255,255,.15); }
+.img-viewer-dl-text { font-size: 13px; line-height: 1.4; padding: 6px 10px; align-items: center; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; white-space: nowrap; }
 .img-viewer-name { flex: 1; min-width: 0; font-size: 14px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .img-viewer-body { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
 .img-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; -webkit-user-drag: none; transform-origin: center center; will-change: transform; }
