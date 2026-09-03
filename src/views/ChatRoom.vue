@@ -59,7 +59,7 @@
             </div>
           </div>
         </div>
-        <div v-if="replyQuote(m)" class="reply-quote" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+        <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
       </template>
       <div v-if="!state.messages.length && !state.msgLoading" class="empty-state" style="padding-top:60px"><div>暂无消息<br><small>发出第一条消息，开始加密通讯</small></div></div>
     </div>
@@ -1113,13 +1113,14 @@ export default {
 .edit-bar-close { cursor: pointer; color: var(--tg-text-secondary); padding: 2px 8px; font-size: 15px; flex-shrink: 0; }
 /* ── 引用回复 ── */
 .reply-bar { border-left-color: var(--tg-blue); }          /* 绿色左边条区分「编辑」 */
-.reply-quote {text-align: right; margin-left: 40%; display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; padding: 5px 8px 6px; border-right: 2px solid var(--tg-blue); border-radius: 6px; cursor: pointer; max-width: 100%; }
+.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; }
 .reply-quote:active { opacity: .72; }
 .rq-name { font-size: 12.5px; font-weight: 600; color: var(--tg-blue); line-height: 1.3; }
 .rq-text { font-size: 12.5px; line-height: 1.35; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bubble.out .reply-quote { background: rgba(255,255,255,.18); border-left-color: rgba(255,255,255,.7); }
-.bubble.out .rq-name { color: #e8f3ff; }
-.bubble.out .rq-text { color: rgba(255,255,255,.88); }
+.reply-quote.out { text-align: right; margin-left: 40%; border-right: 2px solid var(--tg-blue); }
+.reply-quote.in { text-align: left; margin-right: 40%; border-left: 2px solid var(--tg-blue); }
+
+
 .msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
 @keyframes replyFlash { 0%, 60% { box-shadow: 0 0 0 3px rgba(51,144,236,.35); } 100% { box-shadow: 0 1px 2px rgba(0,0,0,.09); } }
 .receipt-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; font-size: 15px; }
