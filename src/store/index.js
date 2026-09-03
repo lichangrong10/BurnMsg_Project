@@ -455,9 +455,19 @@ export async function loadConvs(quiet) {
     state.convs = list
       .map(c => {
         const old = prev[c.id]
+        const convUnread = (old && old.unread) ?? c.unread ?? 0
+        let mentionFlag = Number(c.mentionFlag ?? c.mention_flag ?? (old && old.mentionFlag)) || 0
+        if (!mentionFlag && convUnread > 0 && c.type !== 'private') {
+          const raw = c.last_message ?? c.lastMessage ?? c.last_msg ?? c.last_message_text ?? c.lastMsg
+          if (raw != null) {
+            const probe = (typeof raw === 'object') ? normalizeMsg({ ...raw }) : { content: String(raw) }
+            if (mentionsMe(probe)) mentionFlag = 1
+          }
+        }
         return {
           ...c,
-          unread: (old && old.unread) ?? c.unread ?? 0,
+          unread: convUnread,
+          mentionFlag,
           lastMsg: extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || '',
           pinned: ids.includes(c.id)
         }
@@ -653,11 +663,13 @@ function mentionsMe(m) {
   const me = state.me || {}
   if (Array.isArray(m.mentions) && m.mentions.length && me.id != null) {
     if (m.mentions.some(uid => String(uid) === String(me.id))) return true
+    if (m.mentions.some(uid => ['all', 'everyone', '所有人', '@all', '@所有人'].includes(String(uid)))) return true
   }
   const text = m.content || ''
   const names = [me.display_name, me.name, me.username, me.nickname, me.real_name].filter(Boolean)
   if (!names.length) return false
   const s = String(text)
+  if (s.indexOf('@所有人') !== -1) return true // @所有人：全体成员（含我）都算被 @
   return names.some(n => s.indexOf('@' + n) !== -1)
 }
 

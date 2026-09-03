@@ -147,6 +147,7 @@ body {
 .conv-time { font-size: 12.5px; color: var(--tg-text-secondary); flex-shrink: 0; }
 .conv-preview { font-size: 14.5px; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .conv-preview .burn-tag { color: #E07000; flex-shrink: 0; vertical-align: -1px; margin-right: 2px; }
+.conv-mention { display: inline-block; color: #E53935; font-weight: 700; font-size: 13px; background: rgba(229,57,53,.12); padding: 2px 9px; border-radius: 9px; flex-shrink: 0; vertical-align: -1px; }
 .conv-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .type-tag { font-size: 11px; color: var(--tg-text-secondary); background: rgba(0,0,0,.07); padding: 1px 7px; border-radius: 8px; font-weight: 500; }
 
@@ -227,6 +228,20 @@ body {
 .bubble.img .msg-meta .read-tag.unread { color: rgba(255,255,255,.7); }
 .bubble.img .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
 .bubble.img .burn-chip { padding-left: 2px; }
+/* 视频消息：裸媒体直出（无气泡背景），16:9 封面 + 中央播放按钮 + 大小角标，时间戳叠在右下角 */
+.bubble.video { background: transparent; padding: 0; box-shadow: none; max-width: 260px; color: var(--tg-text); }
+.bubble.video .sender-name { padding: 0 2px; }
+.msg-video { position: relative; width: 240px; max-width: 100%; aspect-ratio: 16/9; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #2f3136, #111214); box-shadow: 0 1px 3px rgba(0,0,0,.16); cursor: pointer; }
+.msg-video-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.msg-video-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.msg-video-play span { width: 46px; height: 46px; border-radius: 50%; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; }
+.msg-video-play svg { position: relative; left: 2px; }
+.msg-video-size { position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
+.bubble.video .msg-meta { position: absolute; right: 5px; bottom: 5px; float: none; margin: 0; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
+.bubble.video .msg-meta .read-tag { color: #8fd3a8; }
+.bubble.video .msg-meta .read-tag.unread { color: rgba(255,255,255,.7); }
+.bubble.video .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
+.bubble.video .burn-chip { padding-left: 2px; }
 
 /* 输入栏 */
 .input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 7px 10px calc(7px + var(--safe-bottom)); background: var(--tg-bg); flex-shrink: 0; border-top: 1px solid rgba(0,0,0,.05); box-shadow: 0 -3px 12px rgba(0,0,0,.05); position: relative; z-index: 3; }
