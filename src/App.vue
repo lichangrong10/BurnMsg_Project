@@ -154,15 +154,17 @@ export default {
       this.updateProgress = 0
     },
     async doUpdate() {
-      if (!this.updateInfo) return
+      if (!this.updateInfo || this.updateDownloading) return
       this.updateDownloading = true
       this.updateProgress = 0
       try {
-        await downloadAndInstallApk(this.updateInfo.apk_url)
+        const r = await downloadAndInstallApk(this.updateInfo.apk_url, p => { this.updateProgress = p })
+        showToast((r && r.message) || '下载完成，正在安装…')
       } catch (e) {
         showToast('下载失败：' + (e.message || '未知错误'))
       } finally {
         this.updateDownloading = false
+        this.updateProgress = 0
       }
     },
     /** 用弹窗中输入的地址裸调 /health（不经过 axios 实例，未保存也能测） */

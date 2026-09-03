@@ -48,16 +48,33 @@ export async function checkAppUpdate() {
 }
 
 /** 触发 APK 下载安装（通过原生桥接） */
-export async function downloadAndInstallApk(url) {
+export async function downloadAndInstallApk(url, onProgress) {
   const fullUrl = resolveApkUrl(url)
   const cap = window.Capacitor
   if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
-    // 通过 registerPlugin 注册的 Capacitor 原生插件调用
+    let progressListener = null
+    let errorListener = null
+    let completeListener = null
     try {
-      return await AppUpdater.downloadAndInstall({ url: fullUrl })
+      return await new Promise((resolve, reject) => {
+        progressListener = AppUpdater.addListener('downloadProgress', data => {
+          if (onProgress && data && typeof data.progress === 'number') onProgress(data.progress)
+        })
+        errorListener = AppUpdater.addListener('downloadError', data => {
+          reject(new Error((data && data.error) || '下载失败'))
+        })
+        completeListener = AppUpdater.addListener('downloadComplete', () => {
+          resolve({ success: true, message: '下载完成，正在安装' })
+        })
+        AppUpdater.downloadAndInstall({ url: fullUrl }).catch(reject)
+      })
     } catch (e) {
       console.error('[焚信] 原生安装 APK 失败:', e)
       throw e
+    } finally {
+      if (progressListener) progressListener.remove()
+      if (errorListener) errorListener.remove()
+      if (completeListener) completeListener.remove()
     }
   }
   // 浏览器调试环境：直接打开下载链接

@@ -24,7 +24,7 @@
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
-          <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
+          <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
           <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
@@ -84,7 +84,7 @@
       <input type="file" ref="galleryInput" accept="image/*,video/*" style="display:none" @change="onFilePicked">
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
-      <button v-if="state.chat && state.chat.type !== 'private'" class="attach-btn at-btn" @click="openMention" title="@ 群成员">@</button>
+      
       <textarea class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send"></textarea>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -530,6 +530,41 @@ export default {
     closeMention() {
       this.mentionPick = false
       this.mentionIndex = -1
+    },
+    /** 长按/右键群员头像：@ 该发件人（提取其显示名插入草稿） */
+    mentionSender(m) {
+      if (!state.chat || state.chat.type === 'private') return
+      const u = this.senderInfo(m)
+      const name = u ? (u.display_name || u.name || u.username || u.nickname || '') : (m && (m.sender_name || ''))
+      if (!name) return
+      const el = this.$refs.msgInput
+      const pos = el ? el.selectionStart : this.draft.length
+      const insert = '@' + name + ' '
+      const before = this.draft.slice(0, pos)
+      const after = this.draft.slice(pos + (this.draft.slice(pos).startsWith('@') ? 1 : 0))
+      this.draft = before + insert + after
+      this.closeMention()
+      nextTick(() => {
+        const el2 = this.$refs.msgInput
+        if (!el2) return
+        const p = pos + insert.length
+        if (window.getSelection) window.getSelection().removeAllRanges()
+        // 长按@不自动聚焦：避免移动端软键盘弹出遮挡页面、锁住交互
+        
+      })
+    },
+    mentionPressStart(e, m) {
+      if (!m || m.sender_id === state.me.id || !state.chat || state.chat.type === 'private') return
+      this._mp = { m, x: e.touches[0].clientX, y: e.touches[0].clientY, fired: false }
+      this._mpTimer = setTimeout(() => {
+        if (this._mp && this._mp.m === m) { this._mp.fired = true; this.mentionSender(m) }
+      }, 500)
+    },
+    mentionPressEnd() {
+      clearTimeout(this._mpTimer); this._mp = null
+    },
+    mentionPressCancel() {
+      clearTimeout(this._mpTimer); this._mp = null
     },
     escapeHtml(s) {
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -1055,6 +1090,7 @@ export default {
 .preview-audio { padding: 40px 20px; text-align: center; }
 .preview-audio audio { width: 100%; }
 /* ── @ 提及 ── */
+.msg-avatar { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .mention { color: var(--tg-blue); font-weight: 500; }
 .mention-me { background: rgba(51, 144, 236, .16); color: var(--tg-blue); font-weight: 600; border-radius: 4px; padding: 0 2px; }
 .bubble.out .mention { color: #e3f0ff; }
