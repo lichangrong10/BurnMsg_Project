@@ -237,6 +237,20 @@ body {
 .msg-file-size { font-size: 12px; color: var(--tg-text-secondary); margin-top: 1px; }
 .bubble.out .msg-file-size { color: rgba(255,255,255,.65); }
 /* 文件气泡：上下内边距加大，更舒展 */
+/* 视频消息：裸媒体直出（无气泡背景），16:9 封面 + 中央播放按钮 + 大小角标，时间戳叠在右下角 */
+.bubble.video { background: transparent; padding: 0; box-shadow: none; max-width: 260px; color: var(--tg-text); }
+.bubble.video .sender-name { padding: 0 2px; }
+.msg-video { position: relative; width: 240px; max-width: 100%; aspect-ratio: 16/9; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #2f3136, #111214); box-shadow: 0 1px 3px rgba(0,0,0,.16); cursor: pointer; }
+.msg-video-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.msg-video-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.msg-video-play span { width: 46px; height: 46px; border-radius: 50%; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; }
+.msg-video-play svg { position: relative; left: 2px; }
+.msg-video-size { position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
+.bubble.video .msg-meta { position: absolute; right: 5px; bottom: 5px; float: none; margin: 0; padding: 2px 7px; background: rgba(0,0,0,.55); color: #fff; border-radius: 10px; font-size: 11px; }
+.bubble.video .msg-meta .read-tag { color: #8fd3a8; }
+.bubble.video .msg-meta .read-tag.unread { color: rgba(255,255,255,.7); }
+.bubble.video .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
+.bubble.video .burn-chip { padding-left: 2px; }
 .bubble.file { padding-top: 14px; padding-bottom: 14px; }
 /* 文件气泡：时间戳绝对定位钉在右下角，不再占一行，图标+文件名占满气泡自然垂直居中 */
 .bubble.file .msg-meta { position: absolute; right: 9px; bottom: 4px; float: none; margin: 0; }

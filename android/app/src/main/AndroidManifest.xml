@@ -42,5 +42,6 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" /><!-- 语音消息：麦克风（V5.8.4） -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><!-- 语音消息：WebView 授权链要求与 RECORD_AUDIO 同时声明，缺它 getUserMedia 必被拒（V5.8.4） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>
