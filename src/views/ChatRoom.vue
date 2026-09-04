@@ -351,7 +351,7 @@
           <div class="iz-btn" @click.stop="imgZoom(0.25)">＋</div>
         </div>
         <div class="img-viewer-dl img-viewer-dl-text" @click.stop="downloadViewer">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>{{ viewer.saving ? '保存中…' : '保存到相册' }}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>{{ viewer.saving ? '保存中…' : (viewer.originalUrl ? '下载原图' : '保存到相册') }}
         </div>
       </div>
       <div class="img-viewer-body" @dblclick="imgToggleZoom" @touchstart="imgTouchStart" @touchmove="imgTouchMove" @touchend="imgTouchEnd">
@@ -1328,7 +1328,8 @@ export default {
     onImgErr(m) { m._thumbFail = true }, // 缩略图 404/加载失败：回退原图
     openImageView(m) {
       if (!m || !m.file_url) return
-      this.viewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '', scale: 1, tx: 0, ty: 0 }
+      // v5.8.7 双上传：大图默认加载压缩版（file_url，秒开）；originalUrl 为原图，供「下载原图」
+      this.viewer = { show: true, url: fileURL(m.file_url), originalUrl: m.file_original_url ? fileURL(m.file_original_url) : '', name: m.file_name || '', scale: 1, tx: 0, ty: 0 }
     },
     closeViewer() { this.viewer.show = false; this.imgGesture = null },
     /** 图片缩放 */
@@ -1362,7 +1363,8 @@ export default {
       if (!this.viewer.url || this.viewer.saving) return
       this.viewer.saving = true
       try {
-        const blob = await http.get(this.viewer.url, { responseType: 'blob', timeout: 60000 })
+        // v5.8.7：优先下载原图（originalUrl），无原图（老消息/压缩失败直传）回退当前显示图
+        const blob = await http.get(this.viewer.originalUrl || this.viewer.url, { responseType: 'blob', timeout: 60000 })
         const objUrl = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = objUrl

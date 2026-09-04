@@ -42,6 +42,8 @@ export const api = {
   // ── 消息操作 ──
   editMessage: (id, content) => http.put(`/messages/${id}`, { content }),
   recallMessage: id => http.post(`/messages/${id}/recall`),
+  // v5.8.7 图片双上传：压缩版先发（file_url），原图后台上传完成后回填 file_original_url
+  updateMessageOriginal: (id, file_original_url) => http.patch(`/messages/${id}/original-file`, { file_original_url }),
   revealMessage: id => http.post(`/messages/${id}/reveal`), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（返回完整 Message + burn_at/remain_seconds）
   markRead: conversationId => http.post(`/messages/${conversationId}/read`), // 注意：文档约定此处 id 为会话 ID
   getReceipt: id => http.get(`/messages/${id}/receipt`),

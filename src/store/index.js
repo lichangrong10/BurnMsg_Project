@@ -1044,7 +1044,45 @@ export async function sendText(text, mentions, replyToId) {
   }
 }
 
-/** 发送图片/文件（先上传再发消息，50MB 前端预校验） */
+/** 图片压缩（v5.8.7 双上传）：canvas 重绘长边 ≤1440 JPEG q0.82，典型 3~8MB 手机原图 → 200~600KB。
+ *  聊天流/大图查看器加载压缩版（5Mbps 出带宽下 <1s 秒开），「保存到相册」走原图。
+ *  返回 null = 不压缩走原图直传：gif（canvas 重绘丢动画）/ 小图 ≤300KB（压缩无收益）/ HEIC 等解码失败。
+ *  EXIF 方向：现代 Chromium WebView 的 <img> 解码默认按 EXIF 摆正，drawImage 遵循同方向，竖拍不旋转。 */
+async function compressImage(file) {
+  if (!/^image\//.test(file.type) || file.type === 'image/gif') return null
+  if (file.size <= 300 * 1024) return null
+  try {
+    const blob = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.onload = () => {
+        try {
+          let w = img.naturalWidth, h = img.naturalHeight
+          if (!w || !h) throw new Error('bad dimensions')
+          const MAX = 1440
+          if (w > MAX || h > MAX) {
+            const r = Math.min(MAX / w, MAX / h)
+            w = Math.round(w * r); h = Math.round(h * r)
+          }
+          const cv = document.createElement('canvas')
+          cv.width = w; cv.height = h
+          const ctx = cv.getContext('2d')
+          ctx.drawImage(img, 0, 0, w, h)
+          cv.toBlob(b => { URL.revokeObjectURL(url); resolve(b) }, 'image/jpeg', 0.82)
+        } catch (e) { URL.revokeObjectURL(url); reject(e) }
+      }
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')) }
+      img.src = url
+    })
+    if (!blob || !blob.size || blob.size >= file.size) return null // 压不动（如已是高压缩小图）→ 放弃压缩版
+    return blob
+  } catch (e) { return null }
+}
+
+/** 发送图片/文件（先上传再发消息，50MB 前端预校验）。
+ *  v5.8.7 图片双上传：压缩版先传先发（消息立即可见、聊天流秒开），
+ *  原图随后后台补传并 PATCH 回填 file_original_url（接收方「保存到相册」下载原图）。
+ *  原图补传失败静默降级：消息保持可下载（拿到的是压缩版）。视频/文件/gif 走原图直传。 */
 export async function sendFile(file) {
   if (!state.chat) return
   if (file.size > 50 * 1024 * 1024) { showToast('文件不能超过 50MB'); return }
@@ -1056,14 +1094,32 @@ export async function sendFile(file) {
     state.messages.push(m)
     return
   }
+  const compressed = isImg ? await compressImage(file) : null
   showToast('上传中…')
   try {
-    const up = await api.upload(file)
-    const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
-    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
+    if (!compressed) {
+      // 非图片 / gif / 小图 / 压缩失败：原逻辑单上传（file_original_url 不填，下载即该文件）
+      const up = await api.upload(file)
+      const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
+      if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
+      const m = await api.sendMessage(payload)
+      if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
+      pushMsgDedup(m)
+      return
+    }
+    // ── 图片双上传：压缩版先行发消息，原图后台补传 ──
+    const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
+    const up = await api.upload(cf)
+    const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: file.size }
+    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds
     const m = await api.sendMessage(payload)
-    if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
+    m.thumb_url = up.thumb_url || null
     pushMsgDedup(m)
+    // 原图补传（不阻塞、失败静默）：成功后本机立即生效，其他设备下次拉历史时可见
+    api.upload(file).then(ou => {
+      if (!ou || !ou.url) return
+      return api.updateMessageOriginal(m.id, ou.url).then(() => { m.file_original_url = ou.url }).catch(() => {})
+    }).catch(() => {})
   } catch (e) {
     showToast(e.message)
   }
