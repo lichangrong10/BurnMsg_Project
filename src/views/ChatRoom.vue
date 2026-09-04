@@ -133,6 +133,16 @@
       <div class="edit-bar-close" @click="cancelReply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
     </div>
 
+    <!-- ═══════ @ 提及候选框（内联 · 输入 @ + 关键词实时筛选） ═══════ -->
+    <div v-if="mentionPick && !voiceMode" class="mention-panel">
+      <div class="mention-list">
+        <div v-for="m in mentionCandidates" :key="m.uid || m.name" class="mention-item" @mousedown.prevent @click="selectMention(m)">
+          <div class="mention-avatar" :style="m.uid === '__all__' ? 'background:var(--tg-blue)' : { background: avatarColor(m.name) }">{{ m.uid === '__all__' ? '全' : (m.name || '?')[0] }}</div>
+          <span class="mention-name">{{ m.name }}</span>
+        </div>
+        <div v-if="!mentionCandidates.length" class="mention-empty">未找到匹配成员</div>
+      </div>
+    </div>
     <div v-if="!isDissolved" class="input-bar">
       <button class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -200,23 +210,7 @@
       </div>
     </div>
 
-    <!-- ═══════ @ 成员选择器 ═══════ -->
-    <div v-if="mentionPick" class="overlay" @click.self="closeMention">
-      <div class="sheet mention-sheet">
-        <div class="sheet-title">选择要 @ 的成员</div>
-        <div class="mention-list">
-          <div class="mention-item" @click="selectMention({ name: '所有人' })">
-            <div class="mention-avatar" style="background:var(--tg-blue)">全</div>
-            <span class="mention-name">所有人</span>
-          </div>
-          <div v-for="m in mentionMembers" :key="m.uid || m.name" class="mention-item" @click="selectMention(m)">
-            <div class="mention-avatar" :style="{ background: avatarColor(m.name) }">{{ m.name[0] }}</div>
-            <span class="mention-name">{{ m.name }}</span>
-          </div>
-        </div>
-        <div class="sheet-item sheet-cancel" @click="closeMention">取消</div>
-      </div>
-    </div>
+
 
     <!-- ═══════ 密钥待办（「稍后处理」收纳的密钥变更） ═══════ -->
     <div v-if="showTofuTodo" class="overlay" @click.self="showTofuTodo = false">
@@ -375,6 +369,7 @@ export default {
       draft: '',
       mentionPick: false,   // @ 成员选择器是否打开
       mentionIndex: -1,     // @ 触发位置（待插入处）
+      mentionQuery: '',     // @ 后面正在输入的关键词（实时筛选候选成员）
       showBurnSheet: false,
       showAttachSheet: false,
       showTofuTodo: false,
@@ -468,6 +463,18 @@ export default {
         out.push({ uid: memberUid(m), name })
       }
       return out
+    },
+    // @ 提及候选列表：按 mentionQuery 实时筛选（「所有人」+ 名字匹配的群成员）
+    mentionCandidates() {
+      const q = (this.mentionQuery || '').trim().toLowerCase()
+      const list = []
+      if (!q || '所有人'.toLowerCase().includes(q) || 'all'.includes(q)) {
+        list.push({ uid: '__all__', name: '所有人', all: true })
+      }
+      for (const m of this.mentionMembers) {
+        if (!q || String(m.name || '').toLowerCase().includes(q)) list.push(m)
+      }
+      return list
     },
     chatStatus() {
       const c = state.chat
@@ -646,47 +653,52 @@ export default {
     },
     onDraftInput(e) {
       this.autoGrow(e)
-      this.tryOpenMention()
+      this.computeMentionFromDraft()
     },
-    tryOpenMention() {
-      if (!state.chat || state.chat.type === 'private') return
+
+    computeMentionFromDraft() {
+      // 实时检测「正在输入 @提及」：从光标向前找最近一个有效 @，提取其后关键词；无有效 @ 或已含空白则收起候选框
+      if (!state.chat || state.chat.type === 'private') { this.closeMention(); return }
       const el = this.$refs.msgInput
       if (!el) return
       const pos = el.selectionStart
       const before = this.draft.slice(0, pos)
-      if (before.endsWith('@') && (before.length === 1 || /[\s]$/.test(before.slice(0, -1)))) {
-        this.mentionIndex = pos - 1
-        this.mentionPick = true
-      }
-    },
-    openMention() {
-      const el = this.$refs.msgInput
-      this.mentionIndex = el ? el.selectionStart : this.draft.length
+      const lastAt = before.lastIndexOf('@')
+      if (lastAt < 0) { this.closeMention(); return }
+      const prev = before.slice(0, lastAt).slice(-1)
+      if (lastAt !== 0 && !/\s/.test(prev)) { this.closeMention(); return }
+      const query = before.slice(lastAt + 1)
+      if (/\s/.test(query)) { this.closeMention(); return }
+      this.mentionIndex = lastAt
+      this.mentionQuery = query
       this.mentionPick = true
     },
+
     selectMention(m) {
       const name = (m && m.name) || ''
-      const idx = this.mentionIndex
+      const atIdx = this.mentionIndex
+      const _el0 = this.$refs.msgInput
+      const cursor = _el0 ? _el0.selectionStart : this.draft.length
       this.closeMention()
       if (!name) return
+      const start = (atIdx >= 0 && atIdx <= this.draft.length) ? atIdx : 0
+      const end = Math.max(cursor, start)
       const insert = '@' + name + ' '
-      const pos = (idx >= 0 && idx <= this.draft.length) ? idx : this.draft.length
-      const before = this.draft.slice(0, pos)
-      const after = this.draft.slice(pos + (this.draft.slice(pos).startsWith('@') ? 1 : 0))
-      this.draft = before + insert + after
+      this.draft = this.draft.slice(0, start) + insert + this.draft.slice(end)
+      const p = start + insert.length
       nextTick(() => {
-        const el = this.$refs.msgInput
-        if (!el) return
-        const p = pos + insert.length
-        el.focus()
-        el.setSelectionRange(p, p)
-        el.style.height = 'auto'
-        el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+        const el2 = this.$refs.msgInput
+        if (!el2) return
+        el2.focus()
+        el2.setSelectionRange(p, p)
+        el2.style.height = 'auto'
+        el2.style.height = Math.min(el2.scrollHeight, 120) + 'px'
       })
     },
     closeMention() {
       this.mentionPick = false
       this.mentionIndex = -1
+      this.mentionQuery = ''
     },
     /** 长按/右键群员头像：@ 该发件人（提取其显示名插入草稿） */
     mentionSender(m) {
@@ -1603,6 +1615,12 @@ export default {
 .mention-item:active { background: var(--tg-gray-bg); }
 .mention-avatar { width: 40px; height: 40px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; flex-shrink: 0; }
 .mention-name { font-size: 16px; color: var(--tg-text); }
+.mention-panel { background: var(--tg-bg); border-top: 1px solid var(--tg-border); box-shadow: 0 -2px 8px rgba(0,0,0,.06); }
+.mention-panel .mention-list { max-height: 220px; overflow-y: auto; padding: 4px 12px; }
+.mention-panel .mention-item { gap: 10px; padding: 8px 6px; }
+.mention-panel .mention-avatar { width: 34px; height: 34px; font-size: 14px; }
+.mention-panel .mention-name { font-size: 15px; }
+.mention-empty { padding: 14px; text-align: center; color: var(--tg-text-secondary); font-size: 13.5px; }
 /* ═══════ 语音消息（V5.8.4）═══════ */
 .voice-toggle-btn.active { background: rgba(51, 144, 236, .14); }
 .voice-hold { flex: 1; height: 42px; margin: 0; border-radius: 20px; background: var(--tg-gray-bg); color: var(--tg-text); font-size: 15.5px; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
