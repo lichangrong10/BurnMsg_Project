@@ -25,7 +25,8 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m), file: m.type === 'file' || m.type === 'voice' }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="msg-body" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }">
+            <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
@@ -68,17 +69,20 @@
               <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
               <template v-else><span v-html="renderMentionHtml(m.content)"></span></template>
             </template>
-            <span class="msg-meta">
-              <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
-              <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
-            </span>
+            
             <div v-if="burnVisible(m)" class="burn-chip" :class="{ enc: isEnc(m) }">
               <svg v-if="isEnc(m)" class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2.2"/><rect x="9.8" y="11.7" width="4.4" height="3.6" rx="1" fill="currentColor"/><path d="M10.8 11.7V9.5a1.2 1.2 0 0 1 2.4 0v2.2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
               <svg v-else class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>{{ burnCountdown(m) }}
             </div>
           </div>
+            <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+            <span class="msg-meta">
+            <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
+            <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
+            </span>
         </div>
-        <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+        </div>
+        
       </template>
       <div v-if="!state.messages.length && !state.msgLoading" class="empty-state" style="padding-top:60px"><div>暂无消息<br><small>发出第一条消息，开始加密通讯</small></div></div>
     </div>
@@ -263,6 +267,7 @@
         <div v-if="preview.loading" class="preview-tip">加载中…</div>
         <div v-else-if="preview.error" class="preview-tip">{{ preview.error }}<div><span class="preview-tip-btn" @click="downloadPreview">下载到本地查看</span></div></div>
         <div v-else-if="preview.kind === 'word'" ref="previewBox" class="preview-doc"></div>
+        <div v-else-if="preview.kind === 'ppt'" ref="pptBox" class="preview-doc preview-ppt"></div>
         <template v-else-if="preview.kind === 'pdf'">
           <div class="preview-pdf-bar">
             <button class="pdf-nav" :disabled="pdf.page <= 1" @click="pdfGo(pdf.page - 1)">‹ 上一页</button>
@@ -358,13 +363,15 @@ export default {
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
-      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/excel/pdf/text/video/audio）
+      preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/ppt/excel/pdf/text/video/audio）
       pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
       viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
       videoViewer: { show: false, url: '', name: '' }, // 视频播放层（全屏遮罩 + 居中撑满播放 + 下载）
       imgGesture: null, // 图片查看器手势态（pan/pinch）
       pinch: null, // 文档预览捏合缩放态 { ctx, active, dist, base }
       wordFit: 1, // Word 首屏宽度适配系数（渲染后缓存）
+      pptFit: 1,  // PPT 首屏宽度适配系数（渲染后缓存）
+      pptViewer: null, // pptx-preview 预览器实例（关闭时销毁）
       stickBottom: true,   // 是否吸附在底部（用户未上滑查看历史时自动跟随新消息）
       newMsgPill: false,   // 上滑看历史期间收到新消息 → 显示「↓ 新消息」浮钮
       reveal: {},          // 端到端加密消息点按显示状态 { msgId: true }
@@ -396,7 +403,7 @@ export default {
       return !!(m && m.sender_id === state.me.id && !m.is_recalled && m.type === 'text' && !m.is_encrypted)
     },
     isOfficePreview() {
-      return this.preview.kind === 'word' || this.preview.kind === 'excel'
+      return this.preview.kind === 'word' || this.preview.kind === 'excel' || this.preview.kind === 'ppt'
     },
     imgStyle() {
       return { transform: `translate(${this.viewer.tx}px, ${this.viewer.ty}px) scale(${this.viewer.scale})`, transition: 'transform .1s ease-out' }
@@ -999,6 +1006,7 @@ export default {
       if (!m.file_url) return
       const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
       if (ext === 'docx') this.startPreview(m, 'word')
+      else if (ext === 'pptx' || ext === 'ppt') this.startPreview(m, 'ppt')
       else if (ext === 'xlsx' || ext === 'xls') this.startPreview(m, 'excel')
       else if (ext === 'pdf') this.startPreview(m, 'pdf')
       else if (['txt', 'md', 'csv', 'log', 'json', 'xml', 'yml', 'yaml', 'ini', 'conf', 'cfg', 'sql', 'sh', 'bat', 'js', 'ts', 'html', 'css'].includes(ext)) this.startPreview(m, 'text')
@@ -1026,13 +1034,25 @@ export default {
           const { renderAsync } = await import('docx-preview')
           this.preview.loading = false
           await nextTick()
-          await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true })
+          await renderAsync(blob, this.$refs.previewBox, null, { inWrapper: true, breakPages: true })
           // 缓存首屏宽度适配系数，缩放时在 fit 基础上叠加用户 zoom
           const box = this.$refs.previewBox
           const sec = box ? box.querySelector('section.docx') : null
-          const pw = box ? box.clientWidth : 0
-          this.wordFit = (sec && pw > 0 && sec.offsetWidth > pw) ? pw / sec.offsetWidth : 1
+          const cw = box ? box.clientWidth : 0
+          this.wordFit = (sec && cw > 0 && sec.offsetWidth > cw) ? cw / sec.offsetWidth : 1
           this.applyWordZoom()
+        } else if (kind === 'ppt') {
+          const { init } = await import('pptx-preview')
+          this.preview.loading = false
+          await nextTick()
+          const buffer = await blob.arrayBuffer()
+          this.pptViewer = init(this.$refs.pptBox, { width: this.$refs.pptBox.clientWidth || 720, mode: 'list' })
+          await this.pptViewer.preview(buffer)
+          const box = this.$refs.pptBox
+          const slide = box ? box.querySelector('.pptx-preview-slide-wrapper') : null
+          const cw = box ? box.clientWidth : 0
+          this.pptFit = (slide && cw > 0 && slide.offsetWidth > cw) ? cw / slide.offsetWidth : 1
+          this.applyPptZoom()
         } else if (kind === 'pdf') {
           await this.openPdf(blob)
         } else if (kind === 'text') {
@@ -1127,6 +1147,12 @@ export default {
       const z = (this.wordFit || 1) * (this.preview.zoom || 1)
       box.querySelectorAll('section.docx').forEach(sec => { sec.style.zoom = z.toFixed(4) })
     },
+    applyPptZoom() {
+      const box = this.$refs.pptBox
+      if (!box) return
+      const z = (this.pptFit || 1) * (this.preview.zoom || 1)
+      box.querySelectorAll('.pptx-preview-slide-wrapper').forEach(s => { s.style.zoom = z.toFixed(4) })
+    },
     applyExcelZoom() {
       const el = this.$refs.excelBox
       if (el) el.style.zoom = String(this.preview.zoom || 1)
@@ -1136,6 +1162,7 @@ export default {
       this.preview.zoom = Math.max(0.25, Math.min(5, v))
       if (this.preview.kind === 'word') this.applyWordZoom()
       else if (this.preview.kind === 'pdf') this.renderPdfPage()
+      else if (this.preview.kind === 'ppt') this.applyPptZoom()
       else this.applyExcelZoom()
     },
     onPreviewDbl() {
@@ -1157,6 +1184,8 @@ export default {
     _dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) },
     closePreview() {
       this.preview.show = false
+      if (this.pptViewer) { try { this.pptViewer.destroy() } catch (e) {} }
+      this.pptViewer = null
       if (this.pdf.doc) { try { this.pdf.doc.destroy() } catch (e) {} }
       this.pdf = { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }
       this.pinch = null
@@ -1340,12 +1369,14 @@ export default {
 .edit-bar-close { cursor: pointer; color: var(--tg-text-secondary); padding: 2px 8px; font-size: 15px; flex-shrink: 0; }
 /* ── 引用回复 ── */
 .reply-bar { border-left-color: var(--tg-blue); }          /* 绿色左边条区分「编辑」 */
-.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; }
+.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; margin-bottom: 0; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; background: rgba(51,144,236,.07); border-left: 2px solid var(--tg-blue); }
 .reply-quote:active { opacity: .72; }
 .rq-name { font-size: 12.5px; font-weight: 600; color: var(--tg-blue); line-height: 1.3; }
 .rq-text { font-size: 12.5px; line-height: 1.35; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.reply-quote.out { text-align: right; margin-left: 40%; border-right: 2px solid var(--tg-blue); }
-.reply-quote.in { text-align: left; margin-right: 40%; border-left: 2px solid var(--tg-blue); }
+
+
+.reply-quote.out { text-align: left; margin-left: 0; }
+.reply-quote.in { text-align: left; margin-right: 0; }
 
 
 .msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
@@ -1354,8 +1385,8 @@ export default {
 .receipt-status { color: var(--tg-text-secondary); font-size: 13.5px; }
 .receipt-status.read { color: var(--tg-blue); font-weight: 500; }
 .read-tag { font-size: 11px; margin-left: 3px; opacity: .85; }
-.bubble.out .read-tag { color: #8fd3a8; }          /* 已读：柔和绿 */
-.bubble.out .read-tag.unread { color: rgba(255,255,255,.55); } /* 未读：灰白 */
+.msg-body.out .read-tag { color: var(--tg-green-check); }          /* 已读：柔和绿 */
+.msg-body.out .read-tag.unread { color: var(--tg-text-secondary); } /* 未读：灰白 */
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
 .dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }
@@ -1371,8 +1402,12 @@ export default {
 .preview-tip-btn { display: inline-block; margin-top: 16px; color: #fff; background: var(--tg-blue); border-radius: 8px; padding: 9px 20px; font-size: 14px; cursor: pointer; }
 .preview-doc { background: #fff; min-height: 100%; }
 /* docx-preview：灰底白纸效果 */
-.preview-doc :deep(.docx-wrapper) { background: #f6f7f9 !important; padding: 12px 0 !important; }
-.preview-doc :deep(.docx-wrapper > section.docx) { box-shadow: 0 1px 4px rgba(0,0,0,.08) !important; margin-bottom: 12px !important; }
+.preview-doc :deep(.docx-wrapper) { display: block !important; background: #f6f7f9 !important; padding: 12px 0 !important; }
+.preview-doc :deep(.docx-wrapper > section.docx) { margin-left: auto !important; margin-right: auto !important; box-shadow: 0 1px 4px rgba(0,0,0,.08) !important; margin-bottom: 12px !important; }
+/* pptx-preview：深灰放映底 + 白色幻灯片卡片，每页居中留间距 */
+.preview-ppt { background: #3a3f45; padding: 18px 0 30px; }
+.preview-ppt :deep(.pptx-preview-wrapper) { background: transparent !important; }
+.preview-ppt :deep(.pptx-preview-slide-wrapper) { margin: 0 auto 18px !important; box-shadow: 0 2px 14px rgba(0,0,0,.4) !important; }
 /* SheetJS 表格（xls 兜底） */
 .preview-xlsx { padding: 10px; }
 .preview-xlsx :deep(table) { border-collapse: collapse; background: #fff; font-size: 13px; width: max-content; min-width: calc(100% - 20px); }
