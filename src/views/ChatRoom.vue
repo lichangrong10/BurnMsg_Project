@@ -25,7 +25,8 @@
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
-          <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
+          <div class="msg-body" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }">
+            <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
@@ -57,17 +58,20 @@
               <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
               <template v-else><span v-html="renderMentionHtml(m.content)"></span></template>
             </template>
-            <span class="msg-meta">
-              <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
-              <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
-            </span>
+            
             <div v-if="burnVisible(m)" class="burn-chip" :class="{ enc: isEnc(m) }">
               <svg v-if="isEnc(m)" class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2.2"/><rect x="9.8" y="11.7" width="4.4" height="3.6" rx="1" fill="currentColor"/><path d="M10.8 11.7V9.5a1.2 1.2 0 0 1 2.4 0v2.2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
               <svg v-else class="chip-ico" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>{{ burnCountdown(m) }}
             </div>
           </div>
+            <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+            <span class="msg-meta">
+            <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
+            <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
+            </span>
         </div>
-        <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+        </div>
+        
       </template>
       <div v-if="!state.messages.length && !state.msgLoading" class="empty-state" style="padding-top:60px"><div>暂无消息<br><small>发出第一条消息，开始加密通讯</small></div></div>
     </div>
@@ -1196,12 +1200,14 @@ export default {
 .edit-bar-close { cursor: pointer; color: var(--tg-text-secondary); padding: 2px 8px; font-size: 15px; flex-shrink: 0; }
 /* ── 引用回复 ── */
 .reply-bar { border-left-color: var(--tg-blue); }          /* 绿色左边条区分「编辑」 */
-.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; }
+.reply-quote { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; margin-bottom: 0; padding: 5px 8px 6px; border-radius: 6px; cursor: pointer; max-width: 100%; background: rgba(51,144,236,.07); border-left: 2px solid var(--tg-blue); }
 .reply-quote:active { opacity: .72; }
 .rq-name { font-size: 12.5px; font-weight: 600; color: var(--tg-blue); line-height: 1.3; }
 .rq-text { font-size: 12.5px; line-height: 1.35; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.reply-quote.out { text-align: right; margin-left: 40%; border-right: 2px solid var(--tg-blue); }
-.reply-quote.in { text-align: left; margin-right: 40%; border-left: 2px solid var(--tg-blue); }
+
+
+.reply-quote.out { text-align: left; margin-left: 0; }
+.reply-quote.in { text-align: left; margin-right: 0; }
 
 
 .msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
@@ -1210,8 +1216,8 @@ export default {
 .receipt-status { color: var(--tg-text-secondary); font-size: 13.5px; }
 .receipt-status.read { color: var(--tg-blue); font-weight: 500; }
 .read-tag { font-size: 11px; margin-left: 3px; opacity: .85; }
-.bubble.out .read-tag { color: #8fd3a8; }          /* 已读：柔和绿 */
-.bubble.out .read-tag.unread { color: rgba(255,255,255,.55); } /* 未读：灰白 */
+.msg-body.out .read-tag { color: var(--tg-green-check); }          /* 已读：柔和绿 */
+.msg-body.out .read-tag.unread { color: var(--tg-text-secondary); } /* 未读：灰白 */
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
 .dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }
