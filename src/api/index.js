@@ -90,5 +90,9 @@ export const api = {
     fd.append('file', file)
     return http.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
-  checkUpdate: (platform, current_code) => http.get('/app-versions/latest', { params: { platform, current_code } })
+  checkUpdate: (platform, current_code) => http.get('/app-versions/latest', { params: { platform, current_code } }),
+
+  // ── 消息搜索 ──
+  searchMessages: (params) => http.get('/messages/search', { params }),
+  searchConversationMessages: (conversationId, params) => http.get(`/messages/${conversationId}/search`, { params })
 }

@@ -12,6 +12,7 @@
   <AdminView v-if="state.showAdmin" />
   <AnnouncementsView v-if="state.showAnnouncements" />
   <FeedbackView v-if="state.showFeedback" />
+  <GlobalSearch v-if="state.showGlobalSearch" />
 
   <!-- ═══════ 后端地址设置（登录页 / 我的 共用） ═══════ -->
   <div v-if="state.showServerDialog" class="dialog-overlay" @click.self="state.showServerDialog = false">
@@ -56,7 +57,7 @@
         </div>
         <div style="text-align:center;font-size:12px;color:var(--tg-text-secondary);margin-top:4px">下载中 {{ updateProgress }}%</div>
       </div>
-      <div class="dialog-actions">
+      <div class="dialog-actions" v-if="!updateDownloading">
         <button v-if="!updateInfo.force" class="btn-text" :disabled="updateDownloading" @click="dismissUpdate">{{ updateDownloading ? '' : '暂不更新' }}</button>
         <button class="btn-text" style="font-weight:600" :disabled="updateDownloading" @click="doUpdate">{{ updateDownloading ? '' : '立即更新' }}</button>
       </div>
@@ -81,12 +82,13 @@ import ChatInfo from './views/ChatInfo.vue'
 import AdminView from './views/Admin.vue'
 import AnnouncementsView from './views/Announcements.vue'
 import FeedbackView from './views/Feedback.vue'
+import GlobalSearch from './views/GlobalSearch.vue'
 
 const DEVICE_TYPE_TEXT = { web: '网页版', mobile: '手机版', desktop: '桌面版' }
 
 export default {
   name: 'App',
-  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView },
+  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView, GlobalSearch },
   data() {
     return {
       state,
