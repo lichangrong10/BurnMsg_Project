@@ -455,11 +455,22 @@ export async function loadConvs(quiet) {
     state.convs = list
       .map(c => {
         const old = prev[c.id]
+        const unread = (old && old.unread) ?? c.unread ?? 0
+        const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
+        const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
+        let mentionFlag = (old && old.mentionFlag) ? 1 : 0
+        if (!mentionFlag && unread > 0) {
+          const mentioned = (lastMsgObj && typeof lastMsgObj === 'object')
+            ? mentionsMe(lastMsgObj)
+            : preview ? mentionsMe({ content: preview }) : false
+          if (mentioned) mentionFlag = 1
+        }
         return {
           ...c,
-          unread: (old && old.unread) ?? c.unread ?? 0,
-          lastMsg: extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || '',
-          pinned: ids.includes(c.id)
+          unread,
+          lastMsg: preview,
+          pinned: ids.includes(c.id),
+          mentionFlag
         }
       })
       .filter(c => !hidden.includes(String(c.id)))
@@ -652,9 +663,10 @@ function mentionsMe(m) {
   if (!m) return false
   const me = state.me || {}
   if (Array.isArray(m.mentions) && m.mentions.length && me.id != null) {
-    if (m.mentions.some(uid => String(uid) === String(me.id))) return true
+    if (m.mentions.some(uid => [String(me.id), 'all', 'everyone', '全部', '所有人'].includes(String(uid)))) return true
   }
   const text = m.content || ''
+  if (/[＠@]所有人/.test(String(text))) return true // @所有人：全体成员都算被 @
   const names = [me.display_name, me.name, me.username, me.nickname, me.real_name].filter(Boolean)
   if (!names.length) return false
   const s = String(text)
