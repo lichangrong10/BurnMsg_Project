@@ -40,7 +40,7 @@
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
-            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ isEnc(m) ? '焚毁加密消息 · 点击查看' : '焚毁消息 · 点击查看' }}</span></template>
+            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
               <div v-if="m.content" class="img-caption">{{ m.content }}</div>
@@ -641,6 +641,23 @@ export default {
     /** 焚毁消息的「马赛克占位」态：点开前，点击触发 reveal 拉取内容 */
     isBlurredBurn(m) {
       return !!(m && m.is_blurred === true)
+    },
+    /** 焚毁占位卡的消息类型名：文字=消息，其余按 type / 扩展名细分（视频走扩展名，不占位态的 isVideoMsg 会排除模糊态不能直接复用） */
+    burnBlurType(m) {
+      if (!m) return '消息'
+      if (m.type === 'image') return '图片'
+      if (m.type === 'voice') return '语音'
+      if (m.type === 'video') return '视频'
+      if (m.type === 'file') {
+        const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
+        if (['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)) return '视频'
+        return '文件'
+      }
+      return '消息'
+    },
+    /** 焚毁占位卡文案：是否加密 × 消息类型，如「焚毁加密文件 · 点击查看」 */
+    burnBlurText(m) {
+      return (this.isEnc(m) ? '焚毁加密' : '焚毁') + this.burnBlurType(m) + ' · 点击查看'
     },
     /** 是否显示焚毁倒计时角标：非撤回、已点开（非占位）、且有截止时间 */
     burnVisible(m) {
