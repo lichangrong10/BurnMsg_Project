@@ -379,6 +379,3 @@ body {
 .mention-item:active { background: var(--tg-gray-bg); }
 .mention-avatar { width: 36px; height: 36px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
 .mention-name { font-size: 16px; color: var(--tg-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* ============ 状态栏安全区域适配 ============ */
-body { padding-top: var(--safe-top); }
-#app { height: calc(100% - var(--safe-top)); }

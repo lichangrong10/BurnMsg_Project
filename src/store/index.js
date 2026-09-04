@@ -1545,7 +1545,10 @@ export async function changeGroupAvatar(file) {
     return true
   }
   try {
-    const c = await api.updateGroup(state.chat.id, { avatar_url: url })
+    const isCh = state.chat.is_channel || state.chat.type === 'channel'
+    const c = isCh
+      ? await api.updateMyChannel(state.chat.id, { avatar_url: url })
+      : await api.updateGroup(state.chat.id, { avatar_url: url })
     Object.assign(state.chat, c)
     loadConvs(true)
     showToast('群头像已更新')
