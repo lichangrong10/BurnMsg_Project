@@ -27,7 +27,7 @@
 
     <!-- 搜索框悬浮：DOM 顺序放在滑动容器之后，同级层叠时后绘制，保证始终浮在切换动画之上 -->
     <div class="search-wrap" :class="{ 'search-off': state.tab === 'me' }">
-      <input class="search-input" v-model.trim="state.keyword" :placeholder="state.tab === 'chats' ? '搜索' : state.tab === 'channels' ? '搜索频道' : '搜索姓名 / 手机号'">
+      <input class="search-input" v-model.trim="state.keyword" :placeholder="state.tab === 'chats' ? '搜索联系人' : state.tab === 'channels' ? '搜索频道' : '搜索姓名 / 手机号'">
     </div>
     <!-- <div style="height: 10%;background: #E8EBEE;">
 

@@ -147,6 +147,11 @@ body {
 .conv-time { font-size: 12.5px; color: var(--tg-text-secondary); flex-shrink: 0; }
 .conv-preview { font-size: 14.5px; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .conv-preview .burn-tag { color: #E07000; flex-shrink: 0; vertical-align: -1px; margin-right: 2px; }
+.conv-preview .conv-mention {
+  display: inline-block; padding: 1px 8px; border-radius: 9px;
+  color: #E53935; font-weight: 700; font-size: 13px;
+  background: rgba(229,57,53,.1); flex-shrink: 0;
+}
 .conv-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .type-tag { font-size: 11px; color: var(--tg-text-secondary); background: rgba(0,0,0,.07); padding: 1px 7px; border-radius: 8px; font-weight: 500; }
 
@@ -183,10 +188,10 @@ body {
 .chat-status { font-size: 12.5px; opacity: .85; margin-top: 1px; }
 .msg-scroll { flex: 1; overflow-y: auto; padding: 12px 10px 8px; display: flex; flex-direction: column; }
 .date-divider { align-self: center; background: rgba(0,0,0,.12); color: #fff; font-size: 12.5px; padding: 4px 12px; border-radius: 12px; margin: 8px 0; }
-.msg-row { display: flex; margin-bottom: 20px; align-items: flex-start; gap: 7px; }
+.msg-row { display: flex; margin-bottom: 10px; align-items: flex-start; gap: 7px; }
 .msg-row.out { justify-content: flex-end; }
 .msg-row.in .msg-avatar { margin-bottom: 2px; }
-.msg-row.in:has(.sender-name) { margin-top: 21px; }
+.msg-row.in:has(.sender-name) { margin-top: 14px; }
 .msg-body { display: flex; flex-direction: column; align-items: flex-start; max-width: 76%; min-width: 0; }
 .msg-row.out .msg-body { align-items: flex-end; }
 .bubble {
@@ -266,7 +271,7 @@ body {
 .bubble.video .burn-chip { padding-left: 2px; }
 .bubble.file { padding-top: 14px; padding-bottom: 14px; }
 /* 文件气泡：时间戳绝对定位钉在右下角，不再占一行，图标+文件名占满气泡自然垂直居中 */
-.bubble.file .msg-meta { position: absolute; right: 9px; bottom: 4px; float: none; margin: 0; }
+.bubble.file .msg-meta { position: absolute; right: 9px; bottom: 2px; float: none; margin: 0; }
 .msg-image { max-width: 240px; border-radius: 12px; display: block; }
 
 /* 图片消息：裸图直出（无气泡背景），时间戳叠在图片右下角 */

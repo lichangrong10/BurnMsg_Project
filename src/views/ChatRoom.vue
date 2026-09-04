@@ -76,6 +76,19 @@
             </div>
           </div>
             <div v-if="replyQuote(m)" class="reply-quote" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }" @click.stop="jumpToReply(m)"><span class="rq-name">{{ replyQuote(m).name }}</span><span class="rq-text">{{ replyQuote(m).text }}</span></div>
+            <div v-if="groupReadInfo(m)" class="group-read" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
+              <template v-if="groupReadInfo(m).kind === 'atAll'">
+                <div class="gr-avatars">
+                  <div v-for="(r, ri) in groupReadInfo(m).readers.slice(0, 8)" :key="r.user_id || ri" class="gr-avatar" :style="{ background: avatarColor(r.name) }">
+                    <img v-if="r.avatar" :src="r.avatar" alt=""><template v-else>{{ (r.name || '?')[0] }}</template>
+                  </div>
+                </div>
+                <span class="gr-count">{{ groupReadInfo(m).readCount ? groupReadInfo(m).readCount + ' 人已读' : '未读' }}</span>
+              </template>
+              <template v-else>
+                <span class="gr-one" :class="{ read: groupReadInfo(m).read }">{{ groupReadInfo(m).targetName }} {{ groupReadInfo(m).read ? '已读' : '未读' }}</span>
+              </template>
+            </div>
             <span class="msg-meta">
             <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
             <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
@@ -340,7 +353,7 @@ import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid, getFileTypeInfo } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 
@@ -363,6 +376,7 @@ export default {
       receiptMsg: null,    // 查看回执的消息
       receiptList: [],
       receiptLoading: false,
+      mentionReceipts: {},  // 群 @消息 已读回执缓存：消息 id -> 回执列表（@所有人显示已读头像 / @某人显示对方已读，见 loadMentionReceipts）
       preview: { show: false, kind: '', name: '', url: '', loading: false, error: '', sheets: [], activeSheet: 0, text: '', zoom: 1 }, // 文件在线预览（word/ppt/excel/pdf/text/video/audio）
       pdf: { doc: null, page: 1, numPages: 0, fitScale: 1, rendering: false }, // PDF 预览状态
       viewer: { show: false, url: '', name: '', scale: 1, tx: 0, ty: 0 }, // 图片在线预览（支持缩放/平移）
@@ -442,6 +456,7 @@ export default {
   watch: {
     // 打开会话/非静默刷新完成 → 重新吸附并强制滚到底部
     'state.msgSeq'() {
+      this.loadMentionReceipts()
       this.stickBottom = true
       this.newMsgPill = false
       this.scrollBottom()
@@ -468,9 +483,13 @@ export default {
       if (this.stickBottom) this.scrollBottom()
     }
     if (window.visualViewport) window.visualViewport.addEventListener('resize', this.vvResize)
+    // 群 @消息 已读回执：进聊天页先拉一次，之后每 5s 刷新（别人读到你的 @消息后头像/已读态实时出现）
+    this.loadMentionReceipts()
+    this._receiptTimer = setInterval(() => { this.loadMentionReceipts() }, 5000)
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
+    if (this._receiptTimer) { clearInterval(this._receiptTimer); this._receiptTimer = null }
     Object.values(this.revealTickers).forEach(clearInterval)
     if (window.visualViewport && this.vvResize) window.visualViewport.removeEventListener('resize', this.vvResize)
     if (this.voiceTimer) clearInterval(this.voiceTimer)
@@ -885,6 +904,7 @@ export default {
       if (this.$refs.msgInput) this.$refs.msgInput.style.height = 'auto'
       const ok = await sendText(text, this.extractMentions(text), replyId)
       if (!ok) this.draft = text
+      else this.loadMentionReceipts()
     },
     onFilePicked(e) {
       const file = e.target.files[0]
@@ -1274,6 +1294,71 @@ export default {
       a.click()
       document.body.removeChild(a)
     },
+    /** 是否 @所有人（群聊）：文本含全角/半角 @所有人 */
+    isAtAllMsg(m) {
+      return !!m && state.chat && state.chat.type !== 'private' && /[＠@]所有人/.test(m.content || '')
+    },
+    /** 被 @ 的具体成员 uid 列表（后端 mentions 字段；@所有人 不算具体成员） */
+    atMentionUids(m) {
+      return (m && Array.isArray(m.mentions)) ? m.mentions.filter(uid => uid != null) : []
+    },
+    /** 是否需要在气泡下展示群 @已读（公开，群里所有人可见）：群聊/频道 + 未撤回 + 有 @（所有人或具体成员） */
+    needGroupRead(m) {
+      return !!m && !m.is_recalled
+        && state.chat && state.chat.type !== 'private'
+        && (this.isAtAllMsg(m) || this.atMentionUids(m).length > 0)
+    },
+    /** 回执列表（缓存，未拉取返回 null） */
+    receiptOf(m) {
+      const r = this.mentionReceipts[this.e2eKey(m)]
+      return Array.isArray(r) ? r : null
+    },
+    /** 回执成员的头像/名字：优先从群成员列表按 user_id 匹配，兜底回执自带 display name */
+    receiptMeta(r) {
+      const gm = (state.groupMembers || []).find(x => String(memberUid(x)) === String(r.user_id))
+      const name = r.user_display_name || (gm ? memberName(gm) : '') || '成员'
+      const avatar = gm ? memberAvatar(gm) : null
+      return { name, avatar }
+    },
+    /** @某人 时的目标显示名（回执未返回时从群成员/文本兜底） */
+    atOneName(m) {
+      const uids = this.atMentionUids(m)
+      if (!uids.length) return '对方'
+      const gm = (state.groupMembers || []).find(x => String(memberUid(x)) === String(uids[0]))
+      return (gm && memberName(gm)) || '对方'
+    },
+    /** 群 @消息的已读展示数据：null=不展示；{kind:'atAll',readers,readCount} 或 {kind:'atOne',targetName,read} */
+    groupReadInfo(m) {
+      if (!this.needGroupRead(m)) return null
+      const list = this.receiptOf(m)
+      if (!list) return null // 回执尚未拉到：先不渲染，避免「未读」误导性闪烁
+      if (this.isAtAllMsg(m)) {
+        const readers = list.filter(r => r.is_read && String(r.user_id) !== String(m.sender_id)).map(r => ({ user_id: r.user_id, ...this.receiptMeta(r) }))
+        return { kind: 'atAll', readers, readCount: readers.length }
+      }
+      const uids = this.atMentionUids(m).map(String)
+      const target = list.find(r => uids.includes(String(r.user_id)))
+      const targetName = target ? (target.user_display_name || this.receiptMeta(target).name) : this.atOneName(m)
+      return { kind: 'atOne', targetName, read: !!(target && target.is_read) }
+    },
+    /** 拉取/刷新群 @消息 的已读回执（公开，含他人发送），缓存到 mentionReceipts（进页/发送/每 5s 轮询调用） */
+    async loadMentionReceipts() {
+      const c = state.chat
+      if (!c || c.type === 'private') { if (Object.keys(this.mentionReceipts).length) this.mentionReceipts = {}; return }
+      const targets = state.messages.filter(m => this.needGroupRead(m)).slice(-20)
+      if (!targets.length) { if (Object.keys(this.mentionReceipts).length) this.mentionReceipts = {}; return }
+      await Promise.allSettled(targets.map(async m => {
+        const key = this.e2eKey(m)
+        if (state.demoMode) {
+          const gm = (state.groupMembers || []).filter(x => String(memberUid(x)) !== String(m.sender_id))
+          this.mentionReceipts[key] = gm.slice(0, 3).map((x, i) => ({ user_id: memberUid(x), user_display_name: memberName(x), is_delivered: true, is_read: i < 2, read_at: i < 2 ? new Date().toISOString() : null }))
+          return
+        }
+        try {
+          this.mentionReceipts[key] = asArray(await api.getReceipt(m.id))
+        } catch (e) { /* 静默：回执拉不到则不展示 */ }
+      }))
+    },
     onMsgTap(m) {
       this.msgAction = m
     },
@@ -1387,6 +1472,17 @@ export default {
 .read-tag { font-size: 11px; margin-left: 3px; opacity: .85; }
 .msg-body.out .read-tag { color: var(--tg-green-check); }          /* 已读：柔和绿 */
 .msg-body.out .read-tag.unread { color: var(--tg-text-secondary); } /* 未读：灰白 */
+/* ── 群 @消息 已读展示（@所有人=已读头像堆叠 / @某人=对方已读状态） ── */
+.group-read { display: flex; align-items: center; gap: 5px; margin-top: 3px; width: fit-content; }
+.group-read.out { margin-left: auto; justify-content: flex-end; }
+.group-read.in { margin-left: 0; justify-content: flex-start; }
+.gr-avatars { display: flex; flex-direction: row-reverse; align-items: center; padding-left: 5px; }
+.gr-avatar { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--tg-chat-bg); margin-left: -5px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8.5px; font-weight: 600; flex-shrink: 0; }
+.gr-avatar:first-child { margin-left: 0; }
+.gr-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.gr-count { font-size: 11px; color: var(--tg-text-secondary); white-space: nowrap; }
+.gr-one { font-size: 11px; color: var(--tg-text-secondary); }
+.gr-one.read { color: var(--tg-blue); font-weight: 500; }
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
 .dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }
