@@ -142,9 +142,9 @@
             <div style="font-size:12px;color:var(--tg-text-secondary);margin-top:4px;text-align:center">{{ downloadProgress }}%</div>
           </div>
         </div>
-        <div class="dialog-actions">
-          <button class="btn-text" @click="showUpdateDialog = false" :disabled="downloading && updateInfo.force">稍后再说</button>
-          <button class="btn-text" style="font-weight:600" @click="downloadUpdate" :disabled="downloading">{{ downloading ? '下载中…' : '立即更新' }}</button>
+        <div class="dialog-actions" v-if="!downloading">
+          <button class="btn-text" @click="showUpdateDialog = false" :disabled="downloading && updateInfo.force" v-if="!updateInfo.force">稍后再说</button>
+          <button class="btn-text" style="font-weight:600" @click="downloadUpdate" :disabled="downloading">立即更新</button>
         </div>
       </div>
     </div>
