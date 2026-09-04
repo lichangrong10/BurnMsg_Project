@@ -206,13 +206,13 @@ body {
 .msg-body .msg-meta { align-self: flex-end; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--tg-text-secondary); margin: 3px 0 0 0; user-select: none; white-space: nowrap; }
 .msg-body.out .msg-meta { color: var(--tg-text-secondary); }
 .bubble .burn-chip { display: inline-flex; align-items: center; gap: 3px; color: #E07000; font-size: 11.5px; margin-top: 4px; font-weight: 500; }
-.bubble.out .burn-chip { color: #FFB763; }
+.bubble.out .burn-chip { color: rgba(255,255,255,.85); }
 .bubble .burn-chip.enc { color: #E5484D; font-weight: 700; }
-.bubble.out .burn-chip.enc { color: #FFA39E; }
+.bubble.out .burn-chip.enc { color: #fff; }
 .bubble .burn-blur { display: inline-flex; align-items: center; gap: 4px; color: #E07000; font-size: 14.5px; font-weight: 500; cursor: pointer; }
-.bubble.out .burn-blur { color: #FFB763; }
+.bubble.out .burn-blur { color: #fff; }
 .bubble .burn-blur.enc { color: #E5484D; font-weight: 600; }
-.bubble.out .burn-blur.enc { color: #FFA39E; }
+.bubble.out .burn-blur.enc { color: #fff; }
 .burn-blur:active { opacity: .7; }
 .burn-blur .blur-ico { display: inline-flex; flex-shrink: 0; }
 .burn-chip .chip-ico { display: inline-flex; flex-shrink: 0; }
