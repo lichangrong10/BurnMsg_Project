@@ -12,7 +12,7 @@
     <div style="flex:1;overflow-y:auto" v-if="state.chat">
       <!-- ═══ 资料卡 ═══ -->
       <div class="info-card">
-        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved ? '更换群头像' : ''">
+        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved && !isChannel) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved && !isChannel ? '更换群头像' : ''">
           <div class="avatar" :style="{ width: '72px', height: '72px', fontSize: '28px', background: avatarColor(title) }"><img v-if="cardAvatar" :src="cardAvatar" alt=""><template v-else>{{ (title || '?')[0] }}</template></div>
           <div v-if="isGroup && canManage && !isDissolved" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         </div>
@@ -22,14 +22,14 @@
         <div class="info-sub" v-else>{{ state.chat.other_user && state.chat.other_user.phone }}</div>
         <div class="info-sub" v-if="!isGroup && state.chat.other_user && state.chat.other_user.signature">{{ state.chat.other_user.signature }}</div>
         <div class="info-sub" v-if="isGroup && state.chat.description" style="margin-top:4px">{{ state.chat.description }}</div>
-        <button v-if="isGroup && canManage && !isDissolved" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
+        <button v-if="isGroup && canManage && !isDissolved && !isChannel" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
       </div>
 
       <!-- ═══ 群成员 ═══ -->
       <template v-if="isGroup">
         <div class="section-header">成员列表</div>
         <div class="member-list">
-          <div v-if="canManage && !isDissolved" class="contact-item" @click="showAdd = true">
+          <div v-if="canManage && !isDissolved && !isChannel" class="contact-item" @click="showAdd = true">
             <div class="avatar add-avatar">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
             </div>
@@ -177,6 +177,9 @@ export default {
     isGroup() {
       return state.chat && state.chat.type !== 'private'
     },
+    isChannel() {
+      return state.chat && (state.chat.is_channel || state.chat.type === 'channel')
+    },
     title() {
       const c = state.chat
       if (!c) return ''
@@ -235,7 +238,7 @@ export default {
     uidOf: memberUid,
     nameOf: memberName,
     pickGroupAvatar() {
-      if (!(this.isGroup && this.canManage && !this.isDissolved)) return
+      if (!(this.isGroup && this.canManage && !this.isDissolved && !this.isChannel)) return
       this.$refs.groupAvatarFile && this.$refs.groupAvatarFile.click()
     },
     async onGroupAvatarPick(e) {
@@ -267,6 +270,7 @@ export default {
     onMemberTap(m) {
       if (this.isDissolved) return // 已解散群不再允许成员管理操作
       if (this.uidOf(m) === state.me.id) return // 自己用底部退群按钮
+      if (this.isChannel) return // 频道不支持成员管理
       if (this.myRole === 'owner' && m.role !== 'owner') {
         this.memberAction = m
       }

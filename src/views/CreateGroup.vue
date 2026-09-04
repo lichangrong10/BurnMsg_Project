@@ -5,23 +5,16 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
       <div class="chat-title-wrap">
-        <div class="chat-title">{{ isChannel ? '新建频道' : '新建群组' }}</div>
+        <div class="chat-title">新建群组</div>
         <div class="chat-status">已选 {{ selected.length }} 位成员</div>
       </div>
       <button class="btn-text" style="color:#fff;font-weight:600;font-size:15px" :style="{ opacity: canCreate ? 1 : .5 }" @click="create">创建</button>
     </div>
 
     <div style="padding:14px 16px 6px">
-      <!-- 类型切换 -->
-      <div class="seg-wrap">
-        <div class="seg-item" :class="{ on: !isChannel }" @click="isChannel = false">群组</div>
-        <div class="seg-item" :class="{ on: isChannel }" @click="isChannel = true">频道</div>
-      </div>
-      <input class="input" v-model.trim="name" :placeholder="isChannel ? '频道名称' : '群组名称'" maxlength="200" style="margin-top:12px">
+      <input class="input" v-model.trim="name" placeholder="群组名称" maxlength="200" style="margin-top:12px">
       <input class="input" v-model.trim="description" placeholder="简介（可选）" maxlength="500" style="margin-top:10px">
-      <div style="font-size:12.5px;color:var(--tg-text-secondary);margin-top:8px;line-height:1.5">
-        {{ isChannel ? '频道用于广播消息，仅创建者和管理员可发言。' : '群组中所有成员均可发言，创建后可在聊天信息页管理成员。' }}
-      </div>
+      <div style="font-size:12.5px;color:var(--tg-text-secondary);margin-top:8px;line-height:1.5">群组中所有成员均可发言，创建后可在聊天信息页管理成员。</div>
     </div>
 
     <div class="section-header">选择成员</div>
@@ -50,15 +43,13 @@ export default {
   data() {
     return {
       state,
-      isChannel: state.createGroupAsChannel === true,
       name: '',
       description: '',
       selected: []
     }
   },
   mounted() {
-    // 入口预设已被 data 初始化消费，此处复位标记，避免影响下次从其他入口打开
-    state.createGroupAsChannel = false
+
   },
   computed: {
     contactList() {
@@ -78,7 +69,7 @@ export default {
     },
     create() {
       if (!this.canCreate) return
-      createGroupAction(this.name, this.selected.slice(), this.isChannel, this.description)
+      createGroupAction(this.name, this.selected.slice(), false, this.description)
     }
   }
 }

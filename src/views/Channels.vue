@@ -1,40 +1,100 @@
 <template>
-  <div @touchstart="pullStart" @touchmove="pullMove" @touchend="pullEnd" @touchcancel="pullEnd">
+  <div>
     <!-- 下拉刷新指示器 -->
     <div class="pull-indicator" :style="{ height: pullDist + 'px', opacity: pullOpacity }">
       <svg v-if="pullState !== 'refreshing'" class="pull-arrow" :class="{ up: pullState === 'ready' }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
       <span v-else class="pull-spinner"></span>
       <span>{{ pullText }}</span>
     </div>
-    <!-- 空状态 -->
-    <div v-if="!filteredChannels.length" class="empty-state ch-empty">
-      <div class="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div>
-      <div>暂无频道<br><small>频道适合公告、通知等单向广播场景<br>点击右上角「+」创建频道</small></div>
+
+    <!-- ── 我的频道 ── -->
+    <div class="section-header" style="margin-top:4px">我的频道</div>
+    <div v-if="loading" class="mc-loading">
+      <span class="pull-spinner"></span>
+      <span>加载中…</span>
+    </div>
+    <template v-else-if="myChannel">
+      <div class="mc-card" @click="openChat(myChannel)">
+        <div class="mc-avatar" :style="{ background: avatarColor(myChannel.name || '频道') }">
+          <img v-if="myChannel.avatar_url" :src="myChannel.avatar_url" alt="">
+          <template v-else>{{ (myChannel.name || '频')[0] }}</template>
+        </div>
+        <div class="mc-info">
+          <div class="mc-name-row">
+            <span class="mc-name">{{ myChannel.name }}</span>
+            <span class="mc-vis" :class="myChannel.visibility">{{ myChannel.visibility === 'public' ? '公开' : '私密' }}</span>
+          </div>
+          <div class="mc-desc">{{ myChannel.description || '暂无描述' }}</div>
+          <div class="mc-stats">
+            <span>{{ myChannel.member_count || 0 }} 位订阅者</span>
+            <span v-if="myChannel.last_message_at">· 最后发布 {{ fmtTime(myChannel.last_message_at) }}</span>
+          </div>
+        </div>
+        <div class="mc-arrow">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+      </div>
+    </template>
+    <div v-else class="mc-empty-card">
+      <div class="mc-empty-icon">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+      </div>
+      <div class="mc-empty-text">你还没有创建频道</div>
+      <div class="mc-empty-sub">创建后可在频道广场展示，让同事订阅你的内容</div>
+      <button class="mc-create-btn" @click="showCreateForm = true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        创建我的频道
+      </button>
     </div>
 
-    <!-- 频道列表 -->
+    <!-- ── 创建频道表单 ── -->
+    <div v-if="showCreateForm" class="mc-form-overlay" @click.self="showCreateForm = false">
+      <div class="mc-form">
+        <div class="mc-form-title">创建我的频道</div>
+        <div class="mc-form-field">
+          <label>频道名称 <span class="req">*</span></label>
+          <input v-model.trim="createForm.name" placeholder="例如：萝卜的实验室" maxlength="200">
+        </div>
+        <div class="mc-form-field">
+          <label>个人描述</label>
+          <textarea v-model.trim="createForm.description" placeholder="介绍一下你自己或你的频道内容…" maxlength="1000" rows="3"></textarea>
+        </div>
+        <div class="mc-form-actions">
+          <button class="mc-btn-cancel" @click="showCreateForm = false">取消</button>
+          <button class="mc-btn-ok" :disabled="!createForm.name || creating" @click="doCreate">
+            {{ creating ? '创建中…' : '创建' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 频道广场 ── -->
+    <div class="section-header" style="margin-top:16px">频道广场 <span class="mc-total">{{ discoverTotal }} 个公开频道</span></div>
+    <div v-if="discoverLoading && !discoverList.length" class="mc-loading">
+      <span class="pull-spinner"></span>
+      <span>加载中…</span>
+    </div>
+    <div v-else-if="!discoverList.length" class="mc-discover-empty">暂无公开频道</div>
     <template v-else>
-      <div class="section-header">我的频道 · {{ filteredChannels.length }}</div>
-      <div v-for="c in filteredChannels" :key="c.id" class="ch-item" @click="openChat(c)">
-        <div class="ch-avatar" :style="{ background: avatarColor(convName(c)) }">
-          <img v-if="convAvatar(c)" :src="convAvatar(c)" alt="">
-          <template v-else>{{ convInitial(c) }}</template>
+      <div v-for="ch in discoverList" :key="ch.id" class="disc-item">
+        <div class="disc-avatar" :style="{ background: avatarColor(ch.name || '频道') }">
+          <img v-if="ch.avatar_url" :src="ch.avatar_url" alt="">
+          <template v-else>{{ (ch.name || '频')[0] }}</template>
         </div>
-        <div class="ch-main">
-          <div class="ch-row">
-            <div class="ch-name">{{ convName(c) }}</div>
-            <div class="ch-time">{{ fmtTime(c.last_message_at) }}</div>
-          </div>
-          <div class="ch-row" style="align-items:center">
-            <div class="ch-preview"><svg v-if="c.burning" class="burn-tag" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>{{ c.lastMsg || c.description || '暂无消息' }}</div>
-            <span v-if="c.unread" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
-          </div>
-          <div class="ch-meta">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            <span>{{ c.member_count || 0 }} 位成员</span>
-            <span v-if="c.dissolved_at" class="ch-dissolved">已解散</span>
+        <div class="disc-info">
+          <div class="disc-name">{{ ch.name }}<span v-if="ch.is_owner" class="mc-owner-tag">我的</span></div>
+          <div class="disc-desc">{{ ch.description || '暂无描述' }}</div>
+          <div class="disc-meta">
+            <span>{{ ch.member_count || 0 }} 订阅</span>
+            <span v-if="ch.owner"> · {{ ch.owner.display_name }}</span>
           </div>
         </div>
+        <button v-if="ch.is_owner" class="disc-btn owned" disabled>我的</button>
+        <button v-else-if="ch.is_subscribed" class="disc-btn subscribed" @click="doUnsubscribe(ch)">已订阅</button>
+        <button v-else class="disc-btn subscribe" @click="doSubscribe(ch)">订阅</button>
+      </div>
+      <div v-if="discoverHasMore" class="mc-load-more" @click="loadDiscover(true)">
+        {{ discoverLoading ? '加载中…' : '加载更多' }}
       </div>
     </template>
   </div>
@@ -42,27 +102,29 @@
 
 <script>
 import { state, openChat, loadConvs } from '../store'
-import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
+import { api } from '../api'
+import { avatarColor, fmtTime } from '../utils/format'
 
 export default {
   name: 'ChannelsView',
   data() {
     return {
       state,
-      pullDist: 0,       // 下拉距离 px
-      pullState: 'idle'  // idle | pulling | ready | refreshing
+      myChannel: null,
+      loading: false,
+      showCreateForm: false,
+      creating: false,
+      createForm: { name: '', description: '' },
+      discoverList: [],
+      discoverTotal: 0,
+      discoverPage: 1,
+      discoverHasMore: false,
+      discoverLoading: false,
+      pullDist: 0,
+      pullState: 'idle'
     }
   },
   computed: {
-    filteredChannels() {
-      const k = state.keyword.toLowerCase()
-      const list = Array.isArray(state.convs) ? state.convs : []
-      return list
-        // 真实接口会话 type 恒为 group，频道以 is_channel 区分；demo 数据 type 为 channel，两者兼容
-        .filter(c => c.is_channel || c.type === 'channel')
-        .filter(c => !k || convName(c).toLowerCase().includes(k))
-        .sort((a, b) => (new Date(b.last_message_at || 0).getTime()) - (new Date(a.last_message_at || 0).getTime()))
-    },
     pullText() {
       if (this.pullState === 'refreshing') return '刷新中…'
       return this.pullState === 'ready' ? '释放刷新' : '下拉刷新'
@@ -71,15 +133,95 @@ export default {
       return this.pullDist > 0 ? 1 : 0
     }
   },
+  mounted() {
+    this.loadData()
+    this._bindPull()
+  },
   methods: {
-    openChat,
     avatarColor,
-    convAvatar,
-    convName,
-    convInitial,
     fmtTime,
-    // ── 下拉刷新（与会话列表同一套手势）──
-    pullStart(e) {
+    openChat,
+    async loadData() {
+      this.loading = true
+      try {
+        const res = await api.getMyChannel()
+        this.myChannel = res || null
+      } catch (e) {
+        if (e && (e.code === 404 || e.status === 404 || /404/.test(e.message || ''))) {
+          this.myChannel = null
+        }
+      } finally {
+        this.loading = false
+      }
+      this.loadDiscover()
+    },
+    async loadDiscover(append = false) {
+      if (this.discoverLoading) return
+      this.discoverLoading = true
+      const page = append ? this.discoverPage + 1 : 1
+      try {
+        const res = await api.discoverChannels({ page, pageSize: 20 })
+        const items = Array.isArray(res) ? res : (res && res.items) || []
+        const total = (res && res.total) || 0
+        if (append) {
+          this.discoverList = [...this.discoverList, ...items]
+        } else {
+          this.discoverList = items
+        }
+        this.discoverTotal = total
+        this.discoverPage = page
+        this.discoverHasMore = this.discoverList.length < total
+      } catch (e) {
+        console.error('discoverChannels error:', e)
+      } finally {
+        this.discoverLoading = false
+      }
+    },
+    async doCreate() {
+      if (!this.createForm.name || this.creating) return
+      this.creating = true
+      try {
+        const res = await api.createMyChannel(this.createForm)
+        this.myChannel = res
+        this.showCreateForm = false
+        this.createForm = { name: '', description: '' }
+        await loadConvs(true)
+        this.loadDiscover()
+      } catch (e) {
+        alert((e && e.message) || '创建失败')
+      } finally {
+        this.creating = false
+      }
+    },
+    async doSubscribe(ch) {
+      try {
+        await api.subscribeChannel(ch.id)
+        ch.is_subscribed = true
+        ch.member_count = (ch.member_count || 0) + 1
+        await loadConvs(true)
+      } catch (e) {
+        alert((e && e.message) || '订阅失败')
+      }
+    },
+    async doUnsubscribe(ch) {
+      try {
+        await api.unsubscribeChannel(ch.id)
+        ch.is_subscribed = false
+        ch.member_count = Math.max(0, (ch.member_count || 0) - 1)
+        await loadConvs(true)
+      } catch (e) {
+        alert((e && e.message) || '退订失败')
+      }
+    },
+    // ── 下拉刷新 ──
+    _bindPull() {
+      const el = this.$el
+      el.addEventListener('touchstart', this._pullStart, { passive: true })
+      el.addEventListener('touchmove', this._pullMove, { passive: false })
+      el.addEventListener('touchend', this._pullEnd)
+      el.addEventListener('touchcancel', this._pullEnd)
+    },
+    _pullStart(e) {
       if (this.pullState === 'refreshing') return
       const sc = this.$el.closest('.content-scroll')
       if (!sc || sc.scrollTop > 0) return
@@ -87,7 +229,7 @@ export default {
       if (!t) return
       this._pull = { startY: t.clientY }
     },
-    pullMove(e) {
+    _pullMove(e) {
       if (!this._pull || this.pullState === 'refreshing') return
       const t = e.touches && e.touches[0]
       if (!t) return
@@ -98,19 +240,20 @@ export default {
       this.pullDist = damp
       this.pullState = damp >= 55 ? 'ready' : 'pulling'
     },
-    pullEnd() {
+    _pullEnd() {
       if (!this._pull) return
       const ready = this.pullState === 'ready'
       this._pull = null
-      if (ready) this.refreshConvs()
+      if (ready) this._doRefresh()
       else { this.pullDist = 0; this.pullState = 'idle' }
     },
-    async refreshConvs() {
+    async _doRefresh() {
       if (this.pullState === 'refreshing') return
       this.pullState = 'refreshing'
       this.pullDist = 50
       const t0 = Date.now()
       try {
+        await this.loadData()
         await loadConvs(true)
       } finally {
         const wait = Math.max(0, 400 - (Date.now() - t0))
@@ -146,66 +289,148 @@ export default {
 }
 @keyframes ch-spin { to { transform: rotate(360deg); } }
 
-/* 空状态上方有创建卡片，去掉全局 empty-state 的 100% 高度避免溢出 */
-.ch-empty { height: auto; padding: 52px 40px; }
-
-/* ── 创建频道入口卡片 ── */
-.ch-create {
-  margin: 10px 12px 4px;
-  padding: 13px 14px;
-  background: var(--tg-bg);
-  border-radius: var(--radius-md);
+/* ── 我的频道卡片 ── */
+.mc-card {
   display: flex;
   align-items: center;
   gap: 12px;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: transform .12s ease, box-shadow .15s ease;
-}
-.ch-create:active { transform: scale(.985); box-shadow: none; }
-.ch-create-icon {
-  width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
-  background: linear-gradient(145deg, #4EA6F5, var(--tg-blue-dark));
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 12px rgba(51,144,236,.32);
-}
-.ch-create-text { flex: 1; min-width: 0; }
-.ch-create-title { font-size: 15.5px; font-weight: 600; }
-.ch-create-sub { font-size: 12.5px; color: var(--tg-text-secondary); margin-top: 2px; }
-
-/* ── 频道列表项 ── */
-.ch-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 12px;
+  margin: 8px 12px;
+  padding: 14px;
   background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
   cursor: pointer;
   transition: background .15s;
 }
-.ch-item:active { background: var(--tg-gray-bg); }
-.ch-avatar {
-  width: 54px; height: 54px;
-  border-radius: 17px; /* 圆角方形头像：与会话列表的圆形头像区分「频道」 */
+.mc-card:active { background: var(--tg-gray-bg); }
+.mc-avatar {
+  width: 52px; height: 52px;
+  border-radius: 16px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 21px; font-weight: 600;
-  overflow: hidden; user-select: none;
-  box-shadow: 0 2px 6px rgba(0,0,0,.1);
+  color: #fff; font-size: 20px; font-weight: 600;
+  overflow: hidden;
 }
-.ch-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.ch-main { flex: 1; min-width: 0; border-bottom: 1px solid var(--tg-border); padding: 8px 0 9px 2px; }
-.ch-item:last-child .ch-main { border-bottom: none; }
-.ch-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.ch-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ch-time { font-size: 12.5px; color: var(--tg-text-secondary); flex-shrink: 0; }
-.ch-preview { font-size: 14px; color: var(--tg-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.ch-preview .burn-tag { color: #E07000; flex-shrink: 0; vertical-align: -1px; margin-right: 2px; }
-.ch-meta {
-  display: flex; align-items: center; gap: 4px;
+.mc-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.mc-info { flex: 1; min-width: 0; }
+.mc-name-row { display: flex; align-items: center; gap: 6px; }
+.mc-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-vis {
+  font-size: 10px; padding: 1px 6px; border-radius: 6px; flex-shrink: 0;
+}
+.mc-vis.public { color: #43A047; background: rgba(67,160,71,.1); }
+.mc-vis.private { color: #FB8C00; background: rgba(251,140,0,.1); }
+.mc-desc {
+  font-size: 13px; color: var(--tg-text-secondary);
+  margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mc-stats {
   font-size: 12px; color: #9BA1A8; margin-top: 4px;
 }
-.ch-dissolved {
-  margin-left: 6px; font-size: 11px; font-weight: 500;
-  color: #E53935; background: rgba(229,57,53,.1);
-  padding: 1px 7px; border-radius: 8px;
+.mc-arrow { flex-shrink: 0; }
+
+/* ── 空状态（未创建频道） ── */
+.mc-empty-card {
+  margin: 12px;
+  padding: 28px 20px;
+  text-align: center;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
 }
+.mc-empty-icon { margin-bottom: 10px; }
+.mc-empty-text { font-size: 15px; font-weight: 600; color: var(--tg-text); }
+.mc-empty-sub { font-size: 12.5px; color: var(--tg-text-secondary); margin: 6px 0 16px; }
+.mc-create-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 10px 22px;
+  background: var(--tg-blue);
+  color: #fff; border: none; border-radius: 10px;
+  font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.mc-create-btn:active { opacity: .8; }
+
+/* ── 创建表单弹窗 ── */
+.mc-form-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 900;
+}
+.mc-form {
+  width: 85%; max-width: 360px;
+  background: #fff; border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+}
+.mc-form-title { font-size: 17px; font-weight: 600; margin-bottom: 16px; }
+.mc-form-field { margin-bottom: 14px; }
+.mc-form-field label { display: block; font-size: 13px; color: var(--tg-text-secondary); margin-bottom: 5px; }
+.mc-form-field .req { color: #E53935; }
+.mc-form-field input,
+.mc-form-field textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--tg-border); border-radius: 10px;
+  font-size: 14px; outline: none;
+  box-sizing: border-box;
+  transition: border-color .2s;
+  font-family: inherit;
+}
+.mc-form-field input:focus,
+.mc-form-field textarea:focus { border-color: var(--tg-blue); }
+.mc-form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.mc-btn-cancel {
+  padding: 9px 18px; border: 1px solid var(--tg-border); border-radius: 10px;
+  background: #fff; font-size: 14px; cursor: pointer;
+}
+.mc-btn-ok {
+  padding: 9px 18px; border: none; border-radius: 10px;
+  background: var(--tg-blue); color: #fff; font-size: 14px; font-weight: 600;
+  cursor: pointer;
+}
+.mc-btn-ok:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── 频道广场 ── */
+.mc-total { font-size: 12px; font-weight: 400; color: var(--tg-text-secondary); }
+.disc-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  transition: background .15s;
+}
+.disc-item:active { background: var(--tg-gray-bg); }
+.disc-avatar {
+  width: 44px; height: 44px;
+  border-radius: 14px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 18px; font-weight: 600;
+  overflow: hidden;
+}
+.disc-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.disc-info { flex: 1; min-width: 0; }
+.disc-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.mc-owner-tag { font-size: 10px; color: var(--tg-blue); background: rgba(51,144,236,.1); padding: 1px 5px; border-radius: 4px; }
+.disc-desc {
+  font-size: 12.5px; color: var(--tg-text-secondary);
+  margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.disc-meta { font-size: 11.5px; color: #9BA1A8; margin-top: 3px; }
+.disc-btn {
+  flex-shrink: 0;
+  padding: 6px 14px; border-radius: 8px; border: none;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: opacity .15s;
+}
+.disc-btn:active { opacity: .7; }
+.disc-btn.subscribe { background: var(--tg-blue); color: #fff; }
+.disc-btn.subscribed { background: rgba(0,0,0,.06); color: var(--tg-text-secondary); }
+.disc-btn.owned { background: rgba(51,144,236,.1); color: var(--tg-blue); }
+.mc-discover-empty { padding: 20px; text-align: center; color: var(--tg-text-secondary); font-size: 13px; }
+.mc-loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 20px; color: #909399; font-size: 13px; }
+.mc-load-more { text-align: center; padding: 12px; color: var(--tg-blue); font-size: 13px; cursor: pointer; }
 </style>

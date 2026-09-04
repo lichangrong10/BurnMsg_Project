@@ -10,6 +10,7 @@
       <div class="chat-tab" :class="{ active: chatTab === 'all' }" @click="chatTab = 'all'">全部</div>
       <div class="chat-tab" :class="{ active: chatTab === 'unread' }" @click="chatTab = 'unread'">未读</div>
       <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'">群组</div>
+      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'">频道</div>
     </div>
     <div v-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
@@ -59,7 +60,7 @@ export default {
   data() {
     return {
       state,
-      chatTab: 'all',    // all | unread | group
+      chatTab: 'all',    // all | unread | group | channel
       menu: null,        // 长按/右键浮层：{ conv, x, y }
       pullDist: 0,       // 下拉距离 px
       pullState: 'idle'  // idle | pulling | ready | refreshing
@@ -72,8 +73,11 @@ export default {
       const tab = this.chatTab
       return list
         .filter(c => {
+          const isCh = c.is_channel || c.type === 'channel'
+          if (tab === 'channel') return isCh
+          if (isCh) return false
           if (tab === 'unread' && !c.unread) return false
-          if (tab === 'group' && (c.is_channel || c.type !== 'group')) return false
+          if (tab === 'group' && c.type !== 'group') return false
           return !k || convName(c).toLowerCase().includes(k)
         })
         .sort((a, b) => {

@@ -92,6 +92,15 @@ export const api = {
   },
   checkUpdate: (platform, current_code) => http.get('/app-versions/latest', { params: { platform, current_code } }),
 
+  // ── 个人频道 ──
+  getMyChannel: () => http.get('/channels/mine'),
+  createMyChannel: payload => http.post('/channels', payload),
+  updateMyChannel: (id, payload) => http.patch(`/channels/${id}`, payload),
+  discoverChannels: (params = {}) => http.get('/channels/discover', { params }),
+  getChannelDetail: id => http.get(`/channels/${id}`),
+  subscribeChannel: id => http.post(`/channels/${id}/subscribe`),
+  unsubscribeChannel: id => http.delete(`/channels/${id}/subscribe`),
+
   // ── 消息搜索 ──
   searchMessages: (params) => http.get('/messages/search', { params }),
   searchConversationMessages: (conversationId, params) => http.get(`/messages/${conversationId}/search`, { params })

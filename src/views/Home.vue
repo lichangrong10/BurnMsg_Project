@@ -1,7 +1,7 @@
 <template>
   <div class="main-page">
     <div class="topbar">
-      <div class="topbar-title">{{ state.tab === 'chats' ? '焚信' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
+      <div class="topbar-title">{{ state.tab === 'chats' ? '焚信' : state.tab === 'channels' ? '频道' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
       <div style="display:flex;align-items:center;gap:2px" v-if="state.tab === 'chats'">
         <div class="topbar-icon" @click="state.showGlobalSearch = true" title="搜索消息">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
