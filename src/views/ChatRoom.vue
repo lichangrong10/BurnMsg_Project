@@ -15,6 +15,15 @@
       </div>
     </div>
 
+    <!-- TOFU 公钥变更告警横幅（仅当前会话涉及的密钥变更才显示） -->
+    <div v-if="chatTofuAlerts.length" class="tofu-banners">
+      <div v-for="a in chatTofuAlerts" :key="a.user_id" class="tofu-banner">
+        <span class="tofu-banner-text"><svg class="tofu-warn" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>「{{ a.name }}」的安全密钥已变更（可能是对方换了手机/重装，也可能是密钥被替换）</span>
+        <button class="tofu-btn" @click="confirmTofuKey(a.user_id)">确认信任新密钥</button>
+        <button class="tofu-btn ghost" @click="dismissTofuAlert(a.user_id)">稍后处理</button>
+      </div>
+    </div>
+
     <div v-if="state.burnSeconds" class="burn-banner">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="state.e2eOn"> · 明文加密（端到端密文）</span>
@@ -336,7 +345,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -392,11 +401,32 @@ export default {
     }
   },
   computed: {
+    // 当前会话相关的用户 id 集合（私聊=对方，群聊=全体成员）
+    chatPeerUids() {
+      const c = state.chat
+      if (!c) return new Set()
+      if (c.type === 'private') {
+        const ou = c.other_user
+        const oid = ou && (ou.id || ou.user_id)
+        return new Set(oid ? [oid] : [])
+      }
+      return new Set((Array.isArray(state.groupMembers) ? state.groupMembers : []).map(m => memberUid(m)))
+    },
     pendingCount() {
-      return Object.keys(state.pendingKeyChanges || {}).length
+      return this.pendingList.length
     },
     pendingList() {
-      return Object.values(state.pendingKeyChanges || {}).sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+      const uids = this.chatPeerUids
+      return Object.values(state.pendingKeyChanges || {})
+        .filter(p => uids.has(p.user_id))
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+    },
+    // 当前会话涉及的 TOFU 密钥变更告警
+    chatTofuAlerts() {
+      const alerts = Array.isArray(state.tofuAlerts) ? state.tofuAlerts : []
+      if (!alerts.length) return []
+      const uids = this.chatPeerUids
+      return alerts.filter(a => uids.has(a.user_id))
     },
     canEditAction() {
       const m = this.msgAction
@@ -508,6 +538,8 @@ export default {
     },
     closeChat,
     toggleE2E,
+    confirmTofuKey,
+    dismissTofuAlert,
     avatarColor,
     convName,
     convInitial,
@@ -1500,4 +1532,7 @@ export default {
 .voice-rec-box.cancel .voice-rec-mic { animation: none; color: #ff6e6e; }
 .voice-rec-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .voice-rec-tip { font-size: 12.5px; opacity: .85; }
+
+/* 会话内 TOFU 横幅：文档流显示在顶栏下方，不再全局 fixed 覆盖 */
+.chat-page .tofu-banners { position: static; z-index: auto; flex-shrink: 0; }
 </style>
