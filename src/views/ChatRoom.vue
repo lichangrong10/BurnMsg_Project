@@ -9,9 +9,35 @@
         <div class="chat-title">{{ convName(state.chat) }}</div>
         <div class="chat-status">{{ chatStatus }}</div>
       </div>
+      <div class="topbar-icon" @click="toggleChatSearch" title="搜索消息">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </div>
       <div class="topbar-icon todo-btn" @click="showTofuTodo = true" title="密钥待办">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span v-if="pendingCount" class="todo-dot">{{ pendingCount > 9 ? '9+' : pendingCount }}</span>
+      </div>
+    </div>
+
+    <!-- ═══════ 会话内消息搜索面板 ═══════ -->
+    <div v-if="chatSearchOpen" class="chat-search-panel">
+      <div class="chat-search-bar">
+        <input class="chat-search-input" v-model="chatSearchKeyword" @input="onChatSearchInput" placeholder="搜索消息（至少2个字符）" autofocus>
+        <div class="chat-search-close" @click="closeChatSearch">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </div>
+      </div>
+      <div class="chat-search-results" @scroll="onSearchScroll">
+        <div v-if="chatSearchLoading && !chatSearchResults.length" class="chat-search-empty">搜索中…</div>
+        <div v-else-if="chatSearchKeyword.length >= 2 && !chatSearchResults.length && !chatSearchLoading" class="chat-search-empty">未找到相关消息</div>
+        <div v-else-if="chatSearchKeyword.length < 2" class="chat-search-empty">输入至少 2 个字符开始搜索</div>
+        <div v-for="(m, i) in chatSearchResults" :key="m.id" class="chat-search-item" @click="onSearchResultClick(m)">
+          <div class="csi-head">
+            <span class="csi-name">{{ m.sender_name || senderName(m) || '未知' }}</span>
+            <span class="csi-time">{{ fmtSearchTime(m.created_at) }}</span>
+          </div>
+          <div class="csi-content" v-html="highlightKeyword(m.content || m.file_name || '[文件消息]', chatSearchKeyword)"></div>
+        </div>
+        <div v-if="chatSearchLoading && chatSearchResults.length" class="chat-search-more">加载中…</div>
       </div>
     </div>
 
@@ -32,7 +58,7 @@
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
-        <div class="msg-row" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
+        <div class="msg-row" :id="'msg-' + m.id" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
           <div class="msg-body" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }">
             <div class="bubble" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }" @click="onBubbleClick(m)" @contextmenu.prevent="onMsgTap(m)">
@@ -411,7 +437,14 @@ export default {
       voiceStream: null,       // 麦克风 MediaStream（停录后关轨释放）
       voiceMime: '',           // 实际采用的录音 mimeType（webm/opus 优先）
       playVoiceId: null,       // 正在播放的语音消息 id（气泡动画）
-      playVoiceEl: null        // 单例 audio 播放器（同时只播一条）
+      playVoiceEl: null,       // 单例 audio 播放器（同时只播一条）
+      // ══ 会话内消息搜索 ══
+      chatSearchOpen: false,
+      chatSearchKeyword: '',
+      chatSearchResults: [],
+      chatSearchLoading: false,
+      chatSearchNextBefore: null,
+      chatSearchDebounce: null
     }
   },
   computed: {
@@ -527,6 +560,15 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    // ══ 会话内消息搜索 ══
+    toggleChatSearch() { if (this.chatSearchOpen) { this.closeChatSearch(); return } this.chatSearchOpen = true },
+    closeChatSearch() { this.chatSearchOpen = false; this.chatSearchKeyword = ''; this.chatSearchResults = []; this.chatSearchNextBefore = null; this.chatSearchLoading = false; if (this.chatSearchDebounce) { clearTimeout(this.chatSearchDebounce); this.chatSearchDebounce = null } },
+    onChatSearchInput() { if (this.chatSearchDebounce) clearTimeout(this.chatSearchDebounce); if (this.chatSearchKeyword.trim().length < 2) { this.chatSearchResults = []; this.chatSearchNextBefore = null; return } this.chatSearchDebounce = setTimeout(() => { this.doChatSearch(false) }, 400) },
+    async doChatSearch(loadMore) { if (!state.chat || !state.chat.id) return; const kw = this.chatSearchKeyword.trim(); if (kw.length < 2) return; this.chatSearchLoading = true; try { const params = { keyword: kw, limit: 50 }; if (loadMore && this.chatSearchNextBefore) params.before = this.chatSearchNextBefore; const res = await api.searchConversationMessages(state.chat.id, params); const items = Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : (res && res.data && Array.isArray(res.data.items) ? res.data.items : null)); if (items) { if (loadMore) { this.chatSearchResults = this.chatSearchResults.concat(items) } else { this.chatSearchResults = items } if (items.length > 0) { this.chatSearchNextBefore = items[items.length - 1].id } else { this.chatSearchNextBefore = null } } } catch (e) { /* ignore */ } this.chatSearchLoading = false },
+    onSearchScroll(e) { const el = e.target; if (this.chatSearchLoading || !this.chatSearchNextBefore) return; if (el.scrollTop + el.clientHeight >= el.scrollHeight - 30) { this.doChatSearch(true) } },
+    onSearchResultClick(m) { this.closeChatSearch(); this.$nextTick(() => { const el = document.getElementById('msg-' + m.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('msg-highlight'); setTimeout(() => el.classList.remove('msg-highlight'), 2000) } }) },
+    highlightKeyword(text, kw) { if (!kw || kw.length < 2 || !text) return text || ''; const kwL = kw.toLowerCase(); const txt = String(text); const out = []; let last = 0; let idx = txt.toLowerCase().indexOf(kwL); while (idx !== -1) { out.push(this.escapeHtml(txt.slice(last, idx))); out.push('<mark class="csi-hl">'); out.push(this.escapeHtml(txt.slice(idx, idx + kw.length))); out.push('</mark>'); last = idx + kw.length; idx = txt.toLowerCase().indexOf(kwL, last) } out.push(this.escapeHtml(txt.slice(last))); return out.join('') },
+    fmtSearchTime(iso) { if (!iso) return ''; const d = new Date(iso); const now = new Date(); const pad = n => String(n).padStart(2, '0'); const time = pad(d.getHours()) + ':' + pad(d.getMinutes()); if (d.toDateString() === now.toDateString()) return time; return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + time },
     /** 原生返回键：先关本页内部弹层（回执详情→消息菜单→阅后即焚面板→退出编辑态），消费掉事件 */
     onNativeBack(e) {
       if (this.viewer.show)       { this.closeViewer(); e.preventDefault(); return }
@@ -1629,6 +1671,25 @@ export default {
 .voice-rec-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .voice-rec-tip { font-size: 12.5px; opacity: .85; }
 
+/* ═══ 会话内消息搜索 ═══ */
+.chat-search-panel { flex-shrink: 0; background: var(--tg-bg, #17212b); border-bottom: 1px solid rgba(255,255,255,.06); animation: csSlide .2s ease; }
+@keyframes csSlide { from { opacity: 0; transform: translateY(-8px) } to { opacity: 1; transform: translateY(0) } }
+.chat-search-bar { display: flex; align-items: center; padding: 8px 12px; gap: 8px; }
+.chat-search-input { flex: 1; height: 36px; border: none; border-radius: 18px; padding: 0 14px; font-size: 14px; background: var(--tg-gray-bg, #242f3d); color: var(--tg-text, #fff); outline: none; }
+.chat-search-input::placeholder { color: var(--tg-text-secondary, #707579); }
+.chat-search-close { cursor: pointer; color: var(--tg-text-secondary, #707579); padding: 4px; display: flex; }
+.chat-search-results { max-height: 50vh; overflow-y: auto; padding: 0 8px 8px; }
+.chat-search-empty { text-align: center; color: var(--tg-text-secondary, #707579); font-size: 13px; padding: 24px 0; }
+.chat-search-more { text-align: center; color: var(--tg-text-secondary, #707579); font-size: 12px; padding: 10px 0; }
+.chat-search-item { background: var(--tg-gray-bg, #242f3d); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; cursor: pointer; transition: background .15s; }
+.chat-search-item:active { background: rgba(51,144,236,.15); }
+.csi-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.csi-name { font-size: 13px; font-weight: 600; color: var(--tg-blue, #5aabdf); }
+.csi-time { font-size: 11px; color: var(--tg-text-secondary, #707579); }
+.csi-content { font-size: 13px; color: var(--tg-text, #e0e0e0); line-height: 1.45; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weight: 700; padding: 0; }
+.msg-highlight { animation: msgFlash .8s ease; }
+@keyframes msgFlash { 0%,100% { background: transparent } 50% { background: rgba(51,144,236,.18) } }
 /* 会话内 TOFU 横幅：文档流显示在顶栏下方，不再全局 fixed 覆盖 */
 .chat-page .tofu-banners { position: static; z-index: auto; flex-shrink: 0; }
 </style>

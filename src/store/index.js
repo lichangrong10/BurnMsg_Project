@@ -52,7 +52,8 @@ export const state = reactive({
   annFocusId: null,       // 进公告中心后自动展开的公告 id（从紧急横幅跳入时用）
   showFeedback: false,    // 意见反馈页（覆盖层）
   feedbackList: [],       // 我的反馈列表（含管理员回复）
-  feedbackLoading: false  // 反馈列表加载中
+  feedbackLoading: false, // 反馈列表加载中
+  showGlobalSearch: false // 全局消息搜索页（覆盖层）
 })
 
 /** 从接口返回值中稳妥提取数组：兼容直接数组，以及 {list}/{users}/{items}/{records}/{data} 等分页/包装结构 */
