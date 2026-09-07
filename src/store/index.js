@@ -24,6 +24,8 @@ export const state = reactive({
   chat: null,            // 当前打开的会话（非 null 时聊天页覆盖显示）
   messages: [],
   msgLoading: false,
+  loadingEarlier: false,  // 正在向上加载更早历史消息（滚顶分页）
+  hasMore: true,          // 当前会话是否还有更早的历史消息可加载
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
   burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
@@ -493,7 +495,9 @@ export async function openChat(c) {
   c.mentionFlag = 0
   state.messages = []
   state.groupMembers = []
-  state.readWatermark = 0 // 重置已读水位线，私聊随后按回执重建
+  state.readWatermark = 0
+  state.loadingEarlier = false
+  state.hasMore = true // 重置已读水位线，私聊随后按回执重建
   state.e2eOn = c.type === 'private' && localStorage.getItem('bm_e2e_on_' + c.id) === '1' // 恢复本会话加密开关
   if (c.type !== 'private') loadGroupMembers() // 预取群成员：消息发送者名称/头像、群管理页共用
   if (!state.demoMode) { try { await api.markRead(c.id) } catch (e) { /* 静默 */ } }
@@ -551,6 +555,7 @@ export async function loadMessages(quiet) {
   try {
     // limit 取 200（接口上限）：后端若按正序返回，limit=50 只会拿到最早 50 条，新消息根本拉不到
     const list = asArray(await api.getMessages(cid, { limit: 200 }))
+    state.hasMore = list.length >= 200 // 首拉不满 200 说明已到最早，关闭滚顶加载
     // 稳健排序：字段名归一化后显式按时间升序（旧→新）渲染，后端正序/倒序/字段别名都安全
     const sorted = sortByTimeAsc(list.map(normalizeMsg))
     const last = sorted[sorted.length - 1]
@@ -587,6 +592,34 @@ export async function loadMessages(quiet) {
 }
 
 /** 同步恢复已缓存的加密明文：重拉/替换消息列表后先就地回填，避免渲染瞬间明文闪回密文（getPlaintext 为同步读 localStorage） */
+/** 滚顶加载更早历史消息：以当前最旧一条的 created_at 为 before 游标，前置插入更早一页（去重 + 保序） */
+export async function loadMoreMessages() {
+  if (!state.chat || state.loadingEarlier || !state.hasMore || state.demoMode) return
+  const cid = state.chat.id
+  const earliest = state.messages[0]
+  const before = earliest && (earliest.created_at || earliest.createdAt)
+  if (!before) { state.hasMore = false; return }
+  state.loadingEarlier = true
+  try {
+    const list = asArray(await api.getMessages(cid, { limit: 100, before }))
+    const sorted = sortByTimeAsc(list.map(normalizeMsg))
+    const existing = {}
+    state.messages.forEach(m => { existing[String(m.id)] = true })
+    const fresh = sorted.filter(m => !existing[String(m.id)])
+    if (list.length < 100) state.hasMore = false // 返回不满一页说明已到最早
+    if (fresh.length) {
+      state.messages = sortByTimeAsc(fresh.concat(state.messages))
+      fresh.forEach(seedBurnLeft)
+      syncRestorePlaintext(fresh)
+      decryptMessagesInList(fresh, cid)
+    }
+  } catch (e) {
+    console.error('[焚信] 加载更早消息失败:', cid, e)
+  } finally {
+    state.loadingEarlier = false
+  }
+}
+
 function syncRestorePlaintext(list) {
   for (const m of list) {
     if (m.is_encrypted && !m.is_blurred) {
@@ -1601,7 +1634,10 @@ export async function changeGroupAvatar(file) {
     return true
   }
   try {
-    const c = await api.updateGroup(state.chat.id, { avatar_url: url })
+    const isCh = state.chat.is_channel || state.chat.type === 'channel'
+    const c = isCh
+      ? await api.updateMyChannel(state.chat.id, { avatar_url: url })
+      : await api.updateGroup(state.chat.id, { avatar_url: url })
     Object.assign(state.chat, c)
     loadConvs(true)
     showToast('群头像已更新')

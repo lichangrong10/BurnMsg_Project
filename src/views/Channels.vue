@@ -16,7 +16,7 @@
     <template v-else-if="myChannel">
       <div class="mc-card" @click="openChat(myChannel)">
         <div class="mc-avatar" :style="{ background: avatarColor(myChannel.name || '频道') }">
-          <img v-if="myChannel.avatar_url" :src="myChannel.avatar_url" alt="">
+          <img v-if="myChannel.avatar_url" :src="fileURL(myChannel.avatar_url)" alt="">
           <template v-else>{{ (myChannel.name || '频')[0] }}</template>
         </div>
         <div class="mc-info">
@@ -78,7 +78,7 @@
     <template v-else>
       <div v-for="ch in discoverList" :key="ch.id" class="disc-item">
         <div class="disc-avatar" :style="{ background: avatarColor(ch.name || '频道') }">
-          <img v-if="ch.avatar_url" :src="ch.avatar_url" alt="">
+          <img v-if="ch.avatar_url" :src="fileURL(ch.avatar_url)" alt="">
           <template v-else>{{ (ch.name || '频')[0] }}</template>
         </div>
         <div class="disc-info">
@@ -103,7 +103,7 @@
 <script>
 import { state, openChat, loadConvs } from '../store'
 import { api } from '../api'
-import { avatarColor, fmtTime } from '../utils/format'
+import { avatarColor, fmtTime, fileURL } from '../utils/format'
 
 export default {
   name: 'ChannelsView',
@@ -140,6 +140,7 @@ export default {
   methods: {
     avatarColor,
     fmtTime,
+    fileURL,
     openChat,
     async loadData() {
       this.loading = true

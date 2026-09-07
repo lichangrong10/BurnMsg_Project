@@ -12,7 +12,7 @@
     <div style="flex:1;overflow-y:auto" v-if="state.chat">
       <!-- ═══ 资料卡 ═══ -->
       <div class="info-card">
-        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved && !isChannel) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved && !isChannel ? '更换群头像' : ''">
+        <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved ? '更换群头像' : ''">
           <div class="avatar" :style="{ width: '72px', height: '72px', fontSize: '28px', background: avatarColor(title) }"><img v-if="cardAvatar" :src="cardAvatar" alt=""><template v-else>{{ (title || '?')[0] }}</template></div>
           <div v-if="isGroup && canManage && !isDissolved" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         </div>
@@ -53,11 +53,13 @@
             <span class="cell-label" style="color:var(--tg-text-secondary)">该{{ state.chat.is_channel ? '频道' : '群组' }}已解散，仅可查看</span>
           </div>
           <template v-else>
-            <div v-if="myRole === 'owner'" class="cell danger" @click="confirmDissolve = true">
-              <span class="cell-label">解散{{ state.chat.is_channel ? '频道' : '群组' }}</span>
+            <!-- 频道主不显示任何按钮（后端不支持解散/退出自己的频道） -->
+            <template v-if="myRole === 'owner' && isChannel"></template>
+            <div v-else-if="myRole === 'owner'" class="cell danger" @click="confirmDissolve = true">
+              <span class="cell-label">解散群组</span>
             </div>
             <div v-else class="cell danger" @click="confirmLeave = true">
-              <span class="cell-label">{{ state.chat.is_channel ? '退出频道' : '退出群组' }}</span>
+              <span class="cell-label">{{ isChannel ? '退出频道' : '退出群组' }}</span>
             </div>
           </template>
         </div>
@@ -238,7 +240,7 @@ export default {
     uidOf: memberUid,
     nameOf: memberName,
     pickGroupAvatar() {
-      if (!(this.isGroup && this.canManage && !this.isDissolved && !this.isChannel)) return
+      if (!(this.isGroup && this.canManage && !this.isDissolved)) return
       this.$refs.groupAvatarFile && this.$refs.groupAvatarFile.click()
     },
     async onGroupAvatarPick(e) {

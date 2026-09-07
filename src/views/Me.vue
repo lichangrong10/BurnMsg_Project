@@ -40,7 +40,7 @@
         <span class="cell-value">
           <span v-if="updateStatus === 'checking'" style="color:var(--tg-text-secondary)">检查中…</span>
           <span v-else-if="updateStatus === 'latest'" style="color:var(--tg-green-check)">已是最新 v{{ appVersionName }}</span>
-          <span v-else-if="updateStatus === 'available'" style="color:var(--tg-blue);font-weight:600" @click.stop="downloadUpdate">v{{ updateInfo.version_name }} 可更新</span>
+          <span v-else-if="updateStatus === 'available'" style="color:var(--tg-blue);font-weight:600" @click.stop="showUpdateDialog = true">v{{ updateInfo.version_name }} 可更新</span>
           <span v-else>v{{ appVersionName }}</span>
         </span>
       </div>
@@ -276,6 +276,8 @@ export default {
         return
       }
       this.updateStatus = 'checking'
+      this.downloading = false
+      this.downloadProgress = 0
       try {
         const result = await checkAppUpdate()
         if (result) {

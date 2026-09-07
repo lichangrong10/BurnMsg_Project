@@ -56,6 +56,7 @@
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
+      <div v-if="state.hasMore" style="text-align:center;color:#707579;font-size:13px;padding:8px;cursor:pointer" @click="loadEarlier">{{ state.loadingEarlier ? '加载中…' : '加载更早的消息' }}</div>
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
         <div class="msg-row" :id="'msg-' + m.id" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
@@ -176,9 +177,9 @@
       <button class="attach-btn voice-toggle-btn" :class="{ active: voiceMode }" @click="toggleVoiceMode" title="语音 / 文字切换">
         <svg width="23" height="23" viewBox="0 0 24 24" fill="none" :stroke="voiceMode ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
       </button>
-      <input type="file" ref="galleryInput" accept="image/*,video/*" style="display:none" @change="onFilePicked">
+      <input type="file" ref="galleryInput" accept="image/*,video/*" multiple style="display:none" @change="onFilePicked">
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
-      <input type="file" ref="fileInput" style="display:none" @change="onFilePicked">
+      <input type="file" ref="fileInput" multiple style="display:none" @change="onFilePicked">
       
       <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
@@ -237,6 +238,25 @@
     </div>
 
 
+
+    <!-- ═══════ 待发送文件确认层（多选后确认再发送） ═══════ -->
+    <div v-if="showPendingFiles" class="overlay" @click.self="cancelSendFiles">
+      <div class="sheet">
+        <div class="sheet-title">待发送 {{ pendingFiles.length }} 项</div>
+        <div class="pending-list">
+          <div v-for="(p, i) in pendingFiles" :key="i" class="pending-row">
+            <img v-if="p.url" :src="p.url" class="pending-thumb">
+            <div v-else class="pending-thumb pending-fileth"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#5aabdf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg></div>
+            <div class="pending-meta"><div class="pending-name">{{ p.file.name }}</div><div class="pending-size">{{ fmtSize(p.file.size) }}</div></div>
+            <div class="pending-del" @click="removePendingFile(i)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></div>
+          </div>
+        </div>
+        <div class="pending-foot">
+          <div class="sheet-item sheet-cancel" @click="cancelSendFiles">取消</div>
+          <div class="sheet-item pending-send" :class="{ disabled: sendingFiles }" @click="confirmSendFiles">{{ sendingFiles ? '发送中…' : '发送' }}</div>
+        </div>
+      </div>
+    </div>
 
     <!-- ═══════ 密钥待办（「稍后处理」收纳的密钥变更） ═══════ -->
     <div v-if="showTofuTodo" class="overlay" @click.self="showTofuTodo = false">
@@ -378,7 +398,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -398,6 +418,9 @@ export default {
       mentionQuery: '',     // @ 后面正在输入的关键词（实时筛选候选成员）
       showBurnSheet: false,
       showAttachSheet: false,
+      pendingFiles: [],         // 待发送文件列表：{ file, url }（url 为图片预览 objectURL）
+      showPendingFiles: false,  // 待发送确认层开关
+      sendingFiles: false,      // 正在发送待发送文件
       showTofuTodo: false,
       msgAction: null,
       editing: null,       // 正在编辑的消息
@@ -839,6 +862,22 @@ export default {
       const atBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 60
       this.stickBottom = atBottom
       if (atBottom) this.newMsgPill = false
+      // 滚到顶部附近 → 触发加载更早历史（还有更多、且未在加载时才拉）
+      if (b.scrollTop < 40 && state.hasMore && !state.loadingEarlier && !state.msgLoading) this.loadEarlier()
+    },
+    /** 向上加载更早历史：记录加载前滚动高度，插入后把 scrollTop 补回，避免可视区跳动 */
+    async loadEarlier() {
+      const b = this.$refs.msgBox
+      const prevHeight = b ? b.scrollHeight : 0
+      const prevTop = b ? b.scrollTop : 0
+      await loadMoreMessages()
+      nextTick(() => {
+        const b2 = this.$refs.msgBox
+        if (b2) {
+          const delta = b2.scrollHeight - prevHeight
+          if (delta > 0) b2.scrollTop = prevTop + delta
+        }
+      })
     },
     scrollBottom() {
       nextTick(() => {
@@ -1010,9 +1049,39 @@ export default {
       else this.loadMentionReceipts()
     },
     onFilePicked(e) {
-      const file = e.target.files[0]
+      const files = Array.from(e.target.files || [])
       e.target.value = ''
-      if (file) sendFile(file)
+      if (!files.length) return
+      for (const f of files) {
+        if (f.size > 50 * 1024 * 1024) { showToast('「' + f.name + '」超过 50MB，已跳过'); continue }
+        this.pendingFiles.push({ file: f, url: /^image\//.test(f.type) ? URL.createObjectURL(f) : null })
+      }
+      if (this.pendingFiles.length) this.showPendingFiles = true
+    },
+    /** 移除待发送列表中的某一项（回收预览 objectURL） */
+    removePendingFile(i) {
+      const p = this.pendingFiles[i]
+      if (p && p.url) URL.revokeObjectURL(p.url)
+      this.pendingFiles.splice(i, 1)
+      if (!this.pendingFiles.length) this.cancelSendFiles()
+    },
+    /** 取消发送：清空待发送列表并回收预览 */
+    cancelSendFiles() {
+      this.pendingFiles.forEach(p => { if (p.url) URL.revokeObjectURL(p.url) })
+      this.pendingFiles = []
+      this.showPendingFiles = false
+      this.sendingFiles = false
+    },
+    /** 确认发送：逐张上传发送（单张失败不阻断后续，sendFile 内部各自 toast） */
+    async confirmSendFiles() {
+      if (this.sendingFiles) return
+      const list = this.pendingFiles.slice()
+      this.sendingFiles = true
+      for (const p of list) await sendFile(p.file)
+      list.forEach(p => { if (p.url) URL.revokeObjectURL(p.url) })
+      this.pendingFiles = []
+      this.showPendingFiles = false
+      this.sendingFiles = false
     },
     // ═══════ 语音消息：模式切换 / 长按录音 / 上滑取消 / 点击播放 ═══════
     /** 麦克风按钮：语音/文字输入切换（录音进行中不响应） */
@@ -1729,4 +1798,19 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 @keyframes msgFlash { 0%,100% { background: transparent } 50% { background: rgba(51,144,236,.18) } }
 /* 会话内 TOFU 横幅：文档流显示在顶栏下方，不再全局 fixed 覆盖 */
 .chat-page .tofu-banners { position: static; z-index: auto; flex-shrink: 0; }
+/* ═══════ 待发送文件确认层 ═══════ */
+.pending-list { max-height: 46vh; overflow-y: auto; padding: 2px 6px; }
+.pending-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; }
+.pending-row:active { background: var(--tg-gray-bg, #242f3d); }
+.pending-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--tg-gray-bg, #242f3d); }
+.pending-fileth { display: flex; align-items: center; justify-content: center; }
+.pending-meta { flex: 1; min-width: 0; }
+.pending-name { font-size: 14px; color: var(--tg-text, #e0e0e0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pending-size { font-size: 12px; color: var(--tg-text-secondary, #707579); margin-top: 2px; }
+.pending-del { color: var(--tg-text-secondary, #707579); padding: 6px; cursor: pointer; flex-shrink: 0; display: flex; }
+.pending-foot { display: flex; align-items: stretch; gap: 8px; margin-top: 12px; padding: 12px 16px 0; border-top: 8px solid var(--tg-gray-bg, #F1F3F5); }
+.pending-foot .sheet-item { flex: 1; text-align: center; margin: 0; padding: 13px 0; border-radius: 10px; font-size: 16px; }
+.pending-foot .sheet-cancel { margin-top: 0; border-top: none; background: var(--tg-gray-bg, #F1F3F5); color: var(--tg-text, #000); font-weight: 500; }
+.pending-send { color: #fff; background: var(--tg-blue); font-weight: 600; }
+.pending-send.disabled { opacity: .5; pointer-events: none; }
 </style>
