@@ -554,9 +554,31 @@ export default {
     // 打开会话/非静默刷新完成 → 重新吸附并强制滚到底部
     'state.msgSeq'() {
       this.loadMentionReceipts()
-      this.stickBottom = true
-      this.newMsgPill = false
-      this.scrollBottom()
+      const targetId = state.targetMessageId
+      if (targetId) {
+        state.targetMessageId = null
+        this.stickBottom = false
+        this.newMsgPill = false
+        this.$nextTick(() => {
+        this._locating = true
+        setTimeout(() => { this._locating = false }, 1200)
+        const el = document.getElementById('msg-' + targetId)
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            el.classList.remove('highlight')
+            void el.offsetWidth
+            el.classList.add('highlight')
+            setTimeout(() => el.classList.remove('highlight'), 1200)
+          } else {
+            this.stickBottom = true
+            this.scrollBottom()
+          }
+        })
+      } else {
+        this.stickBottom = true
+        this.newMsgPill = false
+        this.scrollBottom()
+      }
     },
     // 自己发送/条数变化 → 仅当用户停留在底部（未上滑查看历史）时跟随滚动
     'state.messages.length'() {
@@ -867,7 +889,7 @@ export default {
       this.stickBottom = atBottom
       if (atBottom) this.newMsgPill = false
       // 滚到顶部附近 → 触发加载更早历史（还有更多、且未在加载时才拉）
-      if (b.scrollTop < 40 && state.hasMore && !state.loadingEarlier && !state.msgLoading) this.loadEarlier()
+      if (b.scrollTop < 40 && state.hasMore && !state.loadingEarlier && !state.msgLoading && !this._locating) this.loadEarlier()
     },
     /** 向上加载更早历史：记录加载前滚动高度，插入后把 scrollTop 补回，避免可视区跳动 */
     async loadEarlier() {
@@ -886,7 +908,7 @@ export default {
     scrollBottom() {
       nextTick(() => {
         const b = this.$refs.msgBox
-        if (b) b.scrollTop = b.scrollHeight
+        if (b && this.stickBottom) b.scrollTop = b.scrollHeight
         // 再补一帧校准：仅在吸附状态下二次滚底，避免打扰上滑看历史的用户
         requestAnimationFrame(() => {
           const b2 = this.$refs.msgBox

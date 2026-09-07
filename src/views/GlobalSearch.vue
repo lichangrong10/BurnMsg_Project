@@ -194,6 +194,7 @@ export default {
     openResult(item) {
       const conv = state.convs.find(cv => cv.id === item.conversation_id || String(cv.id) === String(item.conversation_id))
       if (conv) {
+        state.targetMessageId = item.id
         state.showGlobalSearch = false
         openChat(conv)
       } else {
