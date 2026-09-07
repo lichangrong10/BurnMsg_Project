@@ -72,6 +72,7 @@ import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, sho
 import { storage } from './utils/storage'
 import { onWs, WS_EVENTS } from './utils/ws'
 import { setupBackHandler } from './utils/back'
+import { setupStatusBar } from './utils/statusbar'
 import { checkAppUpdate, downloadAndInstallApk } from './utils/update'
 import LoginView from './views/Login.vue'
 import ChangePwdView from './views/ChangePwd.vue'
@@ -103,6 +104,7 @@ export default {
     window.addEventListener('bm-logout', forceLogout)
     startTimers()
     setupBackHandler()
+    setupStatusBar()
     if (state.view === 'main') bootstrap()
     this.doCheckUpdate()
     onWs(WS_EVENTS.APP_UPDATE, () => this.doCheckUpdate())
