@@ -42,13 +42,30 @@ public class MainActivity extends BridgeActivity {
         // 并把 WebView 底层背景设为主题蓝、状态栏图标设为浅色，避免顶部断层。
         WebView webView = getBridge().getWebView();
         webView.setBackgroundColor(android.graphics.Color.parseColor("#3390EC"));
+        webView.setClipToPadding(false);
         androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView()).setAppearanceLightStatusBars(false);
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
             int top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+            if (top <= 0) {
+                int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+                top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
+            }
             v.setPadding(0, top, 0, 0);
             return insets;
         });
-        androidx.core.view.ViewCompat.requestApplyInsets(webView);
+        getWindow().getDecorView().post(() -> {
+            int top = 0;
+            int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+            if (resId > 0) top = getResources().getDimensionPixelSize(resId);
+            android.view.WindowInsets win = getWindow().getDecorView().getRootWindowInsets();
+            if (win != null) {
+                int t = androidx.core.view.WindowInsetsCompat
+                        .toWindowInsetsCompat(win, getWindow().getDecorView())
+                        .getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+                if (t > 0) top = t;
+            }
+            webView.setPadding(0, top, 0, 0);
+        });
 
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
         // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
