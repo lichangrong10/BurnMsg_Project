@@ -788,6 +788,9 @@ export default {
     },
     /** 长按/右键群员头像：@ 该发件人（提取其显示名插入草稿） */
     mentionSender(m) {
+      const now = Date.now()
+      if (now - (this._lastMentionAt || 0) < 800) return
+      this._lastMentionAt = now
       if (!state.chat || state.chat.type === 'private') return
       const u = this.senderInfo(m)
       const name = u ? (u.display_name || u.name || u.username || u.nickname || '') : (m && (m.sender_name || ''))
