@@ -44,4 +44,5 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" /><!-- 语音消息：麦克风（V5.8.4） -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><!-- 语音消息：WebView 授权链要求与 RECORD_AUDIO 同时声明，缺它 getUserMedia 必被拒（V5.8.4） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" /><!-- 保存图片进相册：Android 9- 公共目录写入（V5.8.8；Android 10+ 走 MediaStore 免权限） -->
 </manifest>

@@ -405,6 +405,10 @@ import { DEMO } from '../mock/demo'
 import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
+import { Capacitor, registerPlugin } from '@capacitor/core'
+
+// v5.8.8：MediaSaver 原生插件（android/.../MediaSaverPlugin.java）：App 端保存图片走 MediaStore 进系统相册
+const MediaSaver = registerPlugin('MediaSaver')
 
 export default {
   name: 'ChatRoom',
@@ -1427,24 +1431,33 @@ export default {
       }
     },
     imgTouchEnd() { this.imgGesture = null },
-    /** 保存原图到本地：先取 blob 再触发下载（跨域直链 <a download> 会被浏览器忽略，blob 才可靠） */
+    /** 保存原图到本地：App 端走原生 MediaStore 写入系统相册（WebView 的 <a download> 只能落 App 私有目录，
+        系统相册永远看不到）；Web 端先取 blob 再触发下载（跨域直链 <a download> 会被浏览器忽略，blob 才可靠） */
     async downloadViewer() {
       if (!this.viewer.url || this.viewer.saving) return
       this.viewer.saving = true
       try {
         // v5.8.7：优先下载原图（originalUrl），无原图（老消息/压缩失败直传）回退当前显示图
-        const blob = await http.get(this.viewer.originalUrl || this.viewer.url, { responseType: 'blob', timeout: 60000 })
-        const objUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objUrl
-        a.download = this.viewer.name || 'image.jpg'
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
-        showToast('已保存到本地')
+        const src = this.viewer.originalUrl || this.viewer.url
+        if (Capacitor.isNativePlatform()) {
+          // v5.8.8：安卓 App 由原生插件直下原图写入 MediaStore（Pictures/BurnMsg），相册立即可见
+          await MediaSaver.saveImage({ url: src, name: this.viewer.name || 'image.jpg' })
+          showToast('已保存到系统相册')
+        } else {
+          const blob = await http.get(src, { responseType: 'blob', timeout: 60000 })
+          const objUrl = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = objUrl
+          a.download = this.viewer.name || 'image.jpg'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
+          showToast('已保存到本地')
+        }
       } catch (e) {
-        showToast('保存失败：' + (e && e.message ? e.message : ''))
+        const msg = e && e.message ? e.message : String(e || '')
+        showToast(msg.indexOf('PERMISSION_REQUIRED') >= 0 ? '请授予存储权限后重试' : '保存失败：' + msg)
       } finally {
         this.viewer.saving = false
       }

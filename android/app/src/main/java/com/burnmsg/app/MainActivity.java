@@ -31,6 +31,7 @@ public class MainActivity extends BridgeActivity {
         // super.onCreate(savedInstanceState);
         // registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(DownloadApkPlugin.class);
+        registerPlugin(MediaSaverPlugin.class); // v5.8.8：图片保存到系统相册
         super.onCreate(savedInstanceState);
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
         // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
