@@ -33,6 +33,23 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DownloadApkPlugin.class);
         registerPlugin(MediaSaverPlugin.class); // v5.8.8：图片保存到系统相册
         super.onCreate(savedInstanceState);
+
+        // ── Android 15/16 强制 edge-to-edge 修复 ──
+        // 系统 API：状态栏透明悬浮，WebView 内容顶到屏幕顶端，导致顶部 UI 与状态栏重叠。
+        // @capacitor/status-bar 的 overlaysWebView/backgroundColor 在 Android 16 已失效；
+        // Capacitor 8 的 adjustMarginsForEdgeToEdge 字段在 8.5 尚未实际生效。
+        // 这里在原生层手动把状态栏高度作为 padding 加给 WebView，恢复「内容压在状态栏下方」布局，
+        // 并把 WebView 底层背景设为主题蓝、状态栏图标设为浅色，避免顶部断层。
+        WebView webView = getBridge().getWebView();
+        webView.setBackgroundColor(android.graphics.Color.parseColor("#3390EC"));
+        androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView()).setAppearanceLightStatusBars(false);
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
+            int top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+            v.setPadding(0, top, 0, 0);
+            return insets;
+        });
+        androidx.core.view.ViewCompat.requestApplyInsets(webView);
+
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
         // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
