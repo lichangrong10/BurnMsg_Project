@@ -184,7 +184,7 @@
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" multiple style="display:none" @change="onFilePicked">
       
-      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus"></textarea>
+      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -1126,6 +1126,29 @@ export default {
         // 发送后保持键盘，避免移动端按钮点击收起软键盘
         nextTick(() => { if (this.$refs.msgInput) this.$refs.msgInput.focus() })
       }
+    },
+    /** 粘贴拦截：图片/文件进待发送队列，文本保持默认行为
+     *  支持：Ctrl+V 图片（截图）、从文件管理器粘贴文件；多文件批量追加 */
+    onPaste(e) {
+      const cd = e.clipboardData
+      if (!cd || !cd.items) return
+      const items = Array.from(cd.items)
+      const fileItems = items.filter(it => (it.kind === 'file') && it.type)
+      if (!fileItems.length) return // 纯文本，浏览器默认粘贴
+      e.preventDefault()
+      const files = []
+      for (const it of fileItems) {
+        const f = it.getAsFile()
+        if (!f) continue
+        if (f.size > 50 * 1024 * 1024) { showToast('「' + (f.name || '粘贴项') + '」超过 50MB，已跳过'); continue }
+        files.push(f)
+      }
+      if (!files.length) return
+      for (const f of files) {
+        this.pendingFiles.push({ file: f, url: /^image\//.test(f.type) ? URL.createObjectURL(f) : null })
+      }
+      if (this.pendingFiles.length) this.showPendingFiles = true
+      showToast('已加入待发送 ' + files.length + ' 项')
     },
     onFilePicked(e) {
       const files = Array.from(e.target.files || [])
