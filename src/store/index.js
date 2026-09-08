@@ -1433,6 +1433,18 @@ export async function removeMember(uid) {
     return true
   }
   try {
+    const isCh = state.chat && (state.chat.is_channel || state.chat.type === 'channel')
+    if (isCh && isMe) {
+      // 频道退订：DELETE /channels/{id}/subscribe
+      const res = await api.unsubscribeChannel(state.chat.id)
+      // 从会话列表移除该频道
+      const i = state.convs.findIndex(cv => String(cv.id) === String(state.chat.id))
+      if (i >= 0) state.convs.splice(i, 1)
+      state.showChatInfo = false
+      closeChat()
+      showToast('已退订频道')
+      return true
+    }
     await api.removeGroupMember(state.chat.id, uid)
     if (isMe) {
       state.showChatInfo = false
