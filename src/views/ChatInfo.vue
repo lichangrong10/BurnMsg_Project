@@ -17,12 +17,12 @@
           <div v-if="isGroup && canManage && !isDissolved" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         </div>
         <input ref="groupAvatarFile" type="file" accept="image/*" style="display:none" @change="onGroupAvatarPick">
-        <div class="info-name">{{ title }}<span v-if="isDissolved" style="font-size:12px;color:#E53935;background:rgba(229,57,53,.1);padding:2px 8px;border-radius:8px;margin-left:8px;vertical-align:2px">已解散</span></div>
+        <div class="info-name" :class="{ clickable: canManage && !isDissolved }" @click="canManage && !isDissolved && openEdit()">{{ title }}<span v-if="isDissolved" style="font-size:12px;color:#E53935;background:rgba(229,57,53,.1);padding:2px 8px;border-radius:8px;margin-left:8px;vertical-align:2px">已解散</span></div>
         <div class="info-sub" v-if="isGroup">{{ memberList.length || state.chat.member_count }} 位成员</div>
         <div class="info-sub" v-else>{{ state.chat.other_user && state.chat.other_user.phone }}</div>
         <div class="info-sub" v-if="!isGroup && state.chat.other_user && state.chat.other_user.signature">{{ state.chat.other_user.signature }}</div>
-        <div class="info-sub" v-if="isGroup && state.chat.description" style="margin-top:4px">{{ state.chat.description }}</div>
-        <button v-if="isGroup && canManage && !isDissolved && !isChannel" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
+        <div class="info-sub" v-if="isGroup && state.chat.description" :class="{ clickable: canManage && !isDissolved }" style="margin-top:4px" @click="canManage && !isDissolved && openEdit()">{{ state.chat.description }}</div>
+        <button v-if="isGroup && canManage && !isDissolved" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
       </div>
 
       <!-- ═══ 群成员 ═══ -->
@@ -70,7 +70,7 @@
     <!-- ═══ 编辑群资料 ═══ -->
     <div v-if="showEdit" class="dialog-overlay" @click.self="showEdit = false">
       <div class="dialog">
-        <div class="dialog-title">编辑群资料</div>
+        <div class="dialog-title">{{ isChannel ? "编辑频道资料" : "编辑群资料" }}</div>
         <div class="dialog-body" style="display:flex;flex-direction:column;gap:10px">
           <input class="input" v-model.trim="editName" placeholder="名称" maxlength="200">
           <input class="input" v-model.trim="editDesc" placeholder="简介（可选）" maxlength="500">
@@ -156,7 +156,7 @@
 </template>
 
 <script>
-import { state, myChatRole, renameGroup, addMembers, removeMember, changeGroupAvatar, dissolveGroup, transferOwnership } from '../store'
+import { state, myChatRole, renameGroup, renameChannel, addMembers, removeMember, changeGroupAvatar, dissolveGroup, transferOwnership } from '../store'
 import { avatarColor, avatarSrc, convAvatar, memberName, memberUid, memberAvatar } from '../utils/format'
 
 export default {
@@ -256,7 +256,9 @@ export default {
     },
     async saveEdit() {
       if (!this.editName) return
-      const ok = await renameGroup(this.editName, this.editDesc)
+      const ok = this.isChannel
+        ? await renameChannel(this.editName, this.editDesc)
+        : await renameGroup(this.editName, this.editDesc)
       if (ok) this.showEdit = false
     },
     toggleAdd(id) {
@@ -305,6 +307,8 @@ export default {
 <style scoped>
 .info-card { background: var(--tg-bg); padding: 24px 16px 18px; display: flex; flex-direction: column; align-items: center; }
 .info-name { font-size: 19px; font-weight: 600; margin-top: 12px; }
+.info-name.clickable, .info-sub.clickable { cursor: pointer; color: var(--tg-blue); }
+.info-name.clickable:hover, .info-sub.clickable:hover { opacity: .8; }
 .info-sub { font-size: 14px; color: var(--tg-text-secondary); margin-top: 3px; }
 .member-list { background: var(--tg-bg); }
 .add-avatar { width: 42px; height: 42px; background: rgba(0,0,0,.06); display: flex; align-items: center; justify-content: center; }

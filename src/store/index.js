@@ -1361,6 +1361,33 @@ export async function renameGroup(name, description) {
   }
 }
 
+/** 修改频道资料：name / description（仅频道主）走 PATCH /channels/{id} */
+export async function renameChannel(name, description) {
+  const payload = {}
+  if (name) payload.name = name
+  if (description !== undefined) payload.description = description
+  if (state.demoMode) {
+    if (payload.name) state.chat.name = payload.name
+    if (description !== undefined) state.chat.description = description
+    showToast('频道资料已更新（模拟）')
+    return true
+  }
+  try {
+    const c = await api.updateMyChannel(state.chat.id, payload)
+    if (c) Object.assign(state.chat, c)
+    else {
+      if (payload.name) state.chat.name = payload.name
+      if (description !== undefined) state.chat.description = description
+    }
+    loadConvs(true)
+    showToast('频道资料已更新')
+    return true
+  } catch (e) {
+    showToast(e.message || '更新失败')
+    return false
+  }
+}
+
 export async function addMembers(ids) {
   if (!ids.length) return false
   if (state.demoMode) {
