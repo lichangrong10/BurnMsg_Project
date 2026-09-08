@@ -1143,7 +1143,7 @@ export async function sendFile(file) {
     // ── 图片双上传：压缩版先行发消息，原图后台补传 ──
     const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
     const up = await api.upload(cf)
-    const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: file.size }
+    const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: up.file_size }
     if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds
     const m = await api.sendMessage(payload)
     m.thumb_url = up.thumb_url || null
