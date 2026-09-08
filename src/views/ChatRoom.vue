@@ -146,7 +146,7 @@
     </div>
 
     <!-- 编辑消息提示条 -->
-    <div v-if="editing" class="edit-bar">
+    <div v-if="editing && !channelReadonly" class="edit-bar">
       <div style="flex:1;min-width:0">
         <div class="edit-bar-title">编辑消息</div>
         <div class="edit-bar-text">{{ editing.content }}</div>
@@ -155,7 +155,7 @@
     </div>
 
     <!-- 引用回复提示条 -->
-    <div v-if="replyTo" class="edit-bar reply-bar">
+    <div v-if="replyTo && !channelReadonly" class="edit-bar reply-bar">
       <div style="flex:1;min-width:0">
         <div class="edit-bar-title">回复 {{ senderName(replyTo) }}</div>
         <div class="edit-bar-text">{{ msgPreviewText(replyTo) }}</div>
@@ -173,7 +173,7 @@
         <div v-if="!mentionCandidates.length" class="mention-empty">未找到匹配成员</div>
       </div>
     </div>
-    <div v-if="!isDissolved" class="input-bar">
+    <div v-if="!isDissolved && !channelReadonly" class="input-bar">
       <button class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -196,7 +196,8 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
       </button>
     </div>
-    <div v-else class="dissolved-bar">群组已解散，无法发送消息</div>
+    <div v-else-if="isDissolved" class="dissolved-bar">{{ isChannelChat ? '频道' : '群组' }}已解散，无法发送消息</div>
+    <div v-else class="dissolved-bar">只有频道作者可以发布消息</div>
 
     <!-- ═══════ 语音录制浮层：长按录入时居中显示，上滑进入取消区 ═══════ -->
     <div v-if="recording" class="voice-rec-mask">
@@ -287,7 +288,7 @@
     <div v-if="msgAction" class="overlay" @click.self="msgAction = null">
       <div class="sheet">
         <div class="sheet-title" style="max-height:60px;overflow:hidden">{{ msgAction.is_recalled ? '消息已撤回' : (msgAction.content || msgAction.file_name || '').slice(0, 60) }}</div>
-        <div class="sheet-item" v-if="!msgAction.is_recalled" @click="startReply">回复</div>
+        <div class="sheet-item" v-if="!msgAction.is_recalled && !channelReadonly" @click="startReply">回复</div>
         <div class="sheet-item" v-if="!msgAction.is_recalled" @click="copyMsg">复制</div>
         <div class="sheet-item" v-if="canEditAction" @click="startEdit">编辑</div>
         <div class="sheet-item" v-if="msgAction.sender_id === state.me.id && !msgAction.is_recalled" @click="showReceipt">已读回执</div>
@@ -401,7 +402,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -469,7 +470,8 @@ export default {
       chatSearchResults: [],
       chatSearchLoading: false,
       chatSearchNextBefore: null,
-      chatSearchDebounce: null
+      chatSearchDebounce: null,
+      myChannelId: null,       // 「我的频道」id：频道会话打开时拉取，兜底判断当前用户是否为频道作者
     }
   },
   computed: {
@@ -509,6 +511,25 @@ export default {
     },
     imgStyle() {
       return { transform: `translate(${this.viewer.tx}px, ${this.viewer.ty}px) scale(${this.viewer.scale})`, transition: 'transform .1s ease-out' }
+    },
+    // 当前会话是否为频道
+    isChannelChat() {
+      return !!(state.chat && (state.chat.is_channel || state.chat.type === 'channel'))
+    },
+    // 当前用户是否为频道作者：会话对象字段 → 成员角色 → 「我的频道」id 三层兜底
+    isChannelOwner() {
+      if (!this.isChannelChat) return false
+      const c = state.chat
+      if (c.is_owner === true) return true
+      const oid = c.owner_id || (c.owner && (c.owner.id || c.owner.user_id))
+      if (oid && String(oid) === String(state.me.id)) return true
+      if (myChatRole() === 'owner') return true
+      if (this.myChannelId && String(this.myChannelId) === String(c.id)) return true
+      return false
+    },
+    // 频道只读：频道会话且非作者 → 输入栏替换为只读提示
+    channelReadonly() {
+      return this.isChannelChat && !this.isChannelOwner
     },
     isDissolved() {
       return !!(state.chat && state.chat.dissolved_at)
@@ -587,6 +608,8 @@ export default {
     'state.messages.length'() {
       if (this.stickBottom) this.scrollBottom()
     },
+    // 切换会话 → 频道会话时拉「我的频道」id，兜底判断作者身份
+    'state.chat.id'(id) { this.resolveChannelOwner(id) },
     // 轮询发现新消息（按最新时间戳判定，条数顶到上限不变时也能触发）→ 吸附中滚底，上滑中弹「新消息」浮钮
     'state.newMsgSeq'() {
       if (this.stickBottom) this.scrollBottom()
@@ -595,6 +618,7 @@ export default {
   },
   mounted() {
     window.addEventListener('bm-back', this.onNativeBack)
+    this.resolveChannelOwner(state.chat && state.chat.id)
     // 键盘遮挡修复（V5.8.4）：软键盘弹出时 visualViewport.height 缩短（AndroidManifest 已配 adjustResize 双保险），
     // 把聊天页高度实时钳制到可视高度 → 输入栏抬到键盘上方、内容区压缩；吸附底部时同步滚到最新
     this.vvResize = () => {
@@ -641,6 +665,18 @@ export default {
       if (this.editing)           { this.editing = null; e.preventDefault(); return }
       if (this.mentionPick) { this.closeMention(); e.preventDefault(); return }
       if (this.replyTo)       { this.replyTo = null; e.preventDefault(); return }
+    },
+    /** 频道作者身份兜底：会话对象未带 owner 字段时，拉「我的频道」比对 id */
+    async resolveChannelOwner(id) {
+      this.myChannelId = null
+      if (!id || !this.isChannelChat) return
+      const c = state.chat
+      if (!c || String(c.id) !== String(id)) return
+      if (c.is_owner === true || c.owner_id || c.owner) return
+      try {
+        const mine = await api.getMyChannel()
+        this.myChannelId = mine && mine.id ? String(mine.id) : ''
+      } catch (e) { this.myChannelId = '' }
     },
     pickFrom(kind) {
       this.showAttachSheet = false
