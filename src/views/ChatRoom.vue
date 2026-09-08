@@ -192,7 +192,7 @@
       <button class="fire-btn" :class="{ active: state.burnSeconds }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       </button>
-      <button class="send-btn" @click="send">
+      <button class="send-btn" @mousedown.prevent @click="send">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
       </button>
     </div>
@@ -1060,7 +1060,8 @@ export default {
     async send() {
       const text = this.draft.trim()
       if (!text) return
-      // 编辑模式：提交修改
+      try {
+        // 编辑模式：提交修改
       if (this.editing) {
         const m = this.editing
         if (text === (m.content || '').trim()) { this.cancelEdit(); return }
@@ -1079,6 +1080,10 @@ export default {
       const ok = await sendText(text, this.extractMentions(text), replyId)
       if (!ok) this.draft = text
       else this.loadMentionReceipts()
+      } finally {
+        // 发送后保持键盘，避免移动端按钮点击收起软键盘
+        nextTick(() => { if (this.$refs.msgInput) this.$refs.msgInput.focus() })
+      }
     },
     onFilePicked(e) {
       const files = Array.from(e.target.files || [])
