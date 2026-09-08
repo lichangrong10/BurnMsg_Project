@@ -68,6 +68,20 @@
       </div>
     </div>
 
+    <!-- ── 订阅 / 取消订阅确认弹窗 ── -->
+    <div v-if="confirmSub" class="mc-form-overlay" @click.self="confirmSub = null">
+      <div class="mc-form">
+        <div class="mc-form-title">{{ confirmSub.is_subscribed ? '取消订阅' : '订阅频道' }}</div>
+        <div class="mc-confirm-text">{{ confirmSubText }}</div>
+        <div class="mc-form-actions">
+          <button class="mc-btn-cancel" @click="confirmSub = null">取消</button>
+          <button class="mc-btn-ok" :class="{ danger: confirmSub.is_subscribed }" :disabled="subActing" @click="doConfirmSub">
+            {{ subActing ? '处理中…' : (confirmSub.is_subscribed ? '取消订阅' : '订阅') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ── 频道广场 ── -->
     <div class="section-header" style="margin-top:16px">频道广场 <span class="mc-total">{{ discoverTotal }} 个公开频道</span></div>
     <div v-if="discoverLoading && !discoverList.length" class="mc-loading">
@@ -90,8 +104,8 @@
           </div>
         </div>
         <button v-if="ch.is_owner" class="disc-btn owned" disabled>我的</button>
-        <button v-else-if="ch.is_subscribed" class="disc-btn subscribed" @click="doUnsubscribe(ch)">已订阅</button>
-        <button v-else class="disc-btn subscribe" @click="doSubscribe(ch)">订阅</button>
+        <button v-else-if="ch.is_subscribed" class="disc-btn subscribed" @click="askToggleSub(ch)">已订阅</button>
+        <button v-else class="disc-btn subscribe" @click="askToggleSub(ch)">订阅</button>
       </div>
       <div v-if="discoverHasMore" class="mc-load-more" @click="loadDiscover(true)">
         {{ discoverLoading ? '加载中…' : '加载更多' }}
@@ -121,13 +135,22 @@ export default {
       discoverHasMore: false,
       discoverLoading: false,
       pullDist: 0,
-      pullState: 'idle'
+      pullState: 'idle',
+      confirmSub: null,   // 待确认的订阅/退订目标频道
+      subActing: false    // 确认弹窗「订阅/退订」请求进行中
     }
   },
   computed: {
     pullText() {
       if (this.pullState === 'refreshing') return '刷新中…'
       return this.pullState === 'ready' ? '释放刷新' : '下拉刷新'
+    },
+    confirmSubText() {
+      const ch = this.confirmSub
+      if (!ch) return ''
+      return ch.is_subscribed
+        ? `确定不再订阅「${ch.name}」吗？退订后将不再接收该频道的更新。`
+        : `确定订阅「${ch.name}」吗？订阅后可在会话列表接收该频道的更新。`
     },
     pullOpacity() {
       return this.pullDist > 0 ? 1 : 0
@@ -192,6 +215,19 @@ export default {
         alert((e && e.message) || '创建失败')
       } finally {
         this.creating = false
+      }
+    },
+    askToggleSub(ch) { this.confirmSub = ch },
+    async doConfirmSub() {
+      const ch = this.confirmSub
+      if (!ch || this.subActing) return
+      this.subActing = true
+      try {
+        if (ch.is_subscribed) await this.doUnsubscribe(ch)
+        else await this.doSubscribe(ch)
+        this.confirmSub = null
+      } finally {
+        this.subActing = false
       }
     },
     async doSubscribe(ch) {
@@ -393,6 +429,8 @@ export default {
   cursor: pointer;
 }
 .mc-btn-ok:disabled { opacity: .5; cursor: not-allowed; }
+.mc-btn-ok.danger { background: #E53935; }
+.mc-confirm-text { font-size: 14px; color: var(--tg-text); line-height: 1.5; }
 
 /* ── 频道广场 ── */
 .mc-total { font-size: 12px; font-weight: 400; color: var(--tg-text-secondary); }
