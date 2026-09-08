@@ -42,16 +42,19 @@ public class MainActivity extends BridgeActivity {
         // 并把 WebView 底层背景设为主题蓝、状态栏图标设为浅色，避免顶部断层。
         WebView webView = getBridge().getWebView();
         webView.setBackgroundColor(android.graphics.Color.parseColor("#3390EC"));
-        webView.setClipToPadding(false);
+        webView.setClipToPadding(true); // 关键修复：true=内容被裁剪在状态栏padding内（避开状态栏）；原false让内容穿透padding顶到状态栏，导致顶部UI与状态栏重叠塌陷
         androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView()).setAppearanceLightStatusBars(false);
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
-            int top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+            int types = androidx.core.view.WindowInsetsCompat.Type.systemBars() | androidx.core.view.WindowInsetsCompat.Type.displayCutout();
+            androidx.core.graphics.Insets bars = insets.getInsets(types);
+            int top = bars.top;
             if (top <= 0) {
                 int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
                 top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
             }
-            v.setPadding(0, top, 0, 0);
-            return insets;
+            android.view.View parent = (android.view.View) v.getParent();
+            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bars.bottom); }
+            return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(types, androidx.core.graphics.Insets.NONE).build();
         });
         getWindow().getDecorView().post(() -> {
             int top = 0;
@@ -64,7 +67,8 @@ public class MainActivity extends BridgeActivity {
                         .getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
                 if (t > 0) top = t;
             }
-            webView.setPadding(0, top, 0, 0);
+            android.view.View parent2 = (android.view.View) webView.getParent();
+            if (parent2 != null) { parent2.setPadding(0, top, 0, 0); }
         });
 
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
