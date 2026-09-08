@@ -490,6 +490,17 @@ export async function loadContacts() {
 }
 
 /* ─── 聊天 ─── */
+// ---- 草稿暂存：输入框未发送内容按会话持久化，退出会话再进入时恢复 ----
+export function convDraftKey(cid) { return 'bm_draft_' + cid }
+export function getConvDraft(cid) {
+  if (cid == null) return ''
+  try { return localStorage.getItem(convDraftKey(cid)) || '' } catch (e) { return '' }
+}
+export function setConvDraft(cid, text) {
+  if (cid == null) return
+  try { const k = convDraftKey(cid); if (text) localStorage.setItem(k, text); else localStorage.removeItem(k) } catch (e) {}
+}
+
 export async function openChat(c) {
   state.chat = c
   c.unread = 0

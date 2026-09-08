@@ -401,7 +401,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages } from '../store'
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, getConvDraft, setConvDraft } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -554,6 +554,10 @@ export default {
     }
   },
   watch: {
+    // 输入框草稿按会话实时暂存：退出会话/切换后再进入原会话自动恢复
+    draft(v) {
+      if (state.chat) setConvDraft(state.chat.id, v)
+    },
     // 打开会话/非静默刷新完成 → 重新吸附并强制滚到底部
     'state.msgSeq'() {
       this.loadMentionReceipts()
@@ -594,6 +598,8 @@ export default {
     }
   },
   mounted() {
+    // 恢复本会话未发送草稿（按会话暂存，退出/重进还原）
+    if (state.chat) this.draft = getConvDraft(state.chat.id) || ''
     window.addEventListener('bm-back', this.onNativeBack)
     // 键盘遮挡修复（V5.8.4）：软键盘弹出时 visualViewport.height 缩短（AndroidManifest 已配 adjustResize 双保险），
     // 把聊天页高度实时钳制到可视高度 → 输入栏抬到键盘上方、内容区压缩；吸附底部时同步滚到最新
