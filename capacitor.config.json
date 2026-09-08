@@ -8,6 +8,6 @@
   },
   "android": {
     "allowMixedContent": true,
-    "adjustMarginsForEdgeToEdge": "auto"
+    "adjustMarginsForEdgeToEdge": "disable"
   }
 }
