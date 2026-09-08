@@ -52,9 +52,9 @@ public class MainActivity extends BridgeActivity {
                 int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
                 top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
             }
-            android.view.View parent = (android.view.View) v.getParent();
-            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bars.bottom); }
-            return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(types, androidx.core.graphics.Insets.NONE).build();
+            androidx.core.graphics.Insets ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()); int bottom = Math.max(ime.bottom, bars.bottom); android.view.View parent = (android.view.View) v.getParent();
+            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bottom); } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
+            return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE).build(); // 状态栏+导航栏+刘海+键盘insets全清零，Chrome视口铺满WebView，所有避让(顶部/键盘/导航栏)交给父容器padding统一处理
         });
         getWindow().getDecorView().post(() -> {
             int top = 0;
