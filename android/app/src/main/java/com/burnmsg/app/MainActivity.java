@@ -43,7 +43,10 @@ public class MainActivity extends BridgeActivity {
         // 这里在原生层手动把状态栏高度作为 padding 加给 WebView，恢复「内容压在状态栏下方」布局，
         // 并把 WebView 底层背景设为主题蓝、状态栏图标设为浅色，避免顶部断层。
         WebView webView = getBridge().getWebView();
-        webView.setBackgroundColor(android.graphics.Color.parseColor("#3390EC"));
+        final android.content.SharedPreferences themeSp = getSharedPreferences("burnmsg_prefs", Context.MODE_PRIVATE);
+        final String themeColor = themeSp.getString("theme_color", "#3390EC");
+        final int themeColorInt = android.graphics.Color.parseColor(themeColor);
+        webView.setBackgroundColor(themeColorInt);
         webView.setClipToPadding(true); // 关键修复：true=内容被裁剪在状态栏padding内（避开状态栏）；原false让内容穿透padding顶到状态栏，导致顶部UI与状态栏重叠塌陷
         androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView()).setAppearanceLightStatusBars(false);
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
@@ -55,7 +58,7 @@ public class MainActivity extends BridgeActivity {
                 top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
             }
             androidx.core.graphics.Insets ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()); int bottom = Math.max(ime.bottom, bars.bottom); android.view.View parent = (android.view.View) v.getParent();
-            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bottom); parent.setBackgroundColor(android.graphics.Color.parseColor("#3390EC")); } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
+            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bottom); } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
             return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE).build(); // 状态栏+导航栏+刘海+键盘insets全清零，Chrome视口铺满WebView，所有避让(顶部/键盘/导航栏)交给父容器padding统一处理
         });
         getWindow().getDecorView().post(() -> {
@@ -70,7 +73,7 @@ public class MainActivity extends BridgeActivity {
                 if (t > 0) top = t;
             }
             android.view.View parent2 = (android.view.View) webView.getParent();
-            if (parent2 != null) { parent2.setPadding(0, top, 0, 0); }
+            if (parent2 != null) { parent2.setPadding(0, top, 0, 0); parent2.setBackgroundColor(themeColorInt); }
 
             // 状态栏颜色跟随主题色（--tg-blue 为唯一源头）：页面加载后每2秒读一次该CSS变量，同步到状态栏区域背景；换主题色后自动跟上
             themeSyncRunnable = new Runnable() {
@@ -84,7 +87,7 @@ public class MainActivity extends BridgeActivity {
                                     String c = val == null ? "" : val.replace("\"", "").trim();
                                     if (!c.isEmpty() && !"null".equals(c)) {
                                         android.view.View p = (android.view.View) wv.getParent();
-                                        if (p != null) p.setBackgroundColor(android.graphics.Color.parseColor(c));
+                                        if (p != null) p.setBackgroundColor(android.graphics.Color.parseColor(c)); themeSp.edit().putString("theme_color", c).apply();
                                     }
                                 } catch (Exception ignored) {}
                             });
