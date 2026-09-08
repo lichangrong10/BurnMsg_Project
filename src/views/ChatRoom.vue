@@ -402,11 +402,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-<<<<<<< HEAD
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, getConvDraft, setConvDraft } from '../store'
-=======
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole } from '../store'
->>>>>>> lcr
+import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole ,getConvDraft, setConvDraft} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
