@@ -53,10 +53,9 @@
             <span class="cell-label" style="color:var(--tg-text-secondary)">该{{ state.chat.is_channel ? '频道' : '群组' }}已解散，仅可查看</span>
           </div>
           <template v-else>
-            <!-- 频道主不显示任何按钮（后端不支持解散/退出自己的频道） -->
-            <template v-if="myRole === 'owner' && isChannel"></template>
-            <div v-else-if="myRole === 'owner'" class="cell danger" @click="confirmDissolve = true">
-              <span class="cell-label">解散群组</span>
+            <!-- 频道主解散频道走 DELETE /channels/{id}（v5.9.3）；群主解散群组走 DELETE /groups/{id}，均为解散即焚 -->
+            <div v-if="myRole === 'owner'" class="cell danger" @click="confirmDissolve = true">
+              <span class="cell-label">{{ isChannel ? '解散频道' : '解散群组' }}</span>
             </div>
             <div v-else class="cell danger" @click="confirmLeave = true">
               <span class="cell-label">{{ isChannel ? '退出频道' : '退出群组' }}</span>
@@ -144,7 +143,7 @@
         <div class="dialog-title">解散{{ state.chat && state.chat.is_channel ? '频道' : '群组' }}</div>
         <div class="dialog-body">
           确定要解散「{{ title }}」吗？<br>
-          <span style="color:#E53935">解散即焚：全群消息将立即销毁且不可恢复，所有成员会实时收到通知。</span>
+          <span style="color:#E53935">解散即焚：{{ isChannel ? '频道' : '群' }}内消息将立即销毁且不可恢复，所有成员会实时收到通知。</span>
         </div>
         <div class="dialog-actions">
           <button class="btn-text" @click="confirmDissolve = false">取消</button>

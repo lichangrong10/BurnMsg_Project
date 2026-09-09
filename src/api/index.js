@@ -102,6 +102,7 @@ export const api = {
   getChannelDetail: id => http.get(`/channels/${id}`),
   subscribeChannel: id => http.post(`/channels/${id}/subscribe`),
   unsubscribeChannel: id => http.delete(`/channels/${id}/subscribe`),
+  dissolveChannel: id => http.delete(`/channels/${id}`), // 频道主解散频道（v5.9.3，解散即焚，仅频道主）
 
   // ── 消息搜索 ──
   searchMessages: (params) => http.get('/messages/search', { params }),

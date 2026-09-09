@@ -1489,11 +1489,13 @@ export async function dissolveGroup() {
     return true
   }
   try {
-    await api.dissolveGroup(cid)
+    const isCh = state.chat && (state.chat.is_channel || state.chat.type === 'channel')
+    // 频道解散走 DELETE /channels/{id}（v5.9.3 频道专用）；群组解散走 DELETE /groups/{id}
+    if (isCh) { await api.dissolveChannel(cid) } else { await api.dissolveGroup(cid) }
     mark()
     state.showChatInfo = false
     closeChat()
-    showToast('群组已解散')
+    showToast(isCh ? '频道已解散' : '群组已解散')
     return true
   } catch (e) {
     showToast(e.message)
