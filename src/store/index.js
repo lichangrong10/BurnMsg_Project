@@ -29,8 +29,10 @@ export const state = reactive({
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
   burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
+  mediaBurnOn: false,    // 语音视频焚毁模式：开启后发送的语音/视频才参与「播完即焚」，关闭则音视频不参与焚毁
   burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
+  mediaPending: {},      // 音视频焚毁消息待消费登记：id -> message 对象（已 reveal 未 consume，离开聊天页时批量 consume）
   tofuAlerts: [],        // TOFU 公钥变更告警横幅队列：[{user_id,name,oldPubkey,newPubkey}]
   pendingKeyChanges: {}, // 待处理密钥变更清单（「稍后处理」收纳处，进会话不再弹横幅）：Map<userId,{user_id,name,oldPubkey,newPubkey,created_at}>
   e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
@@ -1015,14 +1017,51 @@ window.addEventListener('bm-token-refreshed', () => {
   if (!state.demoMode && storage.token) reconnectWs(storage.token)
 })
 
+/* 播完即焚：发送语音/视频时 burn_ttl = 媒体实际时长 + 3s 缓冲（点开即计时，播完正好到点焚毁），时长读取失败兜底 300s；consume（播完/退出提前焚毁）保留，后端接口就绪后自动增强 */
+const MEDIA_BURN_FALLBACK_TTL = 300
+// 播完即焚：burn_ttl = 媒体实际时长 + 3s 缓冲（点开即计时，播完正好到点焚毁），时长读取失败兜底 300s
+function mediaBurnTtlFor(seconds) {
+  const d = Number(seconds)
+  if (Number.isFinite(d) && d > 0) return Math.min(Math.max(1, Math.ceil(d) + 3), 86400)
+  return MEDIA_BURN_FALLBACK_TTL
+}
+// 读视频文件真实时长（秒）；拿不到 metadata 返回 0（交由 mediaBurnTtlFor 兜底）
+function readVideoDurationSeconds(file) {
+  return new Promise(function (resolve) {
+    try {
+      const url = URL.createObjectURL(file)
+      const v = document.createElement('video')
+      v.preload = 'metadata'
+      let done = false
+      const finish = function (d) {
+        if (done) return
+        done = true
+        try { URL.revokeObjectURL(url) } catch (e) { /* 忽略 */ }
+        resolve(d || 0)
+      }
+      v.onloadedmetadata = function () { finish(v.duration) }
+      v.onerror = function () { finish(0) }
+      v.src = url
+      setTimeout(function () { finish(0) }, 4000)
+    } catch (e) { resolve(0) }
+  })
+}
 export function setBurn(v) {
   state.burnSeconds = v
+  state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
   if (v) {
     const o = BURN_OPTIONS.find(x => x.v === v)
     const label = o ? o.label : ''
     if (state.e2eOn) showToast('已同时开启阅后焚毁与明文加密模式：密文将在 ' + label + ' 后销毁')
     else showToast('阅后即焚：' + label)
   }
+}
+
+/** 语音视频焚毁模式（播完即焚）：独立互斥档位，开启后发送的语音/视频播放完毕即焚毁，并退出其他焚毁时长档位 */
+export function setMediaBurn(v) {
+  state.mediaBurnOn = !!v
+  if (v) state.burnSeconds = 0 // 开启「语音视频焚毁模式」即退出时长档位（互斥单选）
+  showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
 }
 
 /** 追加消息到当前会话列表：按 id 去重，防 WS 推送先于 HTTP 响应到达造成的双条闪现 */
@@ -1132,6 +1171,7 @@ export async function sendFile(file) {
   if (!state.chat) return
   if (file.size > 50 * 1024 * 1024) { showToast('文件不能超过 50MB'); return }
   const isImg = /^image\//.test(file.type)
+  const isVideo = !isImg && /\.(mp4|webm|mov|m4v|mkv|avi|3gp)$/i.test(file.name || '') // 音视频焚毁：视频文件（按扩展名，与后端 is_media_burn 一致）
   if (state.demoMode) {
     const url = isImg ? await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(file) }) : null
     const m = { id: DEMO.uid(), conversation_id: state.chat.id, sender_id: state.me.id, type: isImg ? 'image' : 'file', content: '', file_url: url, file_name: file.name, file_size: file.size, created_at: new Date().toISOString(), is_recalled: false, is_edited: false }
@@ -1146,7 +1186,11 @@ export async function sendFile(file) {
       // 非图片 / gif / 小图 / 压缩失败：原逻辑单上传（file_original_url 不填，下载即该文件）
       const up = await api.upload(file)
       const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
-      if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
+      if (isVideo) {
+        if (state.mediaBurnOn) { const _dv = await readVideoDurationSeconds(file); payload.burn_ttl_seconds = mediaBurnTtlFor(_dv); if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv)) }
+      } else if (state.burnSeconds) {
+        payload.burn_ttl_seconds = state.burnSeconds
+      }
       const m = await api.sendMessage(payload)
       if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
       pushMsgDedup(m)
@@ -1180,7 +1224,7 @@ export async function sendVoice(file, duration) {
   try {
     const up = await api.upload(file)
     const payload = { conversation_id: state.chat.id, type: 'voice', file_url: up.url, file_name: up.file_name, file_size: up.file_size, content: String(duration) }
-    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds
+    if (state.mediaBurnOn) { payload.burn_ttl_seconds = mediaBurnTtlFor(duration); const _d = Number(duration); if (_d > 0) payload.media_duration_seconds = Math.max(1, Math.round(_d)) }
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
   } catch (e) {
@@ -1202,10 +1246,17 @@ export async function recallMessage(m) {
 export async function revealBurn(m) {
   if (!m || m.id == null || state.demoMode) return false
   try {
-    const full = await api.revealMessage(m.id) // 拦截器已解包 {code,message,data}，返回完整 Message
+    // 音视频焚毁消息：reveal 时补传媒体时长（秒）放宽消费窗口；语音 content 约定存秒数可提前带，拿不到时后端用发送时存储的 media_duration/默认 300s 兜底
+    const body = {}
+    if (m.type === 'voice') {
+      const d = parseInt(m.content, 10)
+      if (Number.isFinite(d) && d > 0 && d <= 7200) body.media_duration_seconds = d
+    }
+    const full = await api.revealMessage(m.id, body) // 拦截器已解包 {code,message,data}，返回完整 Message
     if (!full || typeof full !== 'object') throw new Error('reveal 返回异常')
     Object.assign(m, normalizeMsg(full))
     m.is_blurred = false
+    if (needConsume(m)) state.mediaPending[String(m.id)] = m // 音视频焚毁：登记待 consume（播完/退出时消费，窗口内未消费由后端调度器兜底焚毁）
     seedBurnLeft(m) // 用后端返回的 remain_seconds 启动本地倒计时（不用 burn_at 绝对时间，避免两端时钟不同步）
     // 焚毁消息本身可能是 E2E 加密的：拿到密文后走本地解密（有明文缓存则直读）
     if (m.is_encrypted && !m.is_recalled) {
@@ -1231,6 +1282,53 @@ export async function revealBurn(m) {
     showToast(msg || '点开失败')
     return false
   }
+}
+
+/* ─── 音视频焚毁（v5.8.9 播完才焚）：媒体消息 reveal 后进入「消费窗口」，播放完成 / 中途退出播放器 / 离开聊天页时调 consume 提前焚毁 ─── */
+
+/** 是否「音视频」类型消息（不判焚毁）：type=voice/video，或 type=file 且视频扩展名（与后端 is_media_burn 判断一致） */
+export function isMediaBurnMsg(m) {
+  if (!m) return false
+  if (m.type === 'voice' || m.type === 'video') return true
+  if (m.type === 'file') {
+    const ext = ((m.file_name || '').split('.').pop() || '').toLowerCase()
+    return ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', '3gp'].includes(ext)
+  }
+  return false
+}
+
+/** 是否「音视频焚毁且需要 consume」：后端 reveal 响应带 media_burn_pending=true；旧消息兜底 = 焚毁 + 音视频 + 已点开（非占位） */
+export function needConsume(m) {
+  if (!m || m.is_recalled || m.is_burned) return false
+  if (m.media_burn_pending === true) return true
+  const isBurn = !!(m.burn_ttl_seconds != null || m.burn_at != null || m.destroy_at != null)
+  return isBurn && m.is_blurred !== true && isMediaBurnMsg(m)
+}
+
+/** 消费单条音视频焚毁消息：调 POST /messages/{id}/consume 把本人这份 burn_at 提前到当下（幂等，对端/其他设备实时切「已焚毁」） */
+export async function consumeBurn(m) {
+  if (!m || m.id == null || state.demoMode) return
+  const id = String(m.id)
+  try {
+    await api.consumeMessage(m.id)
+    delete state.burnLeft[id]
+    delete state.burnMsgs[id]
+    delete state.mediaPending[id]
+    markBurned(m)
+  } catch (e) { console.warn('[焚信] 播完焚毁失败:', e && e.message); showToast('焚毁失败：' + ((e && e.message) || '网络异常')) }
+}
+
+/** 按消息 id 消费（语音 ended / 视频 ended / 关闭视频层时调用，内部自判是否需要 consume） */
+export async function consumeMediaById(id) {
+  if (id == null) return
+  const m = state.messages.find(x => String(x.id) === String(id))
+  if (m && needConsume(m)) await consumeBurn(m)
+}
+
+/** 批量消费所有已登记待 consume 的音视频焚毁消息（离开聊天页 / 切换会话收尾，用对象引用不依赖 messages 仍在列表） */
+export async function flushPendingMedia() {
+  const list = Object.values(state.mediaPending || {})
+  for (const m of list) await consumeBurn(m)
 }
 
 /** 从通讯录发起私聊 */
