@@ -44,7 +44,8 @@ export const api = {
   recallMessage: id => http.post(`/messages/${id}/recall`),
   // v5.8.7 图片双上传：压缩版先发（file_url），原图后台上传完成后回填 file_original_url
   updateMessageOriginal: (id, file_original_url) => http.patch(`/messages/${id}/original-file`, { file_original_url }),
-  revealMessage: id => http.post(`/messages/${id}/reveal`), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（返回完整 Message + burn_at/remain_seconds）
+  revealMessage: (id, body) => http.post(`/messages/${id}/reveal`, body || {}), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（音视频焚毁可传 media_duration_seconds 放宽消费窗口）
+  consumeMessage: id => http.post(`/messages/${id}/consume`, {}), // 音视频播完才焚：播放完成/中途退出时消费本人这份提前焚毁（幂等，返回焚毁视图）
   markRead: conversationId => http.post(`/messages/${conversationId}/read`), // 注意：文档约定此处 id 为会话 ID
   getReceipt: id => http.get(`/messages/${id}/receipt`),
 

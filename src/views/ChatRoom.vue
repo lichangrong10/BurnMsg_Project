@@ -50,9 +50,10 @@
       </div>
     </div>
 
-    <div v-if="state.burnSeconds" class="burn-banner">
+    <div v-if="state.burnSeconds || state.mediaBurnOn" class="burn-banner">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-      阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="state.e2eOn"> · 明文加密（端到端密文）</span>
+      <template v-if="state.mediaBurnOn">语音视频焚毁模式已开启：语音/视频播放完毕或中途退出即焚毁</template>
+      <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
@@ -67,7 +68,8 @@
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
             <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
-            <template v-else-if="isBlurredBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
+            <template v-else-if="isBlurredBurn(m) && !isMediaBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
+            <template v-else-if="isMediaBurn(m) && !m.file_url"><span class="media-burn-loading">播完即焚 · 加载中</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <div class="msg-image-wrap">
                 <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
@@ -76,12 +78,14 @@
               <div v-if="m.content" class="img-caption">{{ m.content }}</div>
             </template>
             <template v-else-if="m.type === 'voice' && m.file_url">
+              <div v-if="isMediaBurn(m)" class="media-burn-tip">播完即焚</div>
               <div class="msg-voice" :class="{ playing: playVoiceId === m.id }" :style="{ width: voiceBarWidth(m) }" @click.stop="togglePlayVoice(m)" title="点击播放">
                 <svg class="voice-wave" width="20" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="9" width="3" height="6" rx="1.5"/><rect x="10" y="5" width="3" height="14" rx="1.5"/><rect x="17" y="8" width="3" height="8" rx="1.5"/></svg>
                 <span class="voice-dur">{{ voiceDur(m) }}&#8243;</span>
               </div>
             </template>
             <template v-else-if="isVideoMsg(m)">
+              <div v-if="isMediaBurn(m)" class="media-burn-tip">播完即焚</div>
               <div class="msg-video" @click.stop="openFile(m)">
                 <video class="msg-video-thumb" :src="fileURL(m.file_url)" preload="metadata" muted playsinline webkit-playsinline @loadedmetadata="seekVideoThumb"></video>
                 <div class="msg-video-play"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l11-6.5z"/></svg></span></div>
@@ -189,8 +193,8 @@
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       </button>
-      <button class="fire-btn" :class="{ active: state.burnSeconds }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="state.burnSeconds ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+      <button class="fire-btn" :class="{ active: state.burnSeconds || state.mediaBurnOn }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="(state.burnSeconds || state.mediaBurnOn) ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       </button>
       <button class="send-btn" @mousedown.prevent @click="send">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
@@ -212,8 +216,11 @@
     <div v-if="showBurnSheet" class="overlay" @click.self="showBurnSheet = false">
       <div class="sheet">
         <div class="sheet-title">阅后即焚 · 消息销毁时间</div>
-        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="state.burnSeconds === o.v ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
-          {{ o.label }}<svg v-if="state.burnSeconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="(!state.mediaBurnOn && state.burnSeconds === o.v) ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
+          {{ o.label }}<svg v-if="!state.mediaBurnOn && state.burnSeconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <div class="sheet-item" :style="state.mediaBurnOn ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickMediaBurn">
+          语音视频焚毁模式<small class="media-burn-sub">播完即焚</small><svg v-if="state.mediaBurnOn" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </div>
         <div class="sheet-item sheet-cancel" @click="showBurnSheet = false">取消</div>
       </div>
@@ -394,7 +401,7 @@
         </div>
       </div>
       <div class="video-viewer-body">
-        <video class="video-viewer-media" :src="videoViewer.url" controls autoplay playsinline @click.stop></video>
+        <video class="video-viewer-media" :src="videoViewer.url" controls autoplay playsinline @click.stop @ended="onVideoEnded"></video>
       </div>
     </div>
   </div>
@@ -402,7 +409,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole ,getConvDraft, setConvDraft} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -420,6 +427,7 @@ export default {
     return {
       state,
       burnOptions: BURN_OPTIONS,
+      _autoRevealMediaDone: {},  // 已自动 reveal 的音视频焚毁消息 id（防重复）
       draft: '',
       mentionPick: false,   // @ 成员选择器是否打开
       mentionIndex: -1,     // @ 触发位置（待插入处）
@@ -581,6 +589,7 @@ export default {
     },
     // 打开会话/非静默刷新完成 → 重新吸附并强制滚到底部
     'state.msgSeq'() {
+      this.autoRevealMedia()
       this.loadMentionReceipts()
       const targetId = state.targetMessageId
       if (targetId) {
@@ -610,10 +619,14 @@ export default {
     },
     // 自己发送/条数变化 → 仅当用户停留在底部（未上滑查看历史）时跟随滚动
     'state.messages.length'() {
+      this.autoRevealMedia()
       if (this.stickBottom) this.scrollBottom()
     },
     // 切换会话 → 频道会话时拉「我的频道」id，兜底判断作者身份
-    'state.chat.id'(id) { this.resolveChannelOwner(id) },
+    'state.chat.id'(id) {
+      flushPendingMedia() // 切换/关闭会话时消费上一会话已点开未消费的音视频焚毁消息
+      this.resolveChannelOwner(id)
+    },
     // 轮询发现新消息（按最新时间戳判定，条数顶到上限不变时也能触发）→ 吸附中滚底，上滑中弹「新消息」浮钮
     'state.newMsgSeq'() {
       if (this.stickBottom) this.scrollBottom()
@@ -638,8 +651,10 @@ export default {
     // 群 @消息 已读回执：进聊天页先拉一次，之后每 5s 刷新（别人读到你的 @消息后头像/已读态实时出现）
     this.loadMentionReceipts()
     this._receiptTimer = setInterval(() => { this.loadMentionReceipts() }, 5000)
+    this.autoRevealMedia()
   },
   beforeUnmount() {
+    flushPendingMedia() // 卸载时消费剩余的已点开音视频焚毁消息
     window.removeEventListener('bm-back', this.onNativeBack)
     if (this._receiptTimer) { clearInterval(this._receiptTimer); this._receiptTimer = null }
     Object.values(this.revealTickers).forEach(clearInterval)
@@ -764,6 +779,10 @@ export default {
     isBurnMsg(m) {
       return !!(m && (m.burn_ttl_seconds != null || m.destroy_at != null))
     },
+    /** 是否「播完即焚」音视频消息：焚毁 + 音视频类型（voice/video/视频扩展名），走播完 consume 而非倒计时 */
+    isMediaBurn(m) {
+      return this.isBurnMsg(m) && isMediaBurnMsg(m)
+    },
     /** 是否已焚毁：倒计时归零后保留「已焚毁」占位（类似撤回），不再显示正文/倒计时 */
     isBurned(m) {
       if (!m) return false
@@ -797,7 +816,7 @@ export default {
     },
     /** 是否显示焚毁倒计时角标：非撤回、已点开（非占位）、且有截止时间 */
     burnVisible(m) {
-      return !!(m && !m.is_recalled && !this.isBurned(m) && !m.is_blurred && (m.burn_at || m.destroy_at))
+      return !!(m && !m.is_recalled && !this.isBurned(m) && !m.is_blurred && (m.burn_at || m.destroy_at) && !this.isMediaBurn(m))
     },
     autoGrow(e) {
       const el = e.target
@@ -983,6 +1002,23 @@ export default {
     pickBurn(v) {
       setBurn(v)
       this.showBurnSheet = false
+    },
+    pickMediaBurn() {
+      setMediaBurn(true)
+      this.showBurnSheet = false
+    },
+    /** 音视频焚毁消息自动 reveal：进列表即拉内容，气泡直接显示播放器（而非马赛克占位），播放完/中途退出再 consume */
+    autoRevealMedia() {
+      for (const m of state.messages) {
+        if (!m || m.id == null) continue
+        const k = String(m.id)
+        if (this._autoRevealMediaDone[k]) continue
+        if (!this.isMediaBurn(m)) continue
+        if (m.is_burned || m.is_recalled) continue
+        if (m.is_blurred !== true) continue
+        this._autoRevealMediaDone[k] = true
+        revealBurn(m)
+      }
     },
     openInfo() {
       openChatInfo()
@@ -1245,13 +1281,18 @@ export default {
       if (!m || !m.file_url) return
       if (!this.playVoiceEl) {
         this.playVoiceEl = new Audio()
-        this.playVoiceEl.addEventListener('ended', () => { this.playVoiceId = null })
+        this.playVoiceEl.addEventListener('ended', () => {
+          const id = this.playVoiceId
+          this.playVoiceId = null
+          if (id != null) consumeMediaById(id) // 语音播完：音视频焚毁消息触发 consume 提前焚毁
+        })
       }
       const a = this.playVoiceEl
       if (this.playVoiceId === m.id) {
         try { a.pause(); a.currentTime = 0 } catch (e) { /* ignore */ }
         this.playVoiceId = null
       } else {
+        if (this.playVoiceId != null) consumeMediaById(this.playVoiceId) // 切换前：上一条语音若为音视频焚毁且未播完，视为中途退出触发 consume
         try { a.pause() } catch (e) { /* ignore */ }
         a.src = fileURL(m.file_url)
         a.currentTime = 0
@@ -1541,9 +1582,16 @@ export default {
     /** 视频在线播放：全屏遮罩 + 水平垂直居中撑满播放 + 顶部功能按钮（关闭/名称/下载） */
     openVideo(m) {
       if (!m || !m.file_url) return
-      this.videoViewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '视频' }
+      this.videoViewer = { show: true, url: fileURL(m.file_url), name: m.file_name || '视频', msgId: m.id }
     },
-    closeVideoViewer() { this.videoViewer.show = false },
+    closeVideoViewer() {
+      const id = this.videoViewer && this.videoViewer.msgId
+      this.videoViewer.show = false
+      if (id != null) consumeMediaById(id) // 关闭视频层：音视频焚毁消息视为中途退出，触发 consume
+    },
+    onVideoEnded() {
+      this.closeVideoViewer() // 视频自然播完 = 关闭播放层并消费
+    },
     /** 下载视频：a 标签 download 触发保存（跨域时退化为新开标签页） */
     downloadVideo() {
       if (!this.videoViewer.url) return
@@ -1846,6 +1894,10 @@ export default {
 .voice-hold.cancel { background: #E53935; color: #fff; }
 .msg-voice { display: flex; align-items: center; justify-content: center; gap: 8px; max-width: 240px; min-width: 88px; padding: 9px 12px; cursor: pointer; user-select: none; -webkit-user-select: none; box-sizing: border-box; }
 .voice-dur { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+/* 音视频播完即焚：气泡上方提示 / 面板副标签 / 未拉取占位 */
+.media-burn-tip { font-size: 11px; color: #E07000; margin-bottom: 3px; font-weight: 500; }
+.media-burn-sub { font-size: 11px; color: var(--tg-text-secondary); margin-left: 6px; font-weight: 400; }
+.media-burn-loading { font-size: 12px; color: var(--tg-text-secondary); }
 .msg-voice .voice-wave { opacity: .9; flex-shrink: 0; }
 .msg-voice.playing .voice-wave rect { animation: voiceWave 1s ease-in-out infinite; }
 .msg-voice.playing .voice-wave rect:nth-child(2) { animation-delay: .25s; }
