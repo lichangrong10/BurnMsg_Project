@@ -16,6 +16,9 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span v-if="pendingCount" class="todo-dot">{{ pendingCount > 9 ? '9+' : pendingCount }}</span>
       </div>
+      <div class="topbar-icon" @click="openInfo" title="聊天信息">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="#fff"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </div>
     </div>
 
     <!-- ═══════ 会话内消息搜索面板 ═══════ -->
@@ -596,21 +599,7 @@ export default {
         state.targetMessageId = null
         this.stickBottom = false
         this.newMsgPill = false
-        this.$nextTick(() => {
-        this._locating = true
-        setTimeout(() => { this._locating = false }, 1200)
-        const el = document.getElementById('msg-' + targetId)
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            el.classList.remove('highlight')
-            void el.offsetWidth
-            el.classList.add('highlight')
-            setTimeout(() => el.classList.remove('highlight'), 1200)
-          } else {
-            this.stickBottom = true
-            this.scrollBottom()
-          }
-        })
+        this.locateToMessage(targetId)
       } else {
         this.stickBottom = true
         this.newMsgPill = false
@@ -988,6 +977,32 @@ export default {
       this.newMsgPill = false
       this.stickBottom = true
       this.scrollBottom()
+    },
+    /** 定位到指定消息（搜索跳转，微信式）：目标若不在当前已加载列表（搜索命中较早的历史消息），
+     *  复用 loadMoreMessages 向前翻页直到把它翻出来，再滚动到可视区中间并高亮闪烁；翻到底仍没有（可能已焚毁/撤回）则回到底部兜底 */
+    async locateToMessage(targetId) {
+      try {
+        this._locating = true
+        let guard = 0
+        while (!this.findMessage(targetId) && state.hasMore && guard < 60) {
+          await loadMoreMessages()
+          guard++
+        }
+        await nextTick()
+        const el = document.getElementById('msg-' + targetId)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.classList.remove('highlight')
+          void el.offsetWidth
+          el.classList.add('highlight')
+          setTimeout(() => el.classList.remove('highlight'), 1200)
+        } else {
+          this.stickBottom = true
+          this.scrollBottom()
+        }
+      } finally {
+        this._locating = false
+      }
     },
     /** 消息渲染 key 兜底：id → message_id → 索引，避免后端 id 字段名不一致导致 key 冲突、新行不渲染 */
     msgKey(m, i) {
