@@ -37,6 +37,10 @@
     </div> -->
     <!-- 底部 Tab -->
     <div class="tabbar">
+      <div class="nav-avatar" :style="{ background: avatarColor(state.me.display_name) }">
+        <img v-if="avatarSrc(state.me)" :src="avatarSrc(state.me)" alt="">
+        <template v-else>{{ (state.me.display_name || '?')[0] }}</template>
+      </div>
       <div class="tab-item" :class="{ active: state.tab === 'chats' }" @click="state.tab = 'chats'">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         会话<span v-if="totalUnread" class="badge tab-badge">{{ totalUnread > 99 ? '99+' : totalUnread }}</span>
@@ -74,7 +78,7 @@
 
 <script>
 import { state, openAnnouncements, ackAnnPopup, laterAnnPopup } from '../store'
-import { fmtDateTime } from '../utils/format'
+import { fmtDateTime, avatarColor, avatarSrc } from '../utils/format'
 import Chats from './Chats.vue'
 import Channels from './Channels.vue'
 import Contacts from './Contacts.vue'
@@ -102,7 +106,9 @@ export default {
     openAnnouncements,
     ackAnnPopup,
     laterAnnPopup,
-    fmtDateTime
+    fmtDateTime,
+    avatarColor,
+    avatarSrc
   }
 }
 </script>

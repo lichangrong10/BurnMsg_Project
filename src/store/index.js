@@ -11,6 +11,7 @@ import { BURN_OPTIONS, memberUid, memberUser, memberName, messagePreview } from 
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
+import { Capacitor } from '@capacitor/core'
 
 export const state = reactive({
   view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
@@ -58,7 +59,8 @@ export const state = reactive({
   feedbackList: [],       // 我的反馈列表（含管理员回复）
   feedbackLoading: false, // 反馈列表加载中
   showGlobalSearch: false, // 全局消息搜索页（覆盖层）
-  targetMessageId: null    // 全局搜索跳转定位：目标消息 id（ChatRoom 消费后清空）
+  targetMessageId: null,   // 全局搜索跳转定位：目标消息 id（ChatRoom 消费后清空）
+  layout: 'mobile'         // 布局模式：mobile(默认/原生App) | tablet(web中屏) | desktop(web宽屏双栏)
 })
 
 /** 从接口返回值中稳妥提取数组：兼容直接数组，以及 {list}/{users}/{items}/{records}/{data} 等分页/包装结构 */
@@ -1797,4 +1799,40 @@ export async function changeGroupAvatar(file) {
     showToast(e.message)
     return false
   }
+}
+
+/* ─── 响应式布局：按屏幕可视宽度自动适配；App 端（Capacitor 原生）强制 mobile 不变 ─── */
+const LAYOUT_MQ_WIDE = (typeof window !== 'undefined' && window.matchMedia) ? window.matchMedia('(min-width: 768px)') : null
+const LAYOUT_MQ_DESKTOP = (typeof window !== 'undefined' && window.matchMedia) ? window.matchMedia('(min-width: 800px)') : null
+
+/**
+ * 初始化布局模式并监听视口变化。
+ * - Capacitor 原生平台（APK）→ 永远 mobile，html 不加任何 bm-* class，App 端样式 100% 不变
+ * - Web 浏览器：≥1024px → desktop（左列表 + 右操作区双栏）；768~1023px → tablet（单列放宽）；<768px → mobile（原样）
+ * 通过 html.bm-wide / html.bm-desktop 两个 class 驱动 main.css 中的响应式规则。
+ */
+export function initLayout() {
+  const root = document.documentElement
+  const apply = () => {
+    if (Capacitor.isNativePlatform()) {
+      // 原生 App：剥离响应式 class，锁定 mobile（确保 APK 内样式与原有完全一致）
+      root.classList.remove('bm-wide', 'bm-desktop')
+      state.layout = 'mobile'
+      return
+    }
+    const wide = !!(LAYOUT_MQ_WIDE && LAYOUT_MQ_WIDE.matches)
+    const desktop = !!(LAYOUT_MQ_DESKTOP && LAYOUT_MQ_DESKTOP.matches)
+    root.classList.toggle('bm-wide', wide)
+    root.classList.toggle('bm-desktop', desktop)
+    state.layout = desktop ? 'desktop' : (wide ? 'tablet' : 'mobile')
+  }
+  apply()
+  // 监听视口变化实时切换（兼容旧版 Safari 的 addListener）
+  const bind = mq => {
+    if (!mq) return
+    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', apply)
+    else if (typeof mq.addListener === 'function') mq.addListener(apply)
+  }
+  bind(LAYOUT_MQ_WIDE)
+  bind(LAYOUT_MQ_DESKTOP)
 }

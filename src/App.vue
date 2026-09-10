@@ -1,5 +1,6 @@
 <template>
-  <LoginView v-if="state.view === 'login'" />
+  <div class="app-root" :class="rootClass">
+    <LoginView v-if="state.view === 'login'" />
   <ChangePwdView v-else-if="state.view === 'changePwd'" />
   <HomeView v-else />
 
@@ -63,6 +64,7 @@
       </div>
     </div>
   </div>
+  </div>
 
 </template>
 
@@ -98,6 +100,18 @@ export default {
       updateInfo: null,
       updateDownloading: false,
       updateProgress: 0
+    }
+  },
+  computed: {
+    // 根元素 class：标识当前视图与布局模式，供 main.css 响应式规则精确匹配
+    rootClass() {
+      return {
+        'view-login': this.state.view === 'login',
+        'view-changePwd': this.state.view === 'changePwd',
+        'view-main': this.state.view === 'main',
+        'layout-tablet': this.state.layout === 'tablet',
+        'layout-desktop': this.state.layout === 'desktop'
+      }
     }
   },
   mounted() {
