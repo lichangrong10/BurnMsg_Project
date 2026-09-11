@@ -12,27 +12,23 @@
       <button class="btn" :disabled="loading" @click="doLogin">
         <span v-if="loading" class="spinner"></span><span v-else>登 录</span>
       </button>
-      <div class="auth-link"><button class="btn-text" @click="enterDemo">后端未就绪？进入演示模式 →</button></div>
     </div>
-    <div class="server-addr" @click="state.showServerDialog = true">后端地址：{{ state.baseURL }}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></div>
   </div>
 </template>
 
 <script>
-import { state, login, enterDemo } from '../store'
+import { login } from '../store'
 
 export default {
   name: 'LoginView',
   data() {
     return {
-      state,
       form: { phone: '', password: '' },
       err: '',
       loading: false
     }
   },
   methods: {
-    enterDemo,
     async doLogin() {
       this.err = ''
       if (!/^1\d{10}$/.test(this.form.phone)) { this.err = '请输入 11 位手机号'; return }

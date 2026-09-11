@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://47.114.38.126:9091',
+        target: 'http://112.4.135.254:19091',
         changeOrigin: true,
         ws: true // 代理 WebSocket（socket.io 实时推送）
       }

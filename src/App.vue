@@ -15,24 +15,6 @@
   <FeedbackView v-if="state.showFeedback" />
   <GlobalSearch v-if="state.showGlobalSearch" />
 
-  <!-- ═══════ 后端地址设置（登录页 / 我的 共用） ═══════ -->
-  <div v-if="state.showServerDialog" class="dialog-overlay" @click.self="state.showServerDialog = false">
-    <div class="dialog">
-      <div class="dialog-title">后端地址</div>
-      <div class="dialog-body">
-        <input class="input" v-model.trim="serverInput" placeholder="http://47.114.38.126:9091/api/v1">
-        <div style="font-size:12px;margin-top:8px;line-height:1.5">
-          打包 APK 后 WebView 直连无跨域限制；浏览器调试可填 <b>/api/v1</b> 走 vite 开发代理，或确保后端已开启 CORS。
-        </div>
-      </div>
-      <div class="dialog-actions">
-        <button class="btn-text" :disabled="testing" @click="testConn">{{ testing ? '测试中…' : '测试连接' }}</button>
-        <button class="btn-text" @click="state.showServerDialog = false">取消</button>
-        <button class="btn-text" style="font-weight:600" @click="save">保存</button>
-      </div>
-    </div>
-  </div>
-
   <!-- 全局 Toast -->
   <div v-if="state.toast" class="toast">{{ state.toast }}</div>
 
@@ -40,7 +22,7 @@
   <div v-if="updateInfo" class="dialog-overlay" :style="{zIndex:200}" @click.self="!updateInfo.force && dismissUpdate()">
     <div class="dialog" style="max-width:340px">
       <div class="dialog-title" style="display:flex;align-items:center;gap:8px">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 1 1-2 2H5a2 2 0 1 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         发现新版本
       </div>
       <div class="dialog-body" style="margin-bottom:4px">
@@ -69,8 +51,7 @@
 </template>
 
 <script>
-import axios from 'axios'
-import { state, saveServer, forceLogout, bootstrap, startTimers, stopTimers, showToast } from './store'
+import { state, forceLogout, bootstrap, startTimers, stopTimers, showToast } from './store'
 import { storage } from './utils/storage'
 import { onWs, WS_EVENTS } from './utils/ws'
 import { setupBackHandler } from './utils/back'
@@ -95,8 +76,6 @@ export default {
   data() {
     return {
       state,
-      serverInput: state.baseURL,
-      testing: false,
       updateInfo: null,
       updateDownloading: false,
       updateProgress: 0
@@ -142,9 +121,6 @@ export default {
     stopTimers()
   },
   methods: {
-    save() {
-      if (saveServer(this.serverInput)) state.showServerDialog = false
-    },
     formatSize(bytes) {
       if (!bytes) return ''
       if (bytes < 1024) return bytes + ' B'
@@ -173,24 +149,6 @@ export default {
       } finally {
         this.updateDownloading = false
         this.updateProgress = 0
-      }
-    },
-    /** 用弹窗中输入的地址裸调 /health（不经过 axios 实例，未保存也能测） */
-    async testConn() {
-      const url = (this.serverInput || '').replace(/\/+$/, '')
-      if (!/^https?:\/\/.+/.test(url) && !/^\//.test(url)) {
-        showToast('请先输入合法地址（http(s)://… 或 /api/v1）')
-        return
-      }
-      this.testing = true
-      try {
-        await axios.get(url + '/health', { timeout: 8000 })
-        showToast('连接成功 ✓')
-      } catch (e) {
-        const msg = e.response ? 'HTTP ' + e.response.status + '（路径可能不对）' : (e.code === 'ECONNABORTED' ? '超时' : '无法到达服务器')
-        showToast('连接失败：' + msg)
-      } finally {
-        this.testing = false
       }
     }
   }
