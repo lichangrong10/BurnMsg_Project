@@ -25,15 +25,6 @@
         <button v-if="isGroup && canManage && !isDissolved" class="btn-text" style="margin-top:8px" @click="openEdit">编辑资料</button>
       </div>
 
-      <!-- ═══ 查找聊天内容（任务15）：锁定当前会话进入搜索页 ═══ -->
-      <div style="height:10px"></div>
-      <div class="cell-group">
-        <div class="cell find-content-cell" @click="openConvSearch">
-          <span class="cell-label">查找聊天内容</span>
-          <svg class="cell-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-        </div>
-      </div>
-
       <!-- ═══ 群成员 ═══ -->
       <template v-if="isGroup">
         <div class="section-header">成员列表</div>
@@ -242,12 +233,6 @@ export default {
       if (this.showAdd)         { this.showAdd = false; e.preventDefault(); return }
       if (this.showEdit)        { this.showEdit = false; e.preventDefault(); return }
     },
-    /** 查找聊天内容（任务15）：锁定当前会话进搜索页 */
-    openConvSearch() {
-      if (!state.chat) return
-      state.globalSearchConvId = state.chat.id
-      state.showGlobalSearch = true
-    },
     avatarColor,
     avatarSrc,
     memberAvatar,
@@ -325,8 +310,6 @@ export default {
 .info-name.clickable:hover, .info-sub.clickable:hover { opacity: .8; }
 .info-sub { font-size: 14px; color: var(--tg-text-secondary); margin-top: 3px; }
 .member-list { background: var(--tg-bg); }
-.find-content-cell { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
-.cell-arrow { color: var(--tg-text-secondary); flex-shrink: 0; margin-right: 8px; }
 .add-avatar { width: 42px; height: 42px; background: rgba(0,0,0,.06); display: flex; align-items: center; justify-content: center; }
 .role-tag { font-size: 11.5px; color: var(--tg-blue); background: rgba(0,0,0,.07); padding: 2px 8px; border-radius: 9px; margin-right: 8px; flex-shrink: 0; }
 .role-tag.owner { color: #fff; background: var(--tg-blue); }

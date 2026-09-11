@@ -60,7 +60,6 @@ export const state = reactive({
   feedbackLoading: false, // 反馈列表加载中
   showGlobalSearch: false, // 全局消息搜索页（覆盖层）
   targetMessageId: null,   // 全局搜索跳转定位：目标消息 id（ChatRoom 消费后清空）
-  globalSearchConvId: null,// 查找聊天内容（任务15）：从聊天信息页进入搜索时锁定的会话 id，关闭时清空
   layout: 'mobile'         // 布局模式：mobile(默认/原生App) | tablet(web中屏) | desktop(web宽屏双栏)
 })
 
@@ -900,7 +899,12 @@ function maybeAutoPopup() {
   state.showAnnPopup = true
 }
 
-/* ─── 公告中心 / 反馈 ─── */
+/* 打开建群/频道弹窗；asChannel=true 预设「频道」模式（CreateGroup 挂载后消费复位） */
+function openCreateGroup_X_DUPLICATE(asChannel = false) { /* 重复定义，已被下方群组区块版本取代 */
+  state.createGroupAsChannel = asChannel
+  state.showCreateGroup = true
+}
+
 /** 打开公告中心 */
 export function openAnnouncements() {
   state.showAnnouncements = true
