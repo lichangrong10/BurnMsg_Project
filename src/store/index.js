@@ -13,6 +13,41 @@ import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlainte
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 import { Capacitor } from '@capacitor/core'
 
+const BURN_FIELD = 'default_burn_ttl_seconds'
+const BURN_CODE_BASE = 11
+const MEDIA_BURN_CODE = BURN_CODE_BASE + BURN_OPTIONS.length
+const LEGACY_MEDIA_SENTINEL = -1
+
+function parseBurnPref(v) {
+  const n = Number(v)
+  if (n === LEGACY_MEDIA_SENTINEL) return { seconds: 0, media: true }
+  if (!Number.isFinite(n) || n === 0) return { seconds: 0, media: false }
+  const idx = n - BURN_CODE_BASE
+  if (idx >= 0 && idx < BURN_OPTIONS.length) return { seconds: BURN_OPTIONS[idx].v, media: false }
+  if (idx === BURN_OPTIONS.length) return { seconds: 0, media: true }
+  const tier = BURN_OPTIONS.find(o => o.v === n)
+  return { seconds: tier ? tier.v : 0, media: false }
+}
+
+function burnCode() {
+  if (state.mediaBurnOn) return MEDIA_BURN_CODE
+  const i = BURN_OPTIONS.findIndex(o => o.v === state.burnSeconds)
+  return BURN_CODE_BASE + (i < 0 ? 0 : i)
+}
+
+function keepLocalBurnPref(prof) {
+  if (!prof || typeof prof !== 'object') return prof
+  if (prof[BURN_FIELD] != null) return prof
+  const cached = storage.user && storage.user[BURN_FIELD]
+  return cached == null ? prof : { ...prof, [BURN_FIELD]: cached }
+}
+
+function burnPrefOfUser(u) {
+  return parseBurnPref(u && u[BURN_FIELD])
+}
+
+const initialBurnPref = burnPrefOfUser(storage.user)
+
 export const state = reactive({
   view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
   tab: 'chats',                           // chats | channels | contacts | me
@@ -29,8 +64,8 @@ export const state = reactive({
   hasMore: true,          // 当前会话是否还有更早的历史消息可加载
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
-  burnSeconds: 0,        // 阅后即焚档位（秒），0 = 关闭
-  mediaBurnOn: false,    // 语音视频焚毁模式：开启后发送的语音/视频才参与「播完即焚」，关闭则音视频不参与焚毁
+  burnSeconds: initialBurnPref.seconds, // 阅后即焚档位（秒），0 = 关闭
+  mediaBurnOn: initialBurnPref.media,   // 语音视频焚毁模式：开启后发送的语音/视频才参与「播完即焚」，关闭则音视频不参与焚毁
   burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
   mediaPending: {},      // 音视频焚毁消息待消费登记：id -> message 对象（已 reveal 未 consume，离开聊天页时批量 consume）
@@ -152,6 +187,9 @@ export async function login(phone, password) {
   storage.demo = false
   state.demoMode = false
   state.me = d.user
+  const burnPref = burnPrefOfUser(d.user)
+  state.burnSeconds = burnPref.seconds
+  state.mediaBurnOn = burnPref.media
   if (d.force_change_pwd || d.user.force_change_pwd) {
     state.view = 'changePwd'
     storage.forceChangePwd = true
@@ -170,6 +208,9 @@ export function enterDemo() {
   state.demoMode = true
   state.me = DEMO.me
   storage.user = DEMO.me
+  const burnPref = burnPrefOfUser(DEMO.me)
+  state.burnSeconds = burnPref.seconds
+  state.mediaBurnOn = burnPref.media
   state.view = 'main'
   bootstrap()
   showToast('已进入演示模式（数据为本地模拟）')
@@ -428,9 +469,12 @@ export async function bootstrap() {
   if (!state.demoMode) {
     if (storage.token) connectWs(storage.token) // 刷新页面后凭本地 token 恢复 WS 连接
     try {
-      state.me = await api.getProfile()
+      state.me = keepLocalBurnPref(await api.getProfile())
       storage.user = state.me
       if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
+      const burnPref = burnPrefOfUser(state.me)
+      state.burnSeconds = burnPref.seconds
+      state.mediaBurnOn = burnPref.media
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
     initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
@@ -1048,9 +1092,17 @@ function readVideoDurationSeconds(file) {
     } catch (e) { resolve(0) }
   })
 }
+function persistBurnPref() {
+  const val = burnCode()
+  state.me = { ...state.me, [BURN_FIELD]: val }
+  storage.user = state.me
+  if (!state.demoMode) api.updateProfile({ [BURN_FIELD]: val }).catch(() => {})
+}
+
 export function setBurn(v) {
   state.burnSeconds = v
   state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
+  persistBurnPref()
   if (v) {
     const o = BURN_OPTIONS.find(x => x.v === v)
     const label = o ? o.label : ''
@@ -1063,6 +1115,7 @@ export function setBurn(v) {
 export function setMediaBurn(v) {
   state.mediaBurnOn = !!v
   if (v) state.burnSeconds = 0 // 开启「语音视频焚毁模式」即退出时长档位（互斥单选）
+  persistBurnPref()
   showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
 }
 
@@ -1694,7 +1747,7 @@ export async function updateProfile(payload) {
     return true
   }
   try {
-    state.me = await api.updateProfile(payload)
+    state.me = keepLocalBurnPref(await api.updateProfile(payload))
     storage.user = state.me
     showToast('资料已更新')
     return true
