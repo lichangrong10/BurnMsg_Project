@@ -12,13 +12,17 @@ export const WS_EVENTS = {
   MESSAGE_NEW: 'message:new',
   MESSAGE_EDITED: 'message:edited',
   MESSAGE_RECALLED: 'message:recalled',
+  MESSAGE_DESTROYED: 'message:destroyed', // 消息焚毁（墓碑）：payload { conversation_id, message_ids:[], destroyed_at, destroy_reason }
   RECEIPT_READ: 'receipt:read',
   CONVERSATION_UPDATED: 'conversation:updated',
   ANNOUNCEMENT_NEW: 'announcement:new',
   KEY_CHANGED: 'key:changed',
   APP_UPDATE: 'app:update',
   DEVICE_ADDED: 'device:added',
-  DEVICE_REMOVED: 'device:removed'
+  DEVICE_REMOVED: 'device:removed',
+  DEVICE_ONLINE: 'device:online',   // 某设备上线（在线状态变更，设备管理页据此刷新）
+  DEVICE_OFFLINE: 'device:offline', // 某设备离线
+  SESSION_CONFLICT: 'session:conflict' // 登录冲突：payload { reason:'kicked_by_new_login'|'notify', new_device:{name,ip} }
 }
 
 let socket = null

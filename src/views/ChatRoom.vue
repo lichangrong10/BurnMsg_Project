@@ -67,7 +67,13 @@
             <div v-if="state.chat.type !== 'private' && m.sender_id !== state.me.id" class="sender-name">{{ senderName(m) }}</div>
             
             <template v-if="m.is_recalled"><span class="msg-recalled">此消息已撤回</span></template>
-            <template v-else-if="isBurned(m)"><span class="msg-recalled">此消息已焚毁</span></template>
+            <template v-else-if="isBurned(m)">
+              <div class="burn-tombstone">
+                <svg class="tomb-ico" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg>
+                <span>此消息已焚毁</span>
+                <span v-if="tombTime(m)" class="tomb-time">{{ tombTime(m) }}</span>
+              </div>
+            </template>
             <template v-else-if="isBlurredBurn(m) && !isMediaBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
             <template v-else-if="isMediaBurn(m) && !m.file_url"><span class="media-burn-loading">播完即焚 · 加载中</span></template>
             <template v-else-if="m.type === 'image' && m.file_url">
@@ -132,6 +138,8 @@
                 <span class="gr-one" :class="{ read: groupReadInfo(m).read }">{{ groupReadInfo(m).targetName }} {{ groupReadInfo(m).read ? '已读' : '未读' }}</span>
               </template>
             </div>
+            <!-- 群聊已读进度（仅本人消息）：3/4 已读，点击看明细 -->
+            <div v-if="readProgress(m)" class="read-progress" @click.stop="openReaders(m)">{{ readProgress(m) }}</div>
             <span class="msg-meta">
             <span v-if="m.is_edited">已编辑 · </span>{{ fmtClock(m.created_at) }}
             <span v-if="m.sender_id === state.me.id && !m.is_recalled && state.chat.type === 'private'" class="read-tag" :class="{ unread: !isPeerRead(m) }">{{ isPeerRead(m) ? '已读' : '未读' }}</span>
@@ -322,6 +330,31 @@
       </div>
     </div>
 
+    <!-- ═══════ 群已读进度明细 ═══════ -->
+    <div v-if="readersMsg" class="overlay" @click.self="readersMsg = null">
+      <div class="sheet">
+        <div class="sheet-title">已读进度 · {{ readersInfo(readersMsg).revealed }}/{{ readersInfo(readersMsg).total }} 已读<span v-if="readersInfo(readersMsg).burned" style="color:var(--tg-text-secondary);font-weight:400"> · {{ readersInfo(readersMsg).burned }} 人已焚毁</span></div>
+        <div style="overflow-y:auto">
+          <div v-if="readersLoading" class="sheet-item" style="color:var(--tg-text-secondary)">加载中…</div>
+          <template v-else>
+            <div v-if="!readersInfo(readersMsg).readers.length" class="sheet-item" style="color:var(--tg-text-secondary)">暂无已读数据</div>
+            <div v-for="(r, i) in readersInfo(readersMsg).readers" :key="r.user_id || i" class="receipt-row">
+              <span class="reader-who">
+                <span class="reader-avatar" :style="{ background: avatarColor(r.name) }"><img v-if="r.avatar" :src="r.avatar" alt=""><template v-else>{{ (r.name || '?')[0] }}</template></span>
+                {{ r.name }}
+              </span>
+              <span class="receipt-status" :class="{ read: r.read }">
+                <template v-if="r.read"><svg class="receipt-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l4 4L14 8"/><path d="M10.5 12.5 12.5 14.5 21 6"/></svg>已读</template>
+                <template v-else-if="r.revealed">已点开</template>
+                <template v-else>未读</template>
+              </span>
+            </div>
+          </template>
+        </div>
+        <div class="sheet-item sheet-cancel" @click="readersMsg = null">关闭</div>
+      </div>
+    </div>
+
     <!-- 文件在线预览层（Word / Excel / PDF / 文本 / 音视频） -->
     <div v-if="preview.show" class="preview-mask">
       <div class="preview-head">
@@ -409,11 +442,11 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtDateTime, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -443,6 +476,8 @@ export default {
       replyTo: null,       // 引用回复：正在回复的消息
       replyCache: {},      // 引用快照缓存：reply_to_id -> { name, text }（原文不在当前已加载列表时也能正常显示引用块）
       receiptMsg: null,    // 查看回执的消息
+      readersMsg: null,    // 查看群已读进度的消息（api.getReaders）
+      readersLoading: false,
       receiptList: [],
       receiptLoading: false,
       mentionReceipts: {},  // 群 @消息 已读回执缓存：消息 id -> 回执列表（@所有人显示已读头像 / @某人显示对方已读，见 loadMentionReceipts）
@@ -757,10 +792,15 @@ export default {
       return avatarSrc(this.senderInfo(m))
     },
     burnCountdown(m) {
-      // 本地倒计时优先：reveal / 历史加载时由后端 remain_seconds 种入 store.burnLeft，摆脱客户端-服务端时钟偏差（10 秒变 20 秒根因）
+      if (!m) return ''
+      // 唯一口径：后端 remain_seconds（reveal / 历史加载时由 store 种入 burnLeft），不再拿 burn_at/destroy_at 自己算
       const local = (m.id != null) ? state.burnLeft[m.id] : undefined
       if (local != null) return local <= 0 ? '已焚毁' : this.fmtBurnLeft(local)
-      // 兜底：demo / 旧数据 / 未点开但已有截止时间，用 burn_at（个人截止）或 destroy_at 绝对时间
+      if (m.remain_seconds != null) {
+        const s = Math.ceil(Number(m.remain_seconds))
+        return s > 0 ? this.fmtBurnLeft(s) : '已焚毁'
+      }
+      // 兜底：仅 demo / 后端未返回 remain_seconds 的老数据，用绝对时间（会受两端时钟偏差影响）
       const endStr = m.burn_at || m.destroy_at
       if (!endStr) return ''
       const left = Math.max(0, new Date(endStr) - state.nowTick)
@@ -775,6 +815,47 @@ export default {
       if (s < 86400) return Math.ceil(s / 3600) + 'h 后焚毁'
       return Math.ceil(s / 86400) + 'd 后焚毁'
     },
+    /** 墓碑副标题：焚毁时刻（后端 destroyed_at；老数据没有则留空） */
+    tombTime(m) {
+      const t = m && m.destroyed_at
+      if (!t) return ''
+      const s = fmtDateTime(t)
+      return s || ''
+    },
+    /** 群聊已读进度文案（仅本人、群/频道、非撤回/焚毁的消息）：'3/4 已读'；数据未拉取时返回空串不占位 */
+    readProgress(m) {
+      if (!m || m.is_recalled || this.isBurned(m)) return ''
+      if (!state.chat || state.chat.type === 'private') return ''
+      if (String(m.sender_id) !== String(state.me.id)) return ''
+      const r = state.readers[this.e2eKey(m)]
+      if (!r || r.total == null) return ''
+      const total = Number(r.total) || 0
+      if (!total) return ''
+      const read = (r.revealed != null)
+        ? Number(r.revealed)
+        : ((Array.isArray(r.readers) ? r.readers : []).filter(x => x.is_read).length)
+      return read + '/' + total + ' 已读'
+    },
+    /** 打开已读进度明细：拉一次 api.getReaders（失败则用缓存渲染） */
+    async openReaders(m) {
+      if (!m) return
+      this.readersMsg = m
+      this.readersLoading = true
+      try { await loadReaders(m) } finally { this.readersLoading = false }
+    },
+    /** 已读进度渲染数据：{ total, revealed, burned, readers:[{name,avatar,read,revealed}] } */
+    readersInfo(m) {
+      const r = m ? state.readers[this.e2eKey(m)] : null
+      const total = (r && r.total != null) ? Number(r.total) : 0
+      const list = (r && Array.isArray(r.readers)) ? r.readers : []
+      const readers = list.map(x => {
+        const meta = this.receiptMeta(x)
+        return { user_id: x.user_id, name: meta.name, avatar: meta.avatar, read: !!(x.is_read || x.is_revealed), revealed: !!(x.is_revealed || x.is_read) }
+      })
+      const revealed = (r && r.revealed != null) ? Number(r.revealed) : readers.filter(x => x.revealed).length
+      const burned = (r && r.burned != null) ? Number(r.burned) : 0
+      return { total, revealed, burned, readers }
+    },
     /** 是否焚毁消息（burn_ttl_seconds 或 destroy_at 任一即视为焚毁消息） */
     isBurnMsg(m) {
       return !!(m && (m.burn_ttl_seconds != null || m.destroy_at != null))
@@ -783,17 +864,15 @@ export default {
     isMediaBurn(m) {
       return this.isBurnMsg(m) && isMediaBurnMsg(m)
     },
-    /** 是否已焚毁：倒计时归零后保留「已焚毁」占位（类似撤回），不再显示正文/倒计时。
-     *  本地秒表 与 后端绝对截止时间「任一」判定到期即算焚毁 —— 只信本地计数器时，
-     *  计数器一旦因后台挂起而落后（一周档最典型），消息就永远烧不掉。 */
+    /** 是否已焚毁：优先后端墓碑（is_destroyed > 本地幽灵 is_burned）> 本地秒表 > 老数据绝对时间。
+     *  remain_seconds 是唯一倒计时来源，绝对时间只留给 demo / 未升级后端的老数据。 */
     isBurned(m) {
       if (!m) return false
-      if (m.is_burned === true) return true
-      const endStr = m.burn_at || m.destroy_at
-      const absExpired = !!endStr && new Date(endStr).getTime() <= state.nowTick
+      if (m.is_destroyed === true || m.is_burned === true) return true
       const local = (m.id != null) ? state.burnLeft[m.id] : undefined
-      if (local != null) return local <= 0 || absExpired
-      return absExpired
+      if (local != null) return local <= 0
+      const endStr = m.burn_at || m.destroy_at
+      return !!endStr && new Date(endStr).getTime() <= state.nowTick
     },
     /** 焚毁消息的「马赛克占位」态：点开前，点击触发 reveal 拉取内容 */
     isBlurredBurn(m) {
@@ -1696,6 +1775,10 @@ export default {
     },
     onMsgTap(m) {
       this.msgAction = m
+      // 群聊：长按/右键时拉一次已读进度（气泡下方「3/4 已读」的数据源，也供明细弹层使用）
+      if (m && state.chat && state.chat.type !== 'private' && !m.is_recalled && !this.isBurned(m)) {
+        loadReaders(m).catch(() => { /* 静默：拉不到就不展示 */ })
+      }
     },
     /** 端到端加密消息：点击气泡显示明文 10 秒后自动隐藏；长按/右键仍打开操作菜单 */
     e2eKey(m) {
@@ -1818,6 +1901,17 @@ export default {
 .gr-count { font-size: 11px; color: var(--tg-text-secondary); white-space: nowrap; }
 .gr-one { font-size: 11px; color: var(--tg-text-secondary); }
 .gr-one.read { color: var(--tg-blue); font-weight: 500; }
+/* ── 焚毁墓碑（后端墓碑消息 / 本地幽灵占位统一渲染） ── */
+.burn-tombstone { display: flex; align-items: center; gap: 6px; color: var(--tg-text-secondary); font-size: 14px; font-style: italic; padding: 1px 0; }
+.tomb-ico { color: #E8892B; flex-shrink: 0; opacity: .9; }
+.tomb-time { font-size: 11px; font-style: normal; opacity: .75; margin-left: 2px; }
+/* ── 群聊已读进度（仅本人消息，气泡下方小字） ── */
+.read-progress { align-self: flex-end; font-size: 11px; color: var(--tg-blue); margin-top: 3px; padding-right: 2px; cursor: pointer; }
+.msg-body.in .read-progress { align-self: flex-start; }
+.read-progress:active { opacity: .7; }
+.reader-who { display: flex; align-items: center; gap: 8px; }
+.reader-avatar { width: 26px; height: 26px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.reader-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .new-msg-pill { position: absolute; right: 14px; bottom: 78px; z-index: 30; display: flex; align-items: center; gap: 4px; background: var(--tg-blue); color: #fff; font-size: 13.5px; font-weight: 500; padding: 8px 14px; border-radius: 18px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.28); animation: bubbleIn .18s ease; }
 .new-msg-pill:active { opacity: .85; }
 .dissolved-bar { padding: 14px 16px calc(14px + var(--safe-bottom)); background: var(--tg-bg); border-top: 1px solid var(--tg-border); text-align: center; font-size: 14px; color: var(--tg-text-secondary); }

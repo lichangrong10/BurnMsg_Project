@@ -62,12 +62,16 @@
     <!-- ═══════ 设备管理 ═══════ -->
     <div v-if="showDevices" class="overlay" @click.self="showDevices = false">
       <div class="sheet">
-        <div class="sheet-title">已登录设备 · 点击可将设备强制下线</div>
+        <div class="sheet-title">已登录设备 · 在线状态实时同步</div>
         <div style="overflow-y:auto">
           <div v-for="d in devices" :key="d.id" class="cell" style="border-bottom:1px solid var(--tg-border)" @click="confirmOffline(d)">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
-            <span class="cell-label">{{ d.device_name }}<br><small style="color:#707579">{{ d.device_type }} · {{ d.is_online ? '在线' : '离线' }}</small></span>
-            <span class="cell-value" style="color:#E53935">下线</span>
+            <span class="dev-dot" :class="{ on: d.is_online }"></span>
+            <span class="cell-label">
+              {{ d.device_name || '未知设备' }}<span v-if="isSelfDevice(d)" class="dev-self">本机</span>
+              <br><small style="color:#707579">{{ deviceSub(d) }}</small>
+            </span>
+            <span v-if="isSelfDevice(d)" class="cell-value" style="color:var(--tg-text-secondary)">当前设备</span>
+            <span v-else class="cell-value" style="color:#E53935">下线</span>
           </div>
           <div v-if="!devices.length" class="sheet-item" style="color:#707579">暂无设备记录</div>
         </div>
@@ -163,6 +167,8 @@
 import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
+import { storage } from '../utils/storage'
+import { onWs, WS_EVENTS } from '../utils/ws'
 import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
 
 export default {
@@ -197,16 +203,51 @@ export default {
         this.appVersionName = info.version || '1.0'
       }
     } catch (e) { /* 浏览器环境忽略 */ }
+    // 在线状态实时刷新：设备上线/下线推送到达时就地更新列表（不用手动刷新面板）
+    this._offDevOnline = onWs(WS_EVENTS.DEVICE_ONLINE, p => this.applyDeviceOnline(p, true))
+    this._offDevOffline = onWs(WS_EVENTS.DEVICE_OFFLINE, p => this.applyDeviceOnline(p, false))
+    this._offDevRemoved = onWs(WS_EVENTS.DEVICE_REMOVED, p => {
+      if (p && p.device_id != null) this.devices = this.devices.filter(x => String(x.id) !== String(p.device_id))
+    })
+  },
+  beforeUnmount() {
+    if (this._offDevOnline) this._offDevOnline()
+    if (this._offDevOffline) this._offDevOffline()
+    if (this._offDevRemoved) this._offDevRemoved()
   },
   methods: {
     avatarColor,
     avatarSrc,
     openFeedback,
+    /** 是否本机：与登录时存下的设备表主键（storage.deviceRowId）比对 */
+    isSelfDevice(d) {
+      if (!d || d.id == null) return false
+      if (!storage.deviceRowId) return false
+      return String(d.id) === String(storage.deviceRowId)
+    },
+    /** 设备副标题：类型 · 在线状态 · 最后活跃时间 */
+    deviceSub(d) {
+      const type = d.device_type || '未知类型'
+      const online = d.is_online ? '在线' : '离线'
+      const t = d.last_active_at || d.last_seen_at || d.last_online_at || d.updated_at
+      const when = t ? this.fmtAgo(t) : ''
+      return [type, online, when].filter(Boolean).join(' · ')
+    },
+    /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 */
+    fmtAgo(t) {
+      const ms = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(t)
+      if (!Number.isFinite(ms)) return ''
+      const diff = Date.now() - ms
+      if (diff < 60000) return '刚刚活跃'
+      if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前活跃'
+      if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前活跃'
+      return Math.floor(diff / 86400000) + ' 天前活跃'
+    },
     async openDevices() {
       this.showDevices = true
       this.devices = []
       if (state.demoMode) {
-        this.devices = [{ id: '1', device_name: 'Android App（本机）', device_type: 'mobile', is_online: true }]
+        this.devices = [{ id: storage.deviceRowId || '1', device_name: 'Android App（本机）', device_type: 'mobile', is_online: true, last_active_at: new Date().toISOString() }]
         return
       }
       try {
@@ -215,7 +256,17 @@ export default {
         showToast(e.message)
       }
     },
+    /** 设备上下线推送：就地更新在线标记与最后活跃时间 */
+    applyDeviceOnline(p, online) {
+      if (!p || p.device_id == null) return
+      const d = this.devices.find(x => String(x.id) === String(p.device_id))
+      if (!d) return
+      d.is_online = !!online
+      d.last_active_at = p.at || p.last_active_at || new Date().toISOString()
+    },
     async confirmOffline(d) {
+      // 本机不能在这里下线自己（会把自己踢掉），需要下线请直接退出登录
+      if (this.isSelfDevice(d)) { showToast('这是当前设备，如需下线请退出登录'); return }
       if (state.demoMode) {
         this.devices = this.devices.filter(x => x.id !== d.id)
         showToast('已下线（模拟）')
@@ -309,6 +360,10 @@ export default {
 </script>
 <style scoped>
 .avatar-editable { position: relative; cursor: pointer; display: inline-block; }
+/* ── 设备在线状态 ── */
+.dev-dot { width: 9px; height: 9px; border-radius: 50%; background: #C4C9CE; margin-right: 9px; flex-shrink: 0; }
+.dev-dot.on { background: #31C48D; box-shadow: 0 0 0 3px rgba(49, 196, 141, .16); }
+.dev-self { display: inline-block; margin-left: 6px; font-size: 11px; line-height: 15px; color: var(--tg-blue); border: 1px solid var(--tg-blue); border-radius: 4px; padding: 0 4px; vertical-align: 1px; }
 .avatar-camera { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--tg-blue); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; }
 .theme-dot { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
 .theme-picker-body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 12px; }

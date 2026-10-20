@@ -19,6 +19,8 @@ export const api = {
   updateProfile: payload => http.put('/auth/profile', payload),
   getDevices: () => http.get('/auth/devices'),
   offlineDevice: deviceId => http.post(`/auth/devices/${deviceId}/offline`),
+  // 在线状态心跳：设备表主键（登录返回 device.id，存于 storage.deviceRowId）。60s 一次，前端据此维持「在线」
+  heartbeat: deviceId => http.post(`/auth/devices/${deviceId}/heartbeat`),
 
   // ── 通讯录 ──
   getContacts: (params = {}) => http.get('/contacts', { params: { pageSize: 200, ...params } }),
@@ -46,8 +48,14 @@ export const api = {
   updateMessageOriginal: (id, file_original_url) => http.patch(`/messages/${id}/original-file`, { file_original_url }),
   revealMessage: (id, body) => http.post(`/messages/${id}/reveal`, body || {}), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（音视频焚毁可传 media_duration_seconds 放宽消费窗口）
   consumeMessage: id => http.post(`/messages/${id}/consume`, {}), // 音视频播完才焚：播放完成/中途退出时消费本人这份提前焚毁（幂等，返回焚毁视图）
-  markRead: conversationId => http.post(`/messages/${conversationId}/read`), // 注意：文档约定此处 id 为会话 ID
+  markRead: (conversationId, body) => http.post(`/messages/${conversationId}/read`, body || {}), // 注意：文档约定此处 id 为会话 ID；body 可带 { up_to_message_id } 限制已读上界
   getReceipt: id => http.get(`/messages/${id}/receipt`),
+  // 群聊已读进度：{ total, revealed, burned, readers:[{user_id,is_read,is_revealed,...}] }
+  getReaders: id => http.get(`/messages/${id}/readers`),
+  // 两阶段销毁（第二阶段）：进会话时查本人在该会话里待真删的墓碑消息
+  getPendingDestroy: conversationId => http.get(`/messages/${conversationId}/pending-destroy`),
+  // 确认清理：body { message_ids: [...] }，返回 { acked, purged, purged_ids }
+  ackDestroy: (conversationId, body) => http.post(`/messages/${conversationId}/destroy-ack`, body || {}),
 
   // ── 群组管理 ──
   updateGroup: (id, payload) => http.put(`/groups/${id}`, payload),

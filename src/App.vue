@@ -46,6 +46,21 @@
       </div>
     </div>
   </div>
+
+  <!-- ═══════ 登录冲突弹窗（session:conflict） ═══════ -->
+  <div v-if="state.sessionConflict" class="dialog-overlay" :style="{zIndex:210}" @click.self="closeSessionConflict">
+    <div class="dialog" style="max-width:334px">
+      <div class="dialog-title" style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E53935" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        {{ state.sessionConflict.title }}
+      </div>
+      <div class="dialog-body">{{ state.sessionConflict.text }}</div>
+      <div class="dialog-actions">
+        <button v-if="state.sessionConflict.blocking" class="btn-text" style="font-weight:600" @click="reloginFromConflict">重新登录</button>
+        <button v-else class="btn-text" style="font-weight:600" @click="closeSessionConflict">我知道了</button>
+      </div>
+    </div>
+  </div>
   </div>
 
 </template>
@@ -121,6 +136,16 @@ export default {
     stopTimers()
   },
   methods: {
+    /** 关闭登录冲突提示：阻断态（本机被踢下线）必须走「重新登录」，不允许点遮罩关闭 */
+    closeSessionConflict() {
+      if (state.sessionConflict && state.sessionConflict.blocking) return
+      state.sessionConflict = null
+    },
+    /** 被踢下线后重新登录：清会话回登录页 */
+    reloginFromConflict() {
+      state.sessionConflict = null
+      forceLogout()
+    },
     formatSize(bytes) {
       if (!bytes) return ''
       if (bytes < 1024) return bytes + ' B'

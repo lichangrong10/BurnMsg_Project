@@ -3,11 +3,25 @@
  */
 import { storage } from './storage'
 
+/* 焚毁时长档位（秒）：0 = 关闭。上限对齐后端 burn_ttl_seconds 允许的最大值 30 天（2592000） */
 export const BURN_OPTIONS = [
   { v: 0, label: '关闭' }, { v: 5, label: '5 秒' }, { v: 10, label: '10 秒' },
   { v: 30, label: '30 秒' }, { v: 60, label: '1 分钟' }, { v: 300, label: '5 分钟' },
-  { v: 3600, label: '1 小时' }, { v: 86400, label: '1 天' }, { v: 604800, label: '1 周' }
+  { v: 3600, label: '1 小时' }, { v: 86400, label: '1 天' }, { v: 604800, label: '1 周' },
+  { v: 2592000, label: '30 天' }
 ]
+
+/** 秒数 → 档位文案（不在档位表内时按最接近的量级兜底） */
+export function burnLabelOf(v) {
+  const o = BURN_OPTIONS.find(x => x.v === Number(v))
+  if (o) return o.label
+  const s = Number(v)
+  if (!Number.isFinite(s) || s <= 0) return '关闭'
+  if (s < 60) return s + ' 秒'
+  if (s < 3600) return Math.ceil(s / 60) + ' 分钟'
+  if (s < 86400) return Math.ceil(s / 3600) + ' 小时'
+  return Math.ceil(s / 86400) + ' 天'
+}
 
 /* Telegram 蓝色系：无头像时的首字符底色（按名字哈希在蓝色族内取稳定色） */
 export const AVATAR_COLORS = ['var(--tg-av-0)', 'var(--tg-av-1)', 'var(--tg-av-2)', 'var(--tg-av-3)', 'var(--tg-av-4)', 'var(--tg-av-5)', 'var(--tg-av-6)'] /* 主题色派生的 7 档明暗（CSS 变量由 store applyTheme 随主题色自动更新，默认值见 main.css --tg-av-*） */
@@ -35,16 +49,6 @@ export function convInitial(c) {
 /** 相对路径文件地址补全为完整 URL（upload 返回的 file_url 为相对路径） */
 export function fileURL(u) {
   return /^https?:|^data:/.test(u) ? u : storage.baseURL.replace(/\/api\/v1\/?$/, '') + u
-}
-
-/** 图片缩略图路径推导（V5.8.3 服务端约定）：/uploads/<uuid>.<ext> → /uploads/thumb/<uuid>_thumb.webp；
-    gif / 非 uploads 路径返回 null（调用方回退用原图 url）。消息接口不传输 thumb_url，
-    接收方与老消息都靠这个约定推导，加载 404 时由 <img @error> 回退原图 */
-export function thumbURLOf(fileUrl) {
-  if (!fileUrl || typeof fileUrl !== 'string') return null
-  const mm = fileUrl.match(/^(.*\/uploads\/)([^/?#]+)\.([a-zA-Z0-9]+)(\?.*)?$/)
-  if (!mm || mm[3].toLowerCase() === 'gif') return null
-  return `${mm[1]}thumb/${mm[2]}_thumb.webp`
 }
 
 /** 用户头像完整 URL；无头像返回 null（调用方回落为首字符底色块） */

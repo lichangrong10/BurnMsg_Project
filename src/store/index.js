@@ -7,7 +7,7 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { burnLabelOf, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
@@ -34,6 +34,9 @@ export const state = reactive({
   burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
   mediaPending: {},      // 音视频焚毁消息待消费登记：id -> message 对象（已 reveal 未 consume，离开聊天页时批量 consume）
+  readers: {},           // 群聊已读进度缓存：消息 id -> { total, revealed, burned, readers:[] }（api.getReaders，进操作菜单/长按时拉取）
+  sessionConflict: null, // 登录冲突弹窗：{ reason:'kicked_by_new_login'|'notify', title, text, blocking }（App.vue 渲染）
+  destroyAcking: {},     // 两阶段销毁 ack 去重：会话 id -> 进行中标记（防并发重复 POST）
   tofuAlerts: [],        // TOFU 公钥变更告警横幅队列：[{user_id,name,oldPubkey,newPubkey}]
   pendingKeyChanges: {}, // 待处理密钥变更清单（「稍后处理」收纳处，进会话不再弹横幅）：Map<userId,{user_id,name,oldPubkey,newPubkey,created_at}>
   e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
@@ -181,6 +184,75 @@ function tickBurn() {
   }
 }
 
+/* 焚毁倒计时重同步：清掉本地冻结值，用后端最新 remain_seconds 重新种入。
+   触发时机：回到前台（App 切后台期间 setInterval 被挂起）、收到 message:destroyed、重进会话。
+   不重同步时，长时间切后台再回来，本地秒表会落后于服务端，出现「僵尸消息」（用户能看到已过期内容）。 */
+export function resyncBurnCountdown(list) {
+  const arr = Array.isArray(list) ? list : state.messages
+  for (const m of arr) {
+    if (!m || m.id == null) continue
+    if (m.burn_ttl_seconds == null && m.burn_at == null && m.destroy_at == null) continue
+    delete state.burnLeft[m.id] // 清掉冻结值
+    delete burnDeadline[m.id]
+  }
+  arr.forEach(seedBurnLeft) // 用最新 remain_seconds 重新种
+}
+
+/* 两阶段销毁的第二阶段：后端只标记 is_destroyed，真正删行要前端进会话时确认一次。
+   静默执行：此时用户看到的已经是墓碑，确认只是让服务端释放存储，不改变可见性。 */
+export async function confirmDestroyed(cid) {
+  const id = cid != null ? cid : (state.chat && state.chat.id)
+  if (id == null || state.demoMode) return
+  const key = String(id)
+  if (state.destroyAcking[key]) return // 并发去重：进会话 + WS 事件 + 回前台可能同时触发
+  state.destroyAcking[key] = true
+  try {
+    const d = await api.getPendingDestroy(id)
+    const pending = (d && (d.pending || d.list || d.items)) || []
+    const ids = (Array.isArray(pending) ? pending : [])
+      .map(p => (p && (p.message_id != null ? p.message_id : p.id)))
+      .filter(x => x != null)
+    if (!ids.length) return
+    const r = await api.ackDestroy(id, { message_ids: ids })
+    const purged = new Set((((r && r.purged_ids) || [])).map(String))
+    for (const m of state.messages) {
+      if (purged.has(String(m.id))) {
+        m.is_destroyed = true
+        m.is_burned = true
+        m.purged = true // 服务端已真删：本地保留墓碑渲染，不再等待后端数据
+        delete state.burnLeft[m.id]
+        delete burnDeadline[m.id]
+      }
+    }
+  } catch (e) {
+    /* 静默：断网/后端未升级都不影响聊天，下次进会话再试 */
+  } finally {
+    delete state.destroyAcking[key]
+  }
+}
+
+/* 群聊已读进度：拉取单条消息的阅读者（api.getReaders），缓存到 state.readers 供气泡下方「3/4 已读」展示。
+   失败静默返回 null（不展示），不阻塞消息渲染。 */
+export async function loadReaders(m) {
+  if (!m || m.id == null) return null
+  const key = String(m.id)
+  if (state.demoMode) {
+    const members = (state.groupMembers || []).filter(x => String(memberUid(x)) !== String(m.sender_id))
+    const readers = members.map((x, i) => ({ user_id: memberUid(x), user_display_name: memberName(x), is_read: i < Math.ceil(members.length * 0.7) }))
+    const mock = { total: members.length, revealed: readers.filter(r => r.is_read).length, burned: 0, readers }
+    state.readers[key] = mock
+    return mock
+  }
+  try {
+    const r = await api.getReaders(m.id)
+    if (r && (Array.isArray(r.readers) || r.total != null)) state.readers[key] = r
+    return r
+  } catch (e) {
+    return null
+  }
+}
+
+
 /* 调试日志用：一条消息的 id + 解析后的时间（解析失败时打印原始值，便于定位后端字段名/格式问题） */
 function fmtMsgDbg(m) {
   const t = msgTime(m)
@@ -288,6 +360,9 @@ export function forceLogout() {
   state.burnLeft = {}
   state.burnMsgs = {}
   state.mediaPending = {}
+  state.readers = {}
+  state.destroyAcking = {}
+  state.sessionConflict = null
   for (const k of Object.keys(burnDeadline)) delete burnDeadline[k]
   disconnectWs()
 }
@@ -502,6 +577,9 @@ export async function bootstrap() {
       state.me = await api.getProfile()
       storage.user = state.me
       if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
+      // 焚毁时长持久化：档位跟着账号走（换设备/重装后仍保留），null/缺省 = 关闭
+      const ttl = state.me && state.me.default_burn_ttl_seconds
+      state.burnSeconds = (ttl == null || !(Number(ttl) > 0)) ? 0 : Number(ttl)
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
     initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
@@ -534,7 +612,9 @@ export async function loadConvs(quiet) {
     state.convs = list
       .map(c => {
         const old = prev[c.id]
-        const unread = (old && old.unread) ?? c.unread ?? 0
+        // 未读数以服务端为准（unread_count：换设备/重装后不丢未读）；后端未升级时回退本地计数
+        const serverUnread = c.unread_count ?? c.unread
+        const unread = (serverUnread != null) ? Number(serverUnread) || 0 : ((old && old.unread) || 0)
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
         const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
         let mentionFlag = (old && old.mentionFlag) ? 1 : 0
@@ -587,8 +667,14 @@ export async function openChat(c) {
   state.hasMore = true // 重置已读水位线，私聊随后按回执重建
   state.e2eOn = c.type === 'private' && localStorage.getItem('bm_e2e_on_' + c.id) === '1' // 恢复本会话加密开关
   if (c.type !== 'private') loadGroupMembers() // 预取群成员：消息发送者名称/头像、群管理页共用
-  if (!state.demoMode) { try { await api.markRead(c.id) } catch (e) { /* 静默 */ } }
   await loadMessages()
+  // 已读上报带上界：只标到「当前可见的最后一条」，避免刚进会话就把后面没看过的也标成已读
+  if (!state.demoMode) {
+    const lastVisible = state.messages[state.messages.length - 1]
+    api.markRead(c.id, lastVisible && lastVisible.id != null ? { up_to_message_id: lastVisible.id } : {}).catch(() => { /* 静默 */ })
+  }
+  // 两阶段销毁：拉完首屏后静默确认上一批墓碑，让服务端真正释放存储（失败不影响主流程）
+  if (!state.demoMode) confirmDestroyed(c.id)
   if (!state.demoMode && c.type === 'private') loadReadWatermark()
   // TOFU：进单聊会话时批量比对对方公钥（兜底 WS 断线期间对方轮换；changed 则告警横幅）
   if (!state.demoMode && c.type === 'private' && c.other_user && c.other_user.id) {
@@ -893,6 +979,51 @@ async function onWsKeyChanged(p) {
   } catch (e) { /* 静默：拉取失败不打扰，启动/进会话批量比对兜底 */ }
 }
 
+/** message:destroyed：后端判定焚毁（到期 / 对方点开 / 播完）→ 就地切墓碑，实时生效，不必等 4s 轮询 */
+function onWsDestroyed(p) {
+  if (!p || state.demoMode) return
+  const ids = new Set((Array.isArray(p.message_ids) ? p.message_ids : []).map(String))
+  if (p.message_id != null) ids.add(String(p.message_id))
+  if (!ids.size) return
+  const cid = p.conversation_id != null ? p.conversation_id : (state.chat && state.chat.id)
+  // 当前会话内的消息：直接打墓碑（保留占位，不从前端列表移除）
+  for (const m of state.messages) {
+    if (!ids.has(String(m.id))) continue
+    m.is_destroyed = true
+    m.is_burned = true
+    if (p.destroyed_at) m.destroyed_at = p.destroyed_at
+    if (p.destroy_reason) m.destroy_reason = p.destroy_reason
+    delete state.burnLeft[m.id]
+    delete state.burnMsgs[String(m.id)]
+    delete burnDeadline[m.id]
+  }
+  // 刚产生新墓碑：顺带确认上一批（两阶段销毁第二阶段），并刷新会话列表预览
+  if (cid != null) { confirmDestroyed(cid); scheduleConvReload() }
+}
+
+/** session:conflict：登录冲突。kicked_by_new_login 必须阻断（本机已被踢下线），其余仅提醒 */
+function onWsSessionConflict(p) {
+  if (!p) return
+  const nd = p.new_device || {}
+  if (p.reason === 'kicked_by_new_login') {
+    state.sessionConflict = {
+      reason: p.reason,
+      blocking: true,
+      title: '账号已在其他设备登录',
+      text: '当前设备已被下线，请重新登录。',
+      newDevice: p.new_device || null
+    }
+    return
+  }
+  state.sessionConflict = {
+    reason: p.reason || 'notify',
+    blocking: false,
+    title: '账号在另一台设备登录',
+    text: (nd.name || nd.device_name || '未知设备') + (nd.ip ? ' · ' + nd.ip : ''),
+    newDevice: p.new_device || null
+  }
+}
+
 /* 模块加载时注册一次（WS 连接由 login/bootstrap 建立，断线重连后事件仍生效） */
 onWs(WS_EVENTS.MESSAGE_NEW, onWsNewMessage)
 onWs(WS_EVENTS.MESSAGE_EDITED, onWsEdited)
@@ -930,6 +1061,8 @@ onWs(WS_EVENTS.CONVERSATION_UPDATED, p => {
 })
 onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
 onWs(WS_EVENTS.KEY_CHANGED, onWsKeyChanged)
+onWs(WS_EVENTS.MESSAGE_DESTROYED, onWsDestroyed)
+onWs(WS_EVENTS.SESSION_CONFLICT, onWsSessionConflict)
 
 /* ─── 系统公告（App 端只读展示） ─── */
 /** 刷新未读公告角标（启动/轮询/收到推送时调用，静默失败） */
@@ -1129,11 +1262,16 @@ function readVideoDurationSeconds(file) {
 export function setBurn(v) {
   state.burnSeconds = v
   state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
+  // 持久化到账号：PUT /auth/profile 三态语义（正整数=设置、null=清除、不传=不变），静默失败不打扰
+  if (!state.demoMode) {
+    api.updateProfile({ default_burn_ttl_seconds: v ? v : null }).catch(() => { /* 忽略：下次进 App 以服务端值为准 */ })
+  }
   if (v) {
-    const o = BURN_OPTIONS.find(x => x.v === v)
-    const label = o ? o.label : ''
+    const label = burnLabelOf(v)
     if (state.e2eOn) showToast('已同时开启阅后焚毁与明文加密模式：密文将在 ' + label + ' 后销毁')
     else showToast('阅后即焚：' + label)
+  } else if (state.e2eOn) {
+    showToast('已关闭阅后即焚（明文加密仍开启）')
   }
 }
 
@@ -1797,22 +1935,56 @@ export function saveServer(url) {
   return true
 }
 
-/* ─── 定时器：秒表 / 会话 15s 轮询 / 消息 4s 轮询 ─── */
+/* ─── 定时器：秒表 / 会话 15s 轮询 / 消息 4s 轮询 / 在线心跳 60s ─── */
 const timers = []
 let burnWakeHandler = null
+let wakeTimer = null
+let msgPolling = false // 消息轮询在途标记：轮询慢于间隔时不叠加请求
+
+/** 在线状态心跳：设备表主键（storage.deviceRowId），静默失败（后端未升级心跳接口时不影响业务） */
+function sendHeartbeat() {
+  const id = storage.deviceRowId
+  if (!id || state.demoMode) return
+  api.heartbeat(id).catch(() => { /* 忽略：下一次心跳再补 */ })
+}
+
+/** 回到前台：重拉数据 + 重同步倒计时 + 心跳 + 确认墓碑。
+    后台/锁屏期间 setInterval 被系统挂起，本地秒表会落后于服务端，这一步把状态拉回一致（修「僵尸消息」）。 */
+function onWake() {
+  if (typeof document !== 'undefined' && document.hidden) return
+  state.nowTick = Date.now()
+  tickBurn()
+  clearTimeout(wakeTimer)
+  wakeTimer = setTimeout(() => {
+    if (state.view !== 'main' || state.demoMode) return
+    if (state.chat) {
+      loadMessages(true).then(() => { resyncBurnCountdown(); confirmDestroyed() }).catch(() => { /* 静默 */ })
+    } else {
+      loadConvs(true)
+    }
+    refreshAnnUnread()
+    sendHeartbeat()
+  }, 300) // 去抖：visibilitychange 与 focus 常常同时触发
+}
+
 export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
   // 焚毁秒表：按绝对截止时间重算（tickBurn 内部自愈），到点就地焚毁，不再靠「每滴答 -1」
   timers.push(setInterval(tickBurn, 1000))
   timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
-  timers.push(setInterval(() => { if (state.chat && !state.demoMode) loadMessages(true) }, 4000))
-  // 回到前台/重新聚焦立即校正一次：后台与锁屏期间 setInterval 被挂起，这一步把漏掉的时间补回来
+  // 消息轮询：后台不轮询 + 在途不叠加
+  timers.push(setInterval(async () => {
+    if (msgPolling) return
+    if (typeof document !== 'undefined' && document.hidden) return
+    if (!state.chat || state.demoMode) return
+    msgPolling = true
+    try { await loadMessages(true) } finally { msgPolling = false }
+  }, 4000))
+  // 在线状态心跳（60s）：后台不发，回前台时 onWake 会立即补一次
+  timers.push(setInterval(() => { if (typeof document === 'undefined' || !document.hidden) sendHeartbeat() }, 60000))
+  // 回到前台/重新聚焦：校正秒表 + 重拉数据（见 onWake）
   if (!burnWakeHandler && typeof document !== 'undefined') {
-    burnWakeHandler = () => {
-      if (document.hidden) return
-      state.nowTick = Date.now()
-      tickBurn()
-    }
+    burnWakeHandler = onWake
     document.addEventListener('visibilitychange', burnWakeHandler)
     window.addEventListener('focus', burnWakeHandler)
   }
@@ -1820,6 +1992,8 @@ export function startTimers() {
 export function stopTimers() {
   timers.forEach(clearInterval)
   timers.length = 0
+  clearTimeout(wakeTimer)
+  wakeTimer = null
   if (burnWakeHandler) {
     document.removeEventListener('visibilitychange', burnWakeHandler)
     window.removeEventListener('focus', burnWakeHandler)

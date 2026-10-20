@@ -8,6 +8,10 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    watch: {
+      // 原子写编辑器/工具会生成临时目录（如 .index.js.123.tmpdir），Windows 上 chokidar 监听会 EBUSY 崩溃
+      ignored: ['**/.*.tmpdir/**', '**/*.tmp', '**/.git/**']
+    },
     proxy: {
       '/api': {
         target: 'http://112.4.135.254:19091',
