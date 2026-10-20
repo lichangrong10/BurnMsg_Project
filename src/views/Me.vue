@@ -64,8 +64,8 @@
       <div class="sheet">
         <div class="sheet-title">已登录设备 · 在线状态实时同步</div>
         <div style="overflow-y:auto">
-          <div v-for="d in devices" :key="d.id" class="cell" style="border-bottom:1px solid var(--tg-border)" @click="confirmOffline(d)">
-            <span class="dev-dot" :class="{ on: d.is_online }"></span>
+          <div v-for="d in devices" :key="d.id" class="cell" :class="{ 'cell-self': isSelfDevice(d) }" style="border-bottom:1px solid var(--tg-border)" @click="onDeviceClick(d)">
+            <span class="dev-dot" :class="{ on: isOnline(d) }"></span>
             <span class="cell-label">
               {{ d.device_name || '未知设备' }}<span v-if="isSelfDevice(d)" class="dev-self">本机</span>
               <br><small style="color:#707579">{{ deviceSub(d) }}</small>
@@ -90,6 +90,21 @@
         </div>
         <input ref="colorInput" type="color" :value="themeColor.toLowerCase()" style="display:none" @input="onThemeInput">
         <div class="sheet-item sheet-cancel" @click="showTheme = false">完成</div>
+      </div>
+    </div>
+
+    <!-- ═══════ 下线二次确认 ═══════ -->
+    <div v-if="offlineTarget" class="dialog-overlay" @click.self="offlineTarget = null">
+      <div class="dialog" style="max-width:320px">
+        <div class="dialog-title">下线设备</div>
+        <div class="dialog-body">
+          确定将「{{ offlineTarget.device_name || '未知设备' }}」强制下线？
+          <div style="margin-top:8px;color:var(--tg-text-secondary);font-size:13px">该设备上的登录态会立即失效，需要重新登录才能继续使用。</div>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="offlineTarget = null">取消</button>
+          <button class="btn-text" style="font-weight:600;color:#E53935" @click="doOffline">确定下线</button>
+        </div>
       </div>
     </div>
 
@@ -171,6 +186,9 @@ import { storage } from '../utils/storage'
 import { onWs, WS_EVENTS } from '../utils/ws'
 import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
 
+/** 在线判定窗口：心跳间隔 60s，容忍丢一拍 → 90 秒内有活跃才算在线 */
+const ONLINE_WINDOW_MS = 90 * 1000
+
 export default {
   name: 'MeView',
   data() {
@@ -178,6 +196,7 @@ export default {
       state,
       devices: [],
       showDevices: false,
+      offlineTarget: null,       // 待确认下线的设备（二次确认弹窗用）
       showEditProfile: false,
       profileForm: { display_name: '', signature: '' },
       showPwd: false,
@@ -219,16 +238,39 @@ export default {
     avatarColor,
     avatarSrc,
     openFeedback,
-    /** 是否本机：与登录时存下的设备表主键（storage.deviceRowId）比对 */
+    /** 是否本机：主判据是登录时存下的设备表主键（storage.deviceRowId），
+        兜底用客户端设备编号（storage.deviceId，永远存在且不被 clear 清除）交叉判定 ——
+        避免 deviceRowId 缺失（老版本登录残留 / 登录响应无 device.id）时把本机误标成「可下线」，
+        那种情况下点一下就会把自己踢回登录页。 */
     isSelfDevice(d) {
-      if (!d || d.id == null) return false
-      if (!storage.deviceRowId) return false
-      return String(d.id) === String(storage.deviceRowId)
+      if (!d) return false
+      if (d.id != null && storage.deviceRowId && String(d.id) === String(storage.deviceRowId)) return true
+      const clientId = storage.deviceId
+      if (clientId && d.device_id && String(d.device_id) === String(clientId)) return true
+      return false
+    },
+    /** 在线判定：后端 is_online 目前不实时（登录即置 true，心跳停止也不归零），
+        这里叠加「活 socket + 心跳新鲜度」兜底：
+        - socket_count > 0 → 铁定在线
+        - 只有 90 秒内有心跳才算在线（心跳间隔 60s，容忍丢一拍）
+        - 后端没给任何时间信息时，退回信任 is_online */
+    isOnline(d) {
+      if (!d) return false
+      const sc = Number(d.socket_count)
+      if (Number.isFinite(sc) && sc > 0) return true
+      const t = Date.parse(d.last_active_at || d.last_active_at_text || d.last_seen_at || d.last_online_at || '')
+      if (Number.isFinite(t)) return (Date.now() - t) < ONLINE_WINDOW_MS
+      return d.is_online === true
+    },
+    /** 设备行点击：本机不响应（不绑下线动作，避免误触把自己踢掉） */
+    onDeviceClick(d) {
+      if (this.isSelfDevice(d)) { showToast('这是当前设备，如需下线请退出登录'); return }
+      this.offlineTarget = d
     },
     /** 设备副标题：类型 · 在线状态 · 最后活跃时间 */
     deviceSub(d) {
       const type = d.device_type || '未知类型'
-      const online = d.is_online ? '在线' : '离线'
+      const online = this.isOnline(d) ? '在线' : '离线'
       const t = d.last_active_at || d.last_seen_at || d.last_online_at || d.updated_at
       const when = t ? this.fmtAgo(t) : ''
       return [type, online, when].filter(Boolean).join(' · ')
@@ -264,9 +306,12 @@ export default {
       d.is_online = !!online
       d.last_active_at = p.at || p.last_active_at || new Date().toISOString()
     },
-    async confirmOffline(d) {
-      // 本机不能在这里下线自己（会把自己踢掉），需要下线请直接退出登录
-      if (this.isSelfDevice(d)) { showToast('这是当前设备，如需下线请退出登录'); return }
+    /** 弹窗里点「确定下线」才真正调接口 */
+    async doOffline() {
+      const d = this.offlineTarget
+      if (!d) return
+      if (this.isSelfDevice(d)) { this.offlineTarget = null; showToast('这是当前设备，如需下线请退出登录'); return }
+      this.offlineTarget = null
       if (state.demoMode) {
         this.devices = this.devices.filter(x => x.id !== d.id)
         showToast('已下线（模拟）')
@@ -363,6 +408,8 @@ export default {
 /* ── 设备在线状态 ── */
 .dev-dot { width: 9px; height: 9px; border-radius: 50%; background: #C4C9CE; margin-right: 9px; flex-shrink: 0; }
 .dev-dot.on { background: #31C48D; box-shadow: 0 0 0 3px rgba(49, 196, 141, .16); }
+.cell-self { cursor: default; }
+.cell-self .cell-value { font-weight: 400; }
 .dev-self { display: inline-block; margin-left: 6px; font-size: 11px; line-height: 15px; color: var(--tg-blue); border: 1px solid var(--tg-blue); border-radius: 4px; padding: 0 4px; vertical-align: 1px; }
 .avatar-camera { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--tg-blue); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; }
 .theme-dot { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
