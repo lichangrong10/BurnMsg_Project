@@ -104,22 +104,81 @@ function normalizeMsg(m) {
   return m
 }
 
+/* 焚毁截止时间表（id → 绝对时间戳 epochMs）：内存态，重进会话时由后端 remain_seconds 重新种入。
+   ⚠️ 倒计时必须按「截止时间 − 现在」重算，绝不能每个滴答 −1：
+   WebView / 浏览器在切后台、锁屏、省电模式下会暂停或节流 setInterval，漏掉的滴答不可恢复，
+   用递减法时 7 天档（604800 次滴答）永远跑不完，用户看到的就是「一周到了却没焚毁」。 */
+const burnDeadline = {}
+
 /* 焚毁本地倒计时种入：优先用后端返回的 remain_seconds（相对剩余秒数），
    彻底摆脱 burn_at 绝对时间与客户端本地时钟不同步导致的倒计时偏移（如 10 秒变 20 秒）。
-   只在尚未种入时种入一次，之后由全局秒表本地递减，避免轮询重拉时倒计时回跳。 */
+   只在尚未种入时种入一次，之后由 tickBurn 按 burnDeadline 重算，避免轮询重拉时倒计时回跳。
+
+   ⚠️ 两条「防复活」规则（否则倒计时末尾会「闪两下 + 凭空多一两秒」）：
+   ① 已焚毁的消息不得再种入 —— 后端整行还没删时，4s 轮询会把同一份数据当新对象带回来（无 is_burned 字段）；
+   ② remain_seconds ≤ 0（已过期）不得再被 Math.max(1, …) 钳到 1 秒重新起跳，直接落成「此消息已焚毁」占位。 */
 function seedBurnLeft(m) {
   if (!m || m.id == null || m.is_blurred) return false
-  if (state.burnLeft[m.id] != null) return false
-  state.burnMsgs[String(m.id)] = { id: String(m.id), sender_id: m.sender_id, created_at: m.created_at, conversation_id: (m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id)) }
+  if (m.is_burned) return false // ① 已焚毁：轮询带回来的同 id 消息不得重新起跳
+  if (state.burnLeft[m.id] != null || burnDeadline[m.id] != null) return false
+  let left = 0
   if (m.remain_seconds != null) {
-    state.burnLeft[m.id] = Math.max(1, Math.round(m.remain_seconds))
-    return true
+    // ceil 而非 round：宁晚勿早。round 向下取整时客户端常比后端先归零，正好打开「已焚毁 → 复活」的闪烁窗口
+    const v = Math.ceil(Number(m.remain_seconds))
+    if (Number.isFinite(v)) {
+      if (v <= 0) { markBurned(m); return false } // ② 已过期：立即焚毁，不显示正文，也不再凭空补 1 秒
+      left = v
+    }
   }
-  if (m.burn_at) { // 兜底：后端未返回 remain_seconds 时用绝对时间换算一次
-    const left = Math.ceil((new Date(m.burn_at) - Date.now()) / 1000)
-    if (left > 0) { state.burnLeft[m.id] = Math.max(1, left); return true }
+  if (left <= 0 && m.burn_at) { // 兜底：后端未返回 remain_seconds 时用绝对时间换算一次
+    const v = Math.ceil((new Date(m.burn_at) - Date.now()) / 1000)
+    if (Number.isFinite(v) && v > 0) left = v
   }
-  return false
+  if (left <= 0) {
+    // 绝对时间也已过期（关页面 / 离线期间烧完的）：直接落「此消息已焚毁」占位并持久化。
+    // 否则重进页面时后端已不再返回该行、本地又没有占位记录 → 整条消息凭空消失（用户说的「气泡哪去了」）
+    const endStr = m.burn_at || m.destroy_at
+    const t = endStr ? Date.parse(endStr) : NaN
+    if (Number.isFinite(t) && t <= Date.now()) markBurned(m)
+    return false
+  }
+  state.burnMsgs[String(m.id)] = { id: String(m.id), sender_id: m.sender_id, created_at: m.created_at, conversation_id: (m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id)) }
+  burnDeadline[m.id] = Date.now() + left * 1000 // 记绝对截止时间：秒表按它重算，漏掉多少次滴答都能自愈
+  state.burnLeft[m.id] = left
+  return true
+}
+
+/* 焚毁秒表：每次触发都用截止时间重算剩余秒（自愈式），到点就地焚毁。
+   回到前台的第一跳会把后台期间漏掉的时间一次性补齐，因此长档位（1 小时 / 1 天 / 1 周）也能准点焚毁。 */
+function tickBurn() {
+  const now = Date.now()
+  const ids = Object.keys(burnDeadline)
+  for (const id of ids) {
+    const left = Math.ceil((burnDeadline[id] - now) / 1000)
+    if (left > 0) { state.burnLeft[id] = left; continue }
+    delete burnDeadline[id]
+    delete state.burnLeft[id]
+    const burned = state.messages.find(x => String(x.id) === String(id))
+    const snap = state.burnMsgs[id]
+    const snapCid = snap && snap.conversation_id
+    if (burned) { if (!burned.is_burned) markBurned(burned, snapCid) }
+    else if (snap) markBurned(snap, snapCid)
+    delete state.burnMsgs[id]
+  }
+  // ── 对账（关键）：把「持久化判定」对齐到「展示判定」 ──
+  // isBurned() 有三条路能让气泡变成「此消息已焚毁」：本地秒表归零 / is_burned 字段 / 后端绝对时间到期。
+  // 原来只有前两条会调 markBurned 写占位，第三条（burn_at、destroy_at 到期）是纯展示判定、不落本地记录，
+  // 于是出现「刚焚毁能看到气泡」→「后端把该行删掉后下一轮轮询整条抹掉，气泡消失」。
+  // 这里每秒兜一次底：绝对时间到期即落占位（幂等，dedupe 按 id）。
+  if (!state.messages.length) return
+  const curCid = state.chat && state.chat.id
+  for (const m of state.messages) {
+    if (!m || m.id == null || m.is_burned || m.is_recalled) continue
+    const end = m.burn_at || m.destroy_at
+    if (!end) continue
+    const t = Date.parse(end)
+    if (Number.isFinite(t) && t <= now) markBurned(m, curCid != null ? curCid : undefined)
+  }
 }
 
 /* 调试日志用：一条消息的 id + 解析后的时间（解析失败时打印原始值，便于定位后端字段名/格式问题） */
@@ -225,6 +284,11 @@ export function forceLogout() {
   state.annFocusId = null
   state.showFeedback = false
   state.feedbackList = []
+  // 焚毁倒计时状态一并清空：换号后残留条目会把新账号的消息误标成已焚毁
+  state.burnLeft = {}
+  state.burnMsgs = {}
+  state.mediaPending = {}
+  for (const k of Object.keys(burnDeadline)) delete burnDeadline[k]
   disconnectWs()
 }
 
@@ -272,15 +336,22 @@ export function unhideConversation(id) {
 export function burnedMsgMap() {
   try { return JSON.parse(localStorage.getItem('bm_burned_msgs') || '{}') } catch { return {} }
 }
-export function markBurned(m) {
+export function markBurned(m, convId) {
   if (!m || m.id == null) return
-  if (m.is_burned !== undefined) m.is_burned = true
+  // 无条件写 true：后端返回的消息对象本来就没有 is_burned 字段，旧的 `!== undefined` 守卫会让它保持 undefined，
+  // 导致倒计时归零后 isBurned() 判不出来、气泡翻回正文（闪烁的另一半原因）
+  m.is_burned = true
   if (m.is_blurred !== undefined) m.is_blurred = false
-  const cid = String(m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id))
+  // 会话 id 优先级：显式传入 > 消息自带 > 当前会话。调用方（tickBurn）会把种入时记下的会话 id 传进来，
+  // 避免「焚毁时用户已退出该会话、消息对象又没带 conversation_id」导致占位写不进去
+  const rawCid = convId != null ? convId : (m.conversation_id != null ? m.conversation_id : (state.chat && state.chat.id))
+  const cid = String(rawCid)
   if (!cid || cid === 'null' || cid === 'undefined') return
   const map = burnedMsgMap()
   const arr = (map[cid] || []).filter(x => String(x.id) !== String(m.id))
-  arr.push({ id: String(m.id), sender_id: m.sender_id, created_at: m.created_at, conversation_id: cid })
+  // created_at 走字段别名兜底：取不到时间会让占位排序时落到列表最顶上，看起来就像「气泡没了」
+  const createdAt = m.created_at ?? m.createdAt ?? m.sent_at ?? m.sentAt ?? m.timestamp ?? m.updated_at ?? m.updatedAt ?? null
+  arr.push({ id: String(m.id), sender_id: m.sender_id, created_at: createdAt, conversation_id: cid })
   map[cid] = arr
   try { localStorage.setItem('bm_burned_msgs', JSON.stringify(map)) } catch { /* 忽略 */ }
 }
@@ -588,11 +659,15 @@ export async function loadMessages(quiet) {
     if (newestStamp > lastNewestStamp) state.newMsgSeq++
     lastNewestStamp = Math.max(lastNewestStamp, newestStamp)
     const ghosts = burnedMsgMap()[String(cid)] || []
+    const ghostIds = new Set(ghosts.map(g => String(g.id)))
     for (const g of ghosts) {
       if (!sorted.some(x => String(x.id) === String(g.id))) {
         sorted.push({ id: g.id, conversation_id: cid, sender_id: g.sender_id, created_at: g.created_at, is_burned: true })
       }
     }
+    // 已本地焚毁的消息：后端整行还没删时轮询会把同一份数据当新对象带回来（无 is_burned）→ 强制打回焚毁态。
+    // 否则气泡会「此消息已焚毁」→ 翻回正文 + 倒计时从 1~2 秒重新起跳 → 再焚毁，即用户看到的「闪两下 + 多一两秒」。
+    for (const m of sorted) { if (ghostIds.has(String(m.id))) m.is_burned = true }
     state.messages = sortByTimeAsc(sorted)
     sorted.forEach(seedBurnLeft) // 已点开未到期的焚毁消息：用后端 remain_seconds 种入本地倒计时
     syncRestorePlaintext(sorted) // 同步回填已缓存明文，避免轮询重拉时已解密消息闪回密文/占位
@@ -624,6 +699,9 @@ export async function loadMoreMessages() {
     const fresh = sorted.filter(m => !existing[String(m.id)])
     if (list.length < 100) state.hasMore = false // 返回不满一页说明已到最早
     if (fresh.length) {
+      // 同 loadMessages：翻出来的更早消息里若有已本地焚毁的，直接打回焚毁态，避免复活起跳
+      const ghostIds = new Set((burnedMsgMap()[String(cid)] || []).map(g => String(g.id)))
+      for (const m of fresh) { if (ghostIds.has(String(m.id))) m.is_burned = true }
       state.messages = sortByTimeAsc(fresh.concat(state.messages))
       fresh.forEach(seedBurnLeft)
       syncRestorePlaintext(fresh)
@@ -1121,6 +1199,7 @@ export async function sendText(text, mentions, replyToId) {
   try {
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
+    seedBurnLeft(m) // 自己发的焚毁消息立刻起倒计时，不必等下一轮 4s 轮询（也堵住「发完马上关页面没种入」的窗口）
     state.chat.lastMsg = text
     setLastMsg(state.chat.id, text)
     return true
@@ -1313,6 +1392,7 @@ export async function consumeBurn(m) {
   const id = String(m.id)
   try {
     await api.consumeMessage(m.id)
+    delete burnDeadline[id]
     delete state.burnLeft[id]
     delete state.burnMsgs[id]
     delete state.mediaPending[id]
@@ -1719,30 +1799,32 @@ export function saveServer(url) {
 
 /* ─── 定时器：秒表 / 会话 15s 轮询 / 消息 4s 轮询 ─── */
 const timers = []
+let burnWakeHandler = null
 export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
-  // 焚毁本地倒计时秒表：每秒递减，到 0 移除消息（独立于绝对时钟，不受客户端-服务端时钟不同步影响）
-  timers.push(setInterval(() => {
-    const ids = Object.keys(state.burnLeft)
-    if (!ids.length) return
-    for (const id of ids) {
-      state.burnLeft[id] -= 1
-      if (state.burnLeft[id] <= 0) {
-        delete state.burnLeft[id]
-        const burned = state.messages.find(x => String(x.id) === String(id))
-        const snap = state.burnMsgs[id]
-        if (burned) { if (!burned.is_burned) markBurned(burned) }
-        else if (snap) markBurned(snap)
-        delete state.burnMsgs[id]
-      }
-    }
-  }, 1000))
+  // 焚毁秒表：按绝对截止时间重算（tickBurn 内部自愈），到点就地焚毁，不再靠「每滴答 -1」
+  timers.push(setInterval(tickBurn, 1000))
   timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   timers.push(setInterval(() => { if (state.chat && !state.demoMode) loadMessages(true) }, 4000))
+  // 回到前台/重新聚焦立即校正一次：后台与锁屏期间 setInterval 被挂起，这一步把漏掉的时间补回来
+  if (!burnWakeHandler && typeof document !== 'undefined') {
+    burnWakeHandler = () => {
+      if (document.hidden) return
+      state.nowTick = Date.now()
+      tickBurn()
+    }
+    document.addEventListener('visibilitychange', burnWakeHandler)
+    window.addEventListener('focus', burnWakeHandler)
+  }
 }
 export function stopTimers() {
   timers.forEach(clearInterval)
   timers.length = 0
+  if (burnWakeHandler) {
+    document.removeEventListener('visibilitychange', burnWakeHandler)
+    window.removeEventListener('focus', burnWakeHandler)
+    burnWakeHandler = null
+  }
 }
 /* ─── 头像上传更换（个人 / 群） ─── */
 /** 将图片文件读成 DataURL（演示模式直接本地展示，不上传后端） */

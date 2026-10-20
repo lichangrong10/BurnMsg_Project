@@ -783,15 +783,17 @@ export default {
     isMediaBurn(m) {
       return this.isBurnMsg(m) && isMediaBurnMsg(m)
     },
-    /** 是否已焚毁：倒计时归零后保留「已焚毁」占位（类似撤回），不再显示正文/倒计时 */
+    /** 是否已焚毁：倒计时归零后保留「已焚毁」占位（类似撤回），不再显示正文/倒计时。
+     *  本地秒表 与 后端绝对截止时间「任一」判定到期即算焚毁 —— 只信本地计数器时，
+     *  计数器一旦因后台挂起而落后（一周档最典型），消息就永远烧不掉。 */
     isBurned(m) {
       if (!m) return false
       if (m.is_burned === true) return true
-      const local = (m.id != null) ? state.burnLeft[m.id] : undefined
-      if (local != null) return local <= 0
       const endStr = m.burn_at || m.destroy_at
-      if (!endStr) return false
-      return new Date(endStr).getTime() <= state.nowTick
+      const absExpired = !!endStr && new Date(endStr).getTime() <= state.nowTick
+      const local = (m.id != null) ? state.burnLeft[m.id] : undefined
+      if (local != null) return local <= 0 || absExpired
+      return absExpired
     },
     /** 焚毁消息的「马赛克占位」态：点开前，点击触发 reveal 拉取内容 */
     isBlurredBurn(m) {
