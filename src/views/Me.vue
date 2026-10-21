@@ -179,7 +179,7 @@
 </template>
 
 <script>
-import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme } from '../store'
+import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme, loadPresenceMe } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
 import { storage } from '../utils/storage'
@@ -244,23 +244,20 @@ export default {
         那种情况下点一下就会把自己踢回登录页。 */
     isSelfDevice(d) {
       if (!d) return false
+      if (d.is_current === true) return true // 后端 /presence/me 直接给出「本机」标识
       if (d.id != null && storage.deviceRowId && String(d.id) === String(storage.deviceRowId)) return true
       const clientId = storage.deviceId
       if (clientId && d.device_id && String(d.device_id) === String(clientId)) return true
       return false
     },
-    /** 在线判定：后端 is_online 目前不实时（登录即置 true，心跳停止也不归零），
-        这里叠加「活 socket + 心跳新鲜度」兜底：
-        - socket_count > 0 → 铁定在线
-        - 只有 90 秒内有心跳才算在线（心跳间隔 60s，容忍丢一拍）
-        - 后端没给任何时间信息时，退回信任 is_online */
+    /** 在线判定：/presence/me 与 /auth/devices 的 is_online 均由后端按「WS 连接数 + 心跳」维护，
+        是布尔值就直接信任；只有字段缺失时才用 last_active_at 兜底。 */
     isOnline(d) {
       if (!d) return false
-      const sc = Number(d.socket_count)
-      if (Number.isFinite(sc) && sc > 0) return true
+      if (typeof d.is_online === 'boolean') return d.is_online
       const t = Date.parse(d.last_active_at || d.last_active_at_text || d.last_seen_at || d.last_online_at || '')
       if (Number.isFinite(t)) return (Date.now() - t) < ONLINE_WINDOW_MS
-      return d.is_online === true
+      return false
     },
     /** 设备行点击：本机不响应（不绑下线动作，避免误触把自己踢掉） */
     onDeviceClick(d) {
@@ -293,6 +290,14 @@ export default {
         return
       }
       try {
+        // 优先走 V6.0 的 /presence/me：本人多设备在线态，后端用 is_current 直接标识本机，
+        // 在线位由 WS 连接数 + 心跳维护（比 /auth/devices 的字段语义更准）
+        const me = await loadPresenceMe()
+        if (me && Array.isArray(me.devices) && me.devices.length) {
+          this.devices = me.devices
+          return
+        }
+        // 兜底：老后端没有 /presence/me 时退回设备管理接口
         this.devices = asArray(await api.getDevices())
       } catch (e) {
         showToast(e.message)

@@ -442,7 +442,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -610,7 +610,13 @@ export default {
       const total = state.groupMembers.length || c.member_count || 0
       if (c.type === 'group') return total + ' 位成员'
       if (c.type === 'channel') return total + ' 位订阅者'
-      return '在线'
+      // 私聊：显示对方真实在线态（/presence/users）。拉到数据前不显示，
+      // 不再像原来那样硬编码「在线」—— 那会让所有人都显示在线。
+      const p = peerPresence()
+      if (!p) return ''
+      if (p.is_online) return p.online_devices > 1 ? '在线 · ' + p.online_devices + ' 台设备' : '在线'
+      const ago = this.fmtAgoShort(p.last_active_at)
+      return ago ? ago + '活跃' : '离线'
     },
     burnLabel() {
       const o = BURN_OPTIONS.find(x => x.v === state.burnSeconds)
@@ -699,6 +705,18 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    /** 相对时间（短格式）：刚刚 / N 分钟前 / N 小时前 / N 天前（在线态副标题用） */
+    fmtAgoShort(t) {
+      if (!t) return ''
+      const ms = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(t)
+      if (!Number.isFinite(ms)) return ''
+      const diff = Math.max(0, Date.now() - ms)
+      if (diff < 60 * 1000) return '刚刚'
+      if (diff < 3600 * 1000) return Math.floor(diff / 60000) + ' 分钟前'
+      if (diff < 86400 * 1000) return Math.floor(diff / 3600000) + ' 小时前'
+      return Math.floor(diff / 86400000) + ' 天前'
+    },
+
     // ══ 会话内消息搜索 ══
     toggleChatSearch() { if (this.chatSearchOpen) { this.closeChatSearch(); return } this.chatSearchOpen = true },
     closeChatSearch() { this.chatSearchOpen = false; this.chatSearchKeyword = ''; this.chatSearchResults = []; this.chatSearchNextBefore = null; this.chatSearchLoading = false; if (this.chatSearchDebounce) { clearTimeout(this.chatSearchDebounce); this.chatSearchDebounce = null } },

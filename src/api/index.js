@@ -115,5 +115,14 @@ export const api = {
 
   // ── 消息搜索 ──
   searchMessages: (params) => http.get('/messages/search', { params }),
-  searchConversationMessages: (conversationId, params) => http.get(`/messages/${conversationId}/search`, { params })
+  searchConversationMessages: (conversationId, params) => http.get(`/messages/${conversationId}/search`, { params }),
+
+  // ── 在线状态（V6.0 用户端）──
+  // 用户在线态的唯一正确入口；/auth/devices 是「本人设备管理」，语义不同（前者不暴露设备名/IP）
+  // 数据来自 devices.is_online，由 WS 连接数 + 心跳维护
+  getPresenceOnline: (params = {}) => http.get('/presence/online', { params }), // 全部在线用户（分页）
+  getPresenceUsers: (ids) => http.get('/presence/users', { // 批量查询指定用户，参数名是 ids（逗号分隔）
+    params: { ids: (Array.isArray(ids) ? ids : [ids]).filter(Boolean).join(',') }
+  }),
+  getPresenceMe: () => http.get('/presence/me') // 本人多设备在线态（含 is_current 标识本机）
 }

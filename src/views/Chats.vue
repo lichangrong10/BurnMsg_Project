@@ -23,7 +23,11 @@
       @touchmove="touchMove"
       @touchend="touchEnd"
       @touchcancel="cancelLongPress">
-      <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
+      <div class="avatar-wrap">
+        <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
+        <!-- 私聊在线圆点：绿=在线，灰=离线；未取到在线态时不显示 -->
+        <span v-if="peerOnline(c) !== null" class="online-dot" :class="{ on: peerOnline(c) }" :title="peerOnline(c) ? '在线' : '离线'"></span>
+      </div>
       <div class="conv-main">
         <div class="conv-row">
           <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ convName(c) }}</div>
@@ -52,7 +56,7 @@
 </template>
 
 <script>
-import { state, openChat, togglePin, deleteConversation, loadConvs } from '../store'
+import { state, openChat, togglePin, deleteConversation, loadConvs, isUserOnline } from '../store'
 import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
 
 export default {
@@ -100,6 +104,12 @@ export default {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    /** 私聊对方是否在线：返回 true/false；群/频道或数据未到返回 null（不显示圆点） */
+    peerOnline(c) {
+      if (!c || c.type !== 'private' || !c.other_user || c.other_user.id == null) return null
+      const v = isUserOnline(c.other_user.id)
+      return v === null ? null : v === true
+    },
     /** 原生返回键：会话长按/右键菜单打开时先关菜单，消费掉事件 */
     onNativeBack(e) {
       if (this.menu) { this.closeMenu(); e.preventDefault() }
@@ -257,4 +267,13 @@ export default {
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(0,0,0,.08);
 }
+/* ── 头像 + 在线圆点 ── */
+.avatar-wrap { position: relative; flex-shrink: 0; display: inline-flex; align-self: center; }
+.online-dot {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #C4C9CE; border: 2px solid var(--tg-bg, #fff);
+  box-sizing: border-box;
+}
+.online-dot.on { background: #31C48D; }
 </style>

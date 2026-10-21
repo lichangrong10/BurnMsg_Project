@@ -35,6 +35,8 @@ export const state = reactive({
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
   mediaPending: {},      // 音视频焚毁消息待消费登记：id -> message 对象（已 reveal 未 consume，离开聊天页时批量 consume）
   readers: {},           // 群聊已读进度缓存：消息 id -> { total, revealed, burned, readers:[] }（api.getReaders，进操作菜单/长按时拉取）
+  presence: {},          // 用户在线态缓存：userId -> { is_online, online_devices, last_active_at }（api.getPresenceUsers）
+  presenceMe: null,      // 本人多设备在线态（api.getPresenceMe）：{ is_online, current_device_id, devices:[] }
   sessionConflict: null, // 登录冲突弹窗：{ reason:'kicked_by_new_login'|'notify', title, text, blocking }（App.vue 渲染）
   destroyAcking: {},     // 两阶段销毁 ack 去重：会话 id -> 进行中标记（防并发重复 POST）
   tofuAlerts: [],        // TOFU 公钥变更告警横幅队列：[{user_id,name,oldPubkey,newPubkey}]
@@ -634,6 +636,7 @@ export async function loadConvs(quiet) {
       })
       .filter(c => !hidden.includes(String(c.id)))
     if (!quiet) await fillMissingPreviews()
+    refreshVisiblePresence() // 会话列表的在线圆点：拉一遍所有私聊对方的在线态（静默、异步）
   } catch (e) { if (!quiet) showToast(e.message) }
 }
 
@@ -641,7 +644,83 @@ export async function loadContacts() {
   if (state.demoMode) { state.contacts = DEMO.users; return }
   try {
     state.contacts = asArray(await api.getContacts())
+    refreshVisiblePresence() // 通讯录在线圆点
   } catch (e) { /* 静默 */ }
+}
+
+/* ─── 在线状态（V6.0 用户端）───
+   用户在线态的**唯一正确入口**是 /presence/*（数据来自 devices.is_online，由 WS 连接数 + 心跳维护）。
+   /auth/devices 是「本人设备管理」接口，语义不同，不要拿它当"对方是否在线"。 */
+let presenceWarned = false // 接口不可用只告警一次
+export async function loadPresence(ids) {
+  if (state.demoMode) return
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(x => x != null && x !== '').map(String)
+  if (!list.length) return
+  try {
+    const data = asArray(await api.getPresenceUsers(list))
+    for (const p of data) {
+      if (!p || p.user_id == null) continue
+      state.presence[String(p.user_id)] = {
+        is_online: p.is_online === true,
+        online_devices: p.online_devices != null ? Number(p.online_devices) : 0,
+        last_active_at: p.last_active_at || null
+      }
+    }
+  } catch (e) {
+    // 后端未部署 /presence/*（404）或后端地址填错时会走到这里：只提示一次，避免轮询刷屏
+    if (!presenceWarned) {
+      presenceWarned = true
+      console.warn('[焚信] 在线状态接口不可用（/presence/*）：后端可能未升级，或「后端地址」指向了不支持该接口的环境 →', (e && e.message) || e)
+    }
+  }
+}
+
+/** 本人多设备在线态（设备管理页用，含 is_current 标识本机） */
+export async function loadPresenceMe() {
+  if (state.demoMode) return null
+  try {
+    const d = await api.getPresenceMe()
+    if (d && typeof d === 'object') state.presenceMe = d
+    return d
+  } catch (e) { return null }
+}
+
+/** 当前会话对方的在线态（仅私聊；群聊/频道返回 null） */
+export function peerPresence() {
+  const c = state.chat
+  if (!c || c.type !== 'private' || !c.other_user || c.other_user.id == null) return null
+  return state.presence[String(c.other_user.id)] || null
+}
+
+/** 刷新当前会话对方的在线态（打开会话 / 定时刷新时调用） */
+export function refreshPeerPresence() {
+  const c = state.chat
+  if (!c || c.type !== 'private' || !c.other_user || c.other_user.id == null) return
+  loadPresence([c.other_user.id])
+}
+
+/** 批量刷新「界面上一眼可见的人」的在线态：私聊会话对方 + 通讯录联系人（分批，每批 100） */
+export async function refreshVisiblePresence() {
+  if (state.demoMode) return
+  const ids = new Set()
+  for (const c of state.convs || []) {
+    if (c && c.type === 'private' && c.other_user && c.other_user.id != null) ids.add(String(c.other_user.id))
+  }
+  for (const u of state.contacts || []) {
+    if (u && u.id != null) ids.add(String(u.id))
+  }
+  if (!ids.size) return
+  const arr = [...ids]
+  for (let i = 0; i < arr.length; i += 100) {
+    await loadPresence(arr.slice(i, i + 100))
+  }
+}
+
+/** 某人是否在线（读 presence 缓存；未知返回 null，便于调用方决定不显示） */
+export function isUserOnline(userId) {
+  if (userId == null) return null
+  const p = state.presence[String(userId)]
+  return p ? p.is_online === true : null
 }
 
 /* ─── 聊天 ─── */
@@ -676,6 +755,7 @@ export async function openChat(c) {
   // 两阶段销毁：拉完首屏后静默确认上一批墓碑，让服务端真正释放存储（失败不影响主流程）
   if (!state.demoMode) confirmDestroyed(c.id)
   if (!state.demoMode && c.type === 'private') loadReadWatermark()
+  if (!state.demoMode && c.type === 'private') refreshPeerPresence() // 拉对方的真实在线态（/presence/users）
   // TOFU：进单聊会话时批量比对对方公钥（兜底 WS 断线期间对方轮换；changed 则告警横幅）
   if (!state.demoMode && c.type === 'private' && c.other_user && c.other_user.id) {
     syncPinnedKeys([c.other_user.id], state.me.id).then(changed => {
@@ -1982,6 +2062,12 @@ export function startTimers() {
   }, 4000))
   // 在线状态心跳（60s）：后台不发，回前台时 onWake 会立即补一次
   timers.push(setInterval(() => { if (typeof document === 'undefined' || !document.hidden) sendHeartbeat() }, 60000))
+  // 对方在线态定时刷新（30s）：私聊标题栏 + 会话列表/通讯录的在线圆点
+  timers.push(setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    refreshPeerPresence()
+    refreshVisiblePresence()
+  }, 30000))
   // 回到前台/重新聚焦：校正秒表 + 重拉数据（见 onWake）
   if (!burnWakeHandler && typeof document !== 'undefined') {
     burnWakeHandler = onWake
