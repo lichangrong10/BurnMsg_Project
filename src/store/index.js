@@ -1493,15 +1493,13 @@ export async function setBurn(v) {
   }
 }
 
-/** 语音视频焚毁模式（播完即焚）：只作用于本会话的音视频发送；开启时取消本机「关闭」标记 */
+/** 语音视频焚毁模式（播完即焚）：只作用于本会话的语音/视频发送；普通消息保持不焚毁 */
 export function setMediaBurn(v) {
   if (!state.chat) return
   state.mediaBurnOn = !!v
-  if (v) {
-    state.burnOff = false
-    writeBurnOff(state.chat.id, false)
-  }
-  showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
+  // 注意：不修改 burnOff —— 普通消息的焚毁与否仍由该会话的焚毁设置决定，
+  // 媒体模式只让语音/视频"播完即焚"（发送时带消息级 ttl），不影响文字/图片。
+  showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁（文字、图片不受影响）' : '语音视频焚毁模式已关闭')
 }
 
 /** 追加消息到当前会话列表：按 id 去重，防 WS 推送先于 HTTP 响应到达造成的双条闪现 */
@@ -1517,12 +1515,13 @@ export async function sendText(text, mentions, replyToId) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
   if (replyToId) payload.reply_to_id = replyToId // 引用回复：被回复的 Message.id
   if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
-  // V6.1：生产环境默认不传 burn_ttl_seconds（后端按 burn_settings 解析）；本机「关闭焚毁」时显式传 0 = 这条不焚毁
-  if (state.burnOff) payload.burn_ttl_seconds = 0
+  // 普通消息（文字/图片/文件）不参与「语音视频播完即焚」：
+  // 本机「关闭焚毁」或正处于媒体焚毁模式时，显式传 0 = 这条不焚毁（否则后端会按全局默认把它变成焚毁消息）
+  if (state.burnOff || state.mediaBurnOn) payload.burn_ttl_seconds = 0
   else if (state.demoMode && state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 演示模式无后端解析，本地兜底
   if (state.demoMode) {
     // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
-    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
+    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && !state.mediaBurnOn && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
     ;(DEMO.messages[state.chat.id] = DEMO.messages[state.chat.id] || []).push(m)
     state.messages.push(m)
     state.chat.lastMsg = text
@@ -1634,8 +1633,8 @@ export async function sendFile(file) {
         const _dv = await readVideoDurationSeconds(file)
         payload.burn_ttl_seconds = mediaBurnTtlFor(_dv)
         if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv))
-      } else if (state.burnOff) {
-        payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
+      } else if (state.burnOff || state.mediaBurnOn) {
+        payload.burn_ttl_seconds = 0 // 关闭焚毁 / 仅媒体焚毁模式：图片、文件不焚毁
       }
       const m = await api.sendMessage(payload)
       if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
@@ -1646,7 +1645,7 @@ export async function sendFile(file) {
     const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
     const up = await api.upload(cf)
     const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: up.file_size }
-    if (state.burnOff) payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
+    if (state.burnOff || state.mediaBurnOn) payload.burn_ttl_seconds = 0 // 关闭焚毁 / 仅媒体焚毁模式：图片不焚毁
     const m = await api.sendMessage(payload)
     m.thumb_url = up.thumb_url || null
     pushMsgDedup(m)
