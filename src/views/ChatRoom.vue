@@ -50,7 +50,7 @@
       </div>
     </div>
 
-    <div v-if="state.burnSeconds || state.mediaBurnOn" class="burn-banner">
+    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       <template v-if="state.mediaBurnOn">语音视频焚毁模式已开启：语音/视频播放完毕或中途退出即焚毁</template>
       <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="burnScopeText">（{{ burnScopeText }}）</span><span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
@@ -198,7 +198,7 @@
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" multiple style="display:none" @change="onFilePicked">
       
-      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? (state.burnSeconds ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : (state.burnSeconds ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
+      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? ((!state.burnOff && state.burnSeconds) ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : ((!state.burnOff && state.burnSeconds) ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -226,12 +226,8 @@
     <div v-if="showBurnSheet" class="overlay" @click.self="showBurnSheet = false">
       <div class="sheet">
         <div class="sheet-title">阅后即焚 · 消息销毁时间</div>
-        <!-- 清除我的设置：回落服务端全局默认（V6.1 没有「关闭」这个档位，清除后按全局默认执行） -->
-        <div class="sheet-item" :style="!state.mediaBurnOn && !state.burnMySetting ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(0)">
-          清除个人设置<small class="media-burn-sub">跟随全局默认{{ state.burnGlobalDefault ? '：' + globalDefaultLabel : '：不焚毁' }}</small><svg v-if="!state.mediaBurnOn && !state.burnMySetting" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-        </div>
-        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="(!state.mediaBurnOn && state.burnMySetting && state.burnMySetting.ttl_seconds === o.v) ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
-          {{ o.label }}<svg v-if="!state.mediaBurnOn && state.burnMySetting && state.burnMySetting.ttl_seconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="burnItemActive(o.v) ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
+          {{ o.label }}<small v-if="o.v === 0" class="media-burn-sub">不焚毁</small><svg v-if="burnItemActive(o.v)" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </div>
         <div class="sheet-item" :style="state.mediaBurnOn ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickMediaBurn">
           语音视频焚毁模式<small class="media-burn-sub">播完即焚</small><svg v-if="state.mediaBurnOn" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
@@ -465,7 +461,7 @@ export default {
   data() {
     return {
       state,
-      burnOptions: BURN_OPTIONS.filter(o => o.v > 0), // 0 档位由「清除个人设置」承担（V6.1 无「关闭」档，清除后回落全局默认）
+      burnOptions: BURN_OPTIONS, // 与旧版一致：关闭 / 5 秒 … 30 天（关闭 = 本机在该会话不焚毁）
       _autoRevealMediaDone: {},  // 已自动 reveal 的音视频焚毁消息 id（防重复）
       draft: '',
       mentionPick: false,   // @ 成员选择器是否打开
@@ -627,17 +623,12 @@ export default {
     burnLabel() {
       return state.burnSeconds ? burnLabelOf(state.burnSeconds) : ''
     },
-    /** 焚毁时长的作用范围说明（V6.1：私聊按人、群/频道按会话、兜底全局默认） */
+    /** 焚毁时长的作用范围说明（V6.1：私聊按人、群/频道按会话；没设置过 = 关闭，不回落到全局默认） */
     burnScopeText() {
       const s = state.burnSource
       if (s === 'contact_setting') return '仅对你发给对方的消息生效'
       if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅对你在此频道发的消息生效' : '仅对你在此群发的消息生效'
-      if (s === 'global_default') return '全局默认'
       return ''
-    },
-    /** 面板里「清除个人设置」那一行的兜底说明文案 */
-    globalDefaultLabel() {
-      return state.burnGlobalDefault ? burnLabelOf(state.burnGlobalDefault) : '不焚毁'
     }
   },
   watch: {
@@ -1130,7 +1121,13 @@ export default {
     },
     async pickBurn(v) {
       this.showBurnSheet = false
-      await setBurn(v) // 写服务端后回读生效值（失败会 toast，界面保持原样）
+      await setBurn(v) // 写服务端 / 记本机开关，回读生效值（失败会 toast，界面保持原样）
+    },
+    /** 面板勾选态：0 档看本机「关闭」开关，其余档看服务端个人设置 */
+    burnItemActive(v) {
+      if (state.mediaBurnOn) return false
+      if (Number(v) === 0) return !!state.burnOff
+      return !state.burnOff && !!(state.burnMySetting && Number(state.burnMySetting.ttl_seconds) === Number(v))
     },
     pickMediaBurn() {
       setMediaBurn(true)

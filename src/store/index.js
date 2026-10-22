@@ -36,6 +36,7 @@ export const state = reactive({
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
   burnSeconds: 0,        // 当前会话生效的焚毁时长（秒），0 = 不焚毁；进会话时由 GET /burn-settings/conversations/:cid 解析
+  burnOff: false,        // 当前会话「关闭焚毁」开关（本机记忆，仅影响本机发送）：true 时发送带 burn_ttl_seconds=0
   burnSource: 'none',    // 生效来源：contact_setting | conversation_setting | global_default | none
   burnGlobalDefault: 0,  // 服务端全局默认（app_users.default_burn_ttl_seconds），只读展示
   burnMySetting: null,   // 我在本会话的个人设置 { ttl_seconds, updated_at }，null = 未单独设置
@@ -777,6 +778,7 @@ export async function openChat(c) {
   state.e2eOn = c.type === 'private' && localStorage.getItem('bm_e2e_on_' + c.id) === '1' // 恢复本会话加密开关
   // 焚毁时长：进会话按人/按会话解析生效值（V6.1，异步不阻塞消息加载）
   state.burnSeconds = 0
+  state.burnOff = false // 稍后由 loadBurnSetting 按本机开关回填
   state.burnSource = 'none'
   state.burnMySetting = null
   state.mediaBurnOn = false
@@ -832,6 +834,7 @@ export function closeChat() {
   state.messages = []
   // 焚毁时长是「按会话」的：离开就清空，避免下一个会话串用上一个的档位
   state.burnSeconds = 0
+  state.burnOff = false
   state.burnSource = 'none'
   state.burnMySetting = null
   state.mediaBurnOn = false
@@ -1405,68 +1408,99 @@ function readVideoDurationSeconds(file) {
     } catch (e) { resolve(0) }
   })
 }
-/** 读取当前会话生效的焚毁时长（V6.1：私聊按人、群/频道按会话，最终回落全局默认） */
+/* 本机「关闭焚毁」开关：按会话记在 localStorage（与 E2E 开关同一套写法），只影响本机发送 */
+function burnOffKey(cid) { return 'bm_burn_off_' + cid }
+function readBurnOff(cid) {
+  if (cid == null) return false
+  try { return localStorage.getItem(burnOffKey(cid)) === '1' } catch (e) { return false }
+}
+function writeBurnOff(cid, on) {
+  if (cid == null) return
+  try { on ? localStorage.setItem(burnOffKey(cid), '1') : localStorage.removeItem(burnOffKey(cid)) } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 读取当前会话的焚毁设置（V6.1：私聊按人、群/频道按会话）。
+ * 规则：没有单独设过人/群的，就是「关闭」——不再回落到账号全局默认（全局默认这一层已废弃）。
+ * 关闭状态下发送消息会显式带 burn_ttl_seconds=0，保证后端也不按默认值焚毁。
+ */
 export async function loadBurnSetting(conversationId) {
-  if (!conversationId || state.demoMode) return
+  if (!conversationId) return
+  if (state.demoMode) { state.burnOff = true; return } // 演示模式没有服务端设置 → 默认关闭
   try {
     const d = await api.getBurnSetting(conversationId)
     // 期间已切走会话：丢弃过期结果
     if (!state.chat || String(state.chat.id) !== String(conversationId)) return
-    state.burnSeconds = Number(d && d.effective_ttl_seconds) || 0
-    state.burnSource = (d && d.source) || 'none'
-    state.burnGlobalDefault = Number(d && d.global_default_seconds) || 0
-    state.burnMySetting = (d && d.my_setting) || null
+    const src = (d && d.source) || 'none'
+    const set = src === 'contact_setting' || src === 'conversation_setting' // 只有显式设置过才算开启
+    state.burnSeconds = set ? (Number(d && d.effective_ttl_seconds) || 0) : 0
+    state.burnSource = src
+    state.burnMySetting = set ? ((d && d.my_setting) || null) : null
+    state.burnGlobalDefault = 0 // 全局默认不再参与判定（保留字段仅为兼容旧引用）
+    state.burnOff = !set || readBurnOff(conversationId) // 没设置过 = 关闭
   } catch (e) { /* 静默：接口异常时按「不焚毁」展示，不打断聊天 */ }
 }
 
 /**
- * 设置当前会话的焚毁时长（V6.1）：
- *   私聊 → PUT/DELETE /burn-settings/users/:对方id（只约束我发给 TA 的消息）
- *   群/频道 → PUT/DELETE /burn-settings/conversations/:cid（只约束我在本群发的消息）
- *   v = 0 → 清除我的设置，回落全局默认
+ * 设置当前会话的焚毁时长（V6.1 + 本机「关闭」）：
+ *   v > 0：私聊 PUT /burn-settings/users/:对方id，群/频道 PUT /burn-settings/conversations/:cid，并清除本机「关闭」标记
+ *   v = 0：本机记住该会话不焚毁（发送时显式带 burn_ttl_seconds=0），同时清掉服务端的按人/按会话设置
  * 写成功后回读一次生效值，界面显示以后端为准。
  */
 export async function setBurn(v) {
   const c = state.chat
   if (!c) return
   const ttl = Number(v) || 0
-  state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
+  state.mediaBurnOn = false // 选档位即退出「语音视频焚毁模式」（互斥单选）
+  const peerId = c.type === 'private' ? (c.other_user && c.other_user.id) : null
+
+  if (!ttl) {
+    // 关闭：本机按会话记住，并清掉服务端设置（避免换设备后仍按旧设置焚毁）
+    state.burnOff = true
+    writeBurnOff(c.id, true)
+    if (!state.demoMode) {
+      try {
+        if (c.type === 'private' && peerId) await api.clearUserBurn(peerId)
+        else if (c.type !== 'private') await api.clearConversationBurn(c.id)
+        await loadBurnSetting(c.id)
+      } catch (e) { showToast((e && e.message) || '清除焚毁设置失败') ; return }
+    }
+    showToast('已关闭阅后即焚：该会话的消息不再焚毁（本机生效）')
+    return
+  }
+
+  state.burnOff = false
+  writeBurnOff(c.id, false)
   if (state.demoMode) {
     state.burnSeconds = ttl
-    state.burnSource = ttl ? 'contact_setting' : 'none'
-    state.burnMySetting = ttl ? { ttl_seconds: ttl } : null
-    if (ttl) showToast('阅后即焚：' + burnLabelOf(ttl))
-    else showToast('已关闭阅后即焚')
+    state.burnSource = 'contact_setting'
+    state.burnMySetting = { ttl_seconds: ttl }
+    showToast('阅后即焚：' + burnLabelOf(ttl))
     return
   }
   try {
     if (c.type === 'private') {
-      const peerId = c.other_user && c.other_user.id
       if (!peerId) throw new Error('缺少聊天对象，无法设置焚毁时长')
-      if (ttl) await api.setUserBurn(peerId, ttl)
-      else await api.clearUserBurn(peerId)
+      await api.setUserBurn(peerId, ttl)
     } else {
-      if (ttl) await api.setConversationBurn(c.id, ttl)
-      else await api.clearConversationBurn(c.id)
+      await api.setConversationBurn(c.id, ttl)
     }
     await loadBurnSetting(c.id)
-    if (ttl) {
-      const label = burnLabelOf(ttl)
-      showToast(state.e2eOn ? '已同时开启阅后焚毁与明文加密：密文将在 ' + label + ' 后销毁' : '阅后即焚：' + label)
-    } else if (state.burnSeconds) {
-      showToast('已清除个人设置，按全局默认 ' + burnLabelOf(state.burnSeconds) + ' 焚毁')
-    } else {
-      showToast('已关闭阅后即焚')
-    }
+    const label = burnLabelOf(ttl)
+    showToast(state.e2eOn ? '已同时开启阅后焚毁与明文加密：密文将在 ' + label + ' 后销毁' : '阅后即焚：' + label)
   } catch (e) {
     showToast((e && e.message) || '焚毁时长设置失败')
   }
 }
 
-/** 语音视频焚毁模式（播完即焚）：只作用于本会话的音视频发送，纯前端状态，不写服务端 */
+/** 语音视频焚毁模式（播完即焚）：只作用于本会话的音视频发送；开启时取消本机「关闭」标记 */
 export function setMediaBurn(v) {
   if (!state.chat) return
   state.mediaBurnOn = !!v
+  if (v) {
+    state.burnOff = false
+    writeBurnOff(state.chat.id, false)
+  }
   showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
 }
 
@@ -1483,11 +1517,12 @@ export async function sendText(text, mentions, replyToId) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
   if (replyToId) payload.reply_to_id = replyToId // 引用回复：被回复的 Message.id
   if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
-  // V6.1：生产环境不再传 burn_ttl_seconds —— 后端按 burn_settings（按人/按会话）解析并快照进消息
-  if (state.demoMode && state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 演示模式无后端解析，本地兜底
+  // V6.1：生产环境默认不传 burn_ttl_seconds（后端按 burn_settings 解析）；本机「关闭焚毁」时显式传 0 = 这条不焚毁
+  if (state.burnOff) payload.burn_ttl_seconds = 0
+  else if (state.demoMode && state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 演示模式无后端解析，本地兜底
   if (state.demoMode) {
     // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
-    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: state.burnSeconds ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
+    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
     ;(DEMO.messages[state.chat.id] = DEMO.messages[state.chat.id] || []).push(m)
     state.messages.push(m)
     state.chat.lastMsg = text
@@ -1594,11 +1629,13 @@ export async function sendFile(file) {
       // 非图片 / gif / 小图 / 压缩失败：原逻辑单上传（file_original_url 不填，下载即该文件）
       const up = await api.upload(file)
       const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
-      // 音视频「播完才焚」仍是消息级参数（V6.1 未改动）；普通文件的时长走后端 burn_settings 解析，这里不再传
+      // 音视频「播完才焚」仍是消息级参数（V6.1 未改动）；普通消息的时长走后端 burn_settings 解析
       if (isVideo && state.mediaBurnOn) {
         const _dv = await readVideoDurationSeconds(file)
         payload.burn_ttl_seconds = mediaBurnTtlFor(_dv)
         if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv))
+      } else if (state.burnOff) {
+        payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
       }
       const m = await api.sendMessage(payload)
       if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
@@ -1609,6 +1646,7 @@ export async function sendFile(file) {
     const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
     const up = await api.upload(cf)
     const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: up.file_size }
+    if (state.burnOff) payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
     const m = await api.sendMessage(payload)
     m.thumb_url = up.thumb_url || null
     pushMsgDedup(m)
@@ -1633,6 +1671,7 @@ export async function sendVoice(file, duration) {
     const up = await api.upload(file)
     const payload = { conversation_id: state.chat.id, type: 'voice', file_url: up.url, file_name: up.file_name, file_size: up.file_size, content: String(duration) }
     if (state.mediaBurnOn) { payload.burn_ttl_seconds = mediaBurnTtlFor(duration); const _d = Number(duration); if (_d > 0) payload.media_duration_seconds = Math.max(1, Math.round(_d)) }
+    else if (state.burnOff) payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
   } catch (e) {
