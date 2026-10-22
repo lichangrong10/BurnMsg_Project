@@ -7,7 +7,7 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { burnLabelOf, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { BURN_OPTIONS, burnLabelOf, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
@@ -620,15 +620,12 @@ export async function bootstrap() {
       state.me = keepLocalBurnPref(await api.getProfile())
       storage.user = state.me
       if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
-<<<<<<< HEAD
       // 焚毁时长持久化：档位跟着账号走（换设备/重装后仍保留），null/缺省 = 关闭
       const ttl = state.me && state.me.default_burn_ttl_seconds
       state.burnSeconds = (ttl == null || !(Number(ttl) > 0)) ? 0 : Number(ttl)
-=======
       const burnPref = burnPrefOfUser(state.me)
       state.burnSeconds = burnPref.seconds
       state.mediaBurnOn = burnPref.media
->>>>>>> main
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
     initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
@@ -1396,14 +1393,11 @@ function persistBurnPref() {
 export function setBurn(v) {
   state.burnSeconds = v
   state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
-<<<<<<< HEAD
   // 持久化到账号：PUT /auth/profile 三态语义（正整数=设置、null=清除、不传=不变），静默失败不打扰
   if (!state.demoMode) {
     api.updateProfile({ default_burn_ttl_seconds: v ? v : null }).catch(() => { /* 忽略：下次进 App 以服务端值为准 */ })
   }
-=======
   persistBurnPref()
->>>>>>> main
   if (v) {
     const label = burnLabelOf(v)
     if (state.e2eOn) showToast('已同时开启阅后焚毁与明文加密模式：密文将在 ' + label + ' 后销毁')
