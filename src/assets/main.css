@@ -303,9 +303,13 @@ body {
   padding: 10px 4px; max-height: 120px; font-family: inherit; background: transparent;
 }
 .burn-banner {
-  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 10px;
   background: #FFF4E0; color: #B25E00; font-size: 12.5px; font-weight: 500; flex-shrink: 0;
+  min-width: 0; /* 允许子项收缩，长文案单行省略而不是折行挤成两行 */
 }
+.burn-banner svg { flex: 0 0 auto; }
+.burn-banner .bb-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.burn-banner .bb-scope { opacity: .85; }
 
 /* ============ 弹层 ============ */
 .overlay { position: absolute; inset: 0; background: rgba(0,0,0,.4); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }

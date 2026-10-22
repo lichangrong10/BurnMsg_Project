@@ -50,10 +50,12 @@
       </div>
     </div>
 
-    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner">
+    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner" :title="burnBannerTitle">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-      <template v-if="state.mediaBurnOn">语音视频焚毁模式已开启：语音/视频播放完毕或中途退出即焚毁</template>
-      <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="burnScopeText">（{{ burnScopeText }}）</span><span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
+      <span class="bb-text">
+        <template v-if="state.mediaBurnOn">语音/视频 · 播完即焚</template>
+        <template v-else>阅后即焚 · {{ burnLabel }}后销毁<span v-if="burnScopeShort" class="bb-scope"> · {{ burnScopeShort }}</span></template><span v-if="state.e2eOn" class="bb-scope"> · 加密</span>
+      </span>
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
@@ -198,7 +200,7 @@
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" multiple style="display:none" @change="onFilePicked">
       
-      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? ((!state.burnOff && state.burnSeconds) ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : ((!state.burnOff && state.burnSeconds) ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
+      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? '加密消息' : ((!state.burnOff && state.burnSeconds) ? '阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -623,12 +625,25 @@ export default {
     burnLabel() {
       return state.burnSeconds ? burnLabelOf(state.burnSeconds) : ''
     },
-    /** 焚毁时长的作用范围说明（V6.1：私聊按人、群/频道按会话；没设置过 = 关闭，不回落到全局默认） */
-    burnScopeText() {
+    /** 焚毁作用范围：单行短文案（V6.1 私聊按人、群/频道按会话；没设置过 = 关闭） */
+    burnScopeShort() {
       const s = state.burnSource
-      if (s === 'contact_setting') return '仅对你发给对方的消息生效'
-      if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅对你在此频道发的消息生效' : '仅对你在此群发的消息生效'
+      if (s === 'contact_setting') return '仅对TA'
+      if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅本频道' : '仅本群'
       return ''
+    },
+    /** 悬停提示：完整说明（桌面端看细节，不占移动端版面） */
+    burnBannerTitle() {
+      if (state.mediaBurnOn) return '语音视频焚毁模式：语音/视频播放完毕或中途退出即焚毁（文字、图片不受影响）'
+      if (!state.burnSeconds) return ''
+      const scope = state.burnSource === 'contact_setting'
+        ? '仅约束我发给对方的消息'
+        : state.burnSource === 'conversation_setting'
+          ? (state.chat && state.chat.type === 'channel' ? '仅约束我在此频道发的消息' : '仅约束我在此群发的消息')
+          : ''
+      return '阅后即焚：对方点开后 ' + burnLabelOf(state.burnSeconds) + ' 销毁'
+        + (scope ? '（' + scope + '）' : '')
+        + (state.e2eOn ? '；同时开启明文加密（端到端密文）' : '')
     }
   },
   watch: {
