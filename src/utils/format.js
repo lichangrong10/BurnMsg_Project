@@ -108,6 +108,40 @@ export function fmtTime(t) {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+/** 消息时间戳解析：兼容 ISO 字符串 / 秒级 / 毫秒级 / 多种字段别名（取不到返回 0） */
+export function msgTimestamp(m) {
+  if (!m || typeof m !== 'object') return 0
+  const v = m.created_at ?? m.createdAt ?? m.sent_at ?? m.sentAt ?? m.timestamp ?? m.updated_at ?? m.updatedAt
+  if (v == null) return 0
+  const t = typeof v === 'number' ? v : Date.parse(v)
+  if (!Number.isFinite(t)) return 0
+  return t < 1e12 ? t * 1000 : t   // 秒级时间戳自动升到毫秒
+}
+
+const pad2 = n => String(n).padStart(2, '0')
+
+/**
+ * 聊天流「时间分隔条」文案：
+ *   今天      → 今天 15:33
+ *   昨天      → 昨天 15:33
+ *   更早      → 2026-10-20（远期只显示年月日，不显示时分；含年份，跨年不歧义）
+ */
+export function fmtChatDivider(t) {
+  // 三种入参都支持：毫秒/秒级数字、ISO 字符串、消息对象（取 created_at 等别名）
+  let ts = 0
+  if (typeof t === 'number') ts = Number.isFinite(t) ? (t < 1e12 ? t * 1000 : t) : 0
+  else if (typeof t === 'string') { const p = Date.parse(t); ts = Number.isFinite(p) ? (p < 1e12 ? p * 1000 : p) : 0 }
+  else ts = msgTimestamp(t)
+  if (!ts) return ''
+  const d = new Date(ts), now = new Date()
+  const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+  const ymd = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(d, now)) return '今天 ' + hm
+  if (sameDay(d, new Date(now.getTime() - 86400000))) return '昨天 ' + hm
+  return ymd
+}
+
 export function fmtClock(t) {
   return t ? new Date(t).toTimeString().slice(0, 5) : ''
 }

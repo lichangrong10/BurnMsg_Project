@@ -267,6 +267,9 @@ body {
 .msg-body.video .msg-meta { align-self: flex-end; margin: 5px 0 0 6px; padding: 2px 7px; background: var(--tg-blue-tint); color: var(--tg-blue); border-radius: 10px; font-size: 11px; }
 .msg-body.video .msg-meta .read-tag { color: var(--tg-green-check); }
 .msg-body.video .msg-meta .read-tag.unread { color: var(--tg-text-secondary); }
+/* 对方（收到）的消息：气泡下方的时间靠左对齐；自己发的保持靠右（上方 .msg-body .msg-meta 的 flex-end）
+   放在 video 规则之后，保证视频消息的时间也一起靠左；图片消息的 meta 是绝对定位在图片上，不受影响 */
+.msg-body.in .msg-meta { align-self: flex-start; }
 .bubble.video .img-caption { color: var(--tg-text); padding: 4px 2px 0; }
 .bubble.video .burn-chip { padding-left: 2px; }
 .bubble.file { padding-top: 14px; padding-bottom: 14px; }

@@ -60,6 +60,8 @@
       <div v-if="state.hasMore" style="text-align:center;color:#707579;font-size:13px;padding:8px;cursor:pointer" @click="loadEarlier">{{ state.loadingEarlier ? '加载中…' : '加载更早的消息' }}</div>
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
+        <!-- 时间分隔条：首条消息上方 + 相邻消息间隔 ≥30 分钟时插入 -->
+        <div v-if="showTimeDivider(m, i)" class="time-divider">{{ dividerText(m) }}</div>
         <div class="msg-row" :id="'msg-' + m.id" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
           <div class="msg-body" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }">
@@ -446,7 +448,7 @@ import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice,
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtDateTime, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
+import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtDateTime, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo, msgTimestamp, fmtChatDivider } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -705,6 +707,19 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    /** 是否在该消息上方显示时间分隔条：首条必显示；其余看与前一条的间隔是否 ≥30 分钟 */
+    showTimeDivider(m, i) {
+      const t = msgTimestamp(m)
+      if (!t) return false
+      if (i === 0) return true
+      const prev = msgTimestamp(state.messages[i - 1])
+      if (!prev) return true
+      return (t - prev) >= 30 * 60 * 1000
+    },
+    /** 分隔条文案：今天 15:33 / 昨天 15:33 / 2026-10-20 15:33 */
+    dividerText(m) {
+      return fmtChatDivider(msgTimestamp(m))
+    },
     /** 相对时间（短格式）：刚刚 / N 分钟前 / N 小时前 / N 天前（在线态副标题用） */
     fmtAgoShort(t) {
       if (!t) return ''
@@ -1901,6 +1916,17 @@ export default {
 
 
 .msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
+/* 聊天流时间分隔条（纯居中灰字，无底色）：首条消息上方 + 相邻消息间隔 ≥30 分钟时出现 */
+.time-divider {
+  text-align: center;
+  color: #8A9099;
+  font-size: 12px;
+  line-height: 16px;
+  padding: 10px 0 4px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 @keyframes replyFlash { 0%, 60% { box-shadow: 0 0 0 3px rgba(51,144,236,.35); } 100% { box-shadow: 0 1px 2px rgba(0,0,0,.09); } }
 .receipt-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; font-size: 15px; }
 .receipt-status { color: var(--tg-text-secondary); font-size: 13.5px; }
