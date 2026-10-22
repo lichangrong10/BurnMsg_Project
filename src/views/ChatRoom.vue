@@ -53,13 +53,15 @@
     <div v-if="state.burnSeconds || state.mediaBurnOn" class="burn-banner">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       <template v-if="state.mediaBurnOn">语音视频焚毁模式已开启：语音/视频播放完毕或中途退出即焚毁</template>
-      <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
+      <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="burnScopeText">（{{ burnScopeText }}）</span><span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
       <div v-if="state.hasMore" style="text-align:center;color:#707579;font-size:13px;padding:8px;cursor:pointer" @click="loadEarlier">{{ state.loadingEarlier ? '加载中…' : '加载更早的消息' }}</div>
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
+        <!-- 时间分隔条：首条消息上方 + 相邻消息间隔 ≥30 分钟时插入 -->
+        <div v-if="showTimeDivider(m, i)" class="time-divider">{{ dividerText(m) }}</div>
         <div class="msg-row" :id="'msg-' + m.id" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id }">
           <div v-if="m.sender_id !== state.me.id && state.chat.type !== 'private'" class="msg-avatar avatar" @contextmenu.prevent.stop="mentionSender(m)" @touchstart="mentionPressStart($event, m)" @touchend="mentionPressEnd" @touchmove="mentionPressCancel" @touchcancel="mentionPressCancel" :style="{ width: '28px', height: '28px', fontSize: '12px', background: avatarColor(senderName(m)) }"><img v-if="senderAvatar(m)" :src="senderAvatar(m)" alt=""><template v-else>{{ senderName(m)[0] }}</template></div>
           <div class="msg-body" :class="{ out: m.sender_id === state.me.id, in: m.sender_id !== state.me.id, img: isImgMsg(m), video: isVideoMsg(m) }">
@@ -224,8 +226,12 @@
     <div v-if="showBurnSheet" class="overlay" @click.self="showBurnSheet = false">
       <div class="sheet">
         <div class="sheet-title">阅后即焚 · 消息销毁时间</div>
-        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="(!state.mediaBurnOn && state.burnSeconds === o.v) ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
-          {{ o.label }}<svg v-if="!state.mediaBurnOn && state.burnSeconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        <!-- 清除我的设置：回落服务端全局默认（V6.1 没有「关闭」这个档位，清除后按全局默认执行） -->
+        <div class="sheet-item" :style="!state.mediaBurnOn && !state.burnMySetting ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(0)">
+          清除个人设置<small class="media-burn-sub">跟随全局默认{{ state.burnGlobalDefault ? '：' + globalDefaultLabel : '：不焚毁' }}</small><svg v-if="!state.mediaBurnOn && !state.burnMySetting" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <div v-for="o in burnOptions" :key="o.v" class="sheet-item" :style="(!state.mediaBurnOn && state.burnMySetting && state.burnMySetting.ttl_seconds === o.v) ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickBurn(o.v)">
+          {{ o.label }}<svg v-if="!state.mediaBurnOn && state.burnMySetting && state.burnMySetting.ttl_seconds === o.v" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </div>
         <div class="sheet-item" :style="state.mediaBurnOn ? 'font-weight:600;background:var(--tg-gray-bg)' : ''" @click="pickMediaBurn">
           语音视频焚毁模式<small class="media-burn-sub">播完即焚</small><svg v-if="state.mediaBurnOn" class="sheet-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
@@ -446,7 +452,7 @@ import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice,
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtDateTime, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo } from '../utils/format'
+import { BURN_OPTIONS, burnLabelOf, avatarColor, avatarSrc, convAvatar, convName, convInitial, fileURL, fmtClock, fmtDateTime, fmtSize, memberUser, memberUid, memberAvatar, memberName, getFileTypeInfo, msgTimestamp, fmtChatDivider } from '../utils/format'
 import { renderSheetHtml } from '../utils/xlsxRender'
 import { copyText } from '../utils/clipboard'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -459,7 +465,7 @@ export default {
   data() {
     return {
       state,
-      burnOptions: BURN_OPTIONS,
+      burnOptions: BURN_OPTIONS.filter(o => o.v > 0), // 0 档位由「清除个人设置」承担（V6.1 无「关闭」档，清除后回落全局默认）
       _autoRevealMediaDone: {},  // 已自动 reveal 的音视频焚毁消息 id（防重复）
       draft: '',
       mentionPick: false,   // @ 成员选择器是否打开
@@ -619,8 +625,19 @@ export default {
       return ago ? ago + '活跃' : '离线'
     },
     burnLabel() {
-      const o = BURN_OPTIONS.find(x => x.v === state.burnSeconds)
-      return o ? o.label : ''
+      return state.burnSeconds ? burnLabelOf(state.burnSeconds) : ''
+    },
+    /** 焚毁时长的作用范围说明（V6.1：私聊按人、群/频道按会话、兜底全局默认） */
+    burnScopeText() {
+      const s = state.burnSource
+      if (s === 'contact_setting') return '仅对你发给对方的消息生效'
+      if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅对你在此频道发的消息生效' : '仅对你在此群发的消息生效'
+      if (s === 'global_default') return '全局默认'
+      return ''
+    },
+    /** 面板里「清除个人设置」那一行的兜底说明文案 */
+    globalDefaultLabel() {
+      return state.burnGlobalDefault ? burnLabelOf(state.burnGlobalDefault) : '不焚毁'
     }
   },
   watch: {
@@ -705,6 +722,19 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    /** 是否在该消息上方显示时间分隔条：首条必显示；其余看与前一条的间隔是否 ≥30 分钟 */
+    showTimeDivider(m, i) {
+      const t = msgTimestamp(m)
+      if (!t) return false
+      if (i === 0) return true
+      const prev = msgTimestamp(state.messages[i - 1])
+      if (!prev) return true
+      return (t - prev) >= 30 * 60 * 1000
+    },
+    /** 分隔条文案：今天 15:33 / 昨天 15:33 / 2026-10-20 15:33 */
+    dividerText(m) {
+      return fmtChatDivider(msgTimestamp(m))
+    },
     /** 相对时间（短格式）：刚刚 / N 分钟前 / N 小时前 / N 天前（在线态副标题用） */
     fmtAgoShort(t) {
       if (!t) return ''
@@ -1098,9 +1128,9 @@ export default {
       const t = Date.parse((m && m.created_at) || '') || 0
       return t > 0 && t <= this.state.readWatermark
     },
-    pickBurn(v) {
-      setBurn(v)
+    async pickBurn(v) {
       this.showBurnSheet = false
+      await setBurn(v) // 写服务端后回读生效值（失败会 toast，界面保持原样）
     },
     pickMediaBurn() {
       setMediaBurn(true)
@@ -1901,6 +1931,17 @@ export default {
 
 
 .msg-row.highlight .bubble { animation: replyFlash 1.2s ease; }
+/* 聊天流时间分隔条（纯居中灰字，无底色）：首条消息上方 + 相邻消息间隔 ≥30 分钟时出现 */
+.time-divider {
+  text-align: center;
+  color: #8A9099;
+  font-size: 12px;
+  line-height: 16px;
+  padding: 10px 0 4px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 @keyframes replyFlash { 0%, 60% { box-shadow: 0 0 0 3px rgba(51,144,236,.35); } 100% { box-shadow: 0 1px 2px rgba(0,0,0,.09); } }
 .receipt-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; font-size: 15px; }
 .receipt-status { color: var(--tg-text-secondary); font-size: 13.5px; }

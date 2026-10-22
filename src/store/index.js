@@ -7,46 +7,17 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { BURN_OPTIONS, burnLabelOf, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { notifyNewMessage } from '../utils/notify'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 import { Capacitor } from '@capacitor/core'
 
-const BURN_FIELD = 'default_burn_ttl_seconds'
-const BURN_CODE_BASE = 11
-const MEDIA_BURN_CODE = BURN_CODE_BASE + BURN_OPTIONS.length
-const LEGACY_MEDIA_SENTINEL = -1
-
-function parseBurnPref(v) {
-  const n = Number(v)
-  if (n === LEGACY_MEDIA_SENTINEL) return { seconds: 0, media: true }
-  if (!Number.isFinite(n) || n === 0) return { seconds: 0, media: false }
-  const idx = n - BURN_CODE_BASE
-  if (idx >= 0 && idx < BURN_OPTIONS.length) return { seconds: BURN_OPTIONS[idx].v, media: false }
-  if (idx === BURN_OPTIONS.length) return { seconds: 0, media: true }
-  const tier = BURN_OPTIONS.find(o => o.v === n)
-  return { seconds: tier ? tier.v : 0, media: false }
-}
-
-function burnCode() {
-  if (state.mediaBurnOn) return MEDIA_BURN_CODE
-  const i = BURN_OPTIONS.findIndex(o => o.v === state.burnSeconds)
-  return BURN_CODE_BASE + (i < 0 ? 0 : i)
-}
-
-function keepLocalBurnPref(prof) {
-  if (!prof || typeof prof !== 'object') return prof
-  if (prof[BURN_FIELD] != null) return prof
-  const cached = storage.user && storage.user[BURN_FIELD]
-  return cached == null ? prof : { ...prof, [BURN_FIELD]: cached }
-}
-
-function burnPrefOfUser(u) {
-  return parseBurnPref(u && u[BURN_FIELD])
-}
-
-const initialBurnPref = burnPrefOfUser(storage.user)
+/* ─── 焚毁时长（V6.1）───
+   时长不再由客户端编码后塞进 app_users.default_burn_ttl_seconds，也不再随消息传：
+   私聊存「我对 TA 的设置」、群/频道存「我在本群的设置」，统一落在服务端 burn_settings；
+   生效值 = 会话设置 → 全局默认（app_users.default_burn_ttl_seconds，只读）→ 不焚毁。 */
 
 export const state = reactive({
   view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
@@ -64,8 +35,11 @@ export const state = reactive({
   hasMore: true,          // 当前会话是否还有更早的历史消息可加载
   msgSeq: 0,             // 非静默加载消息完成时 +1，聊天页据此强制滚到底部
   newMsgSeq: 0,          // 轮询发现「更新的消息」时 +1（按最新时间戳判定，不依赖条数变化）
-  burnSeconds: initialBurnPref.seconds, // 阅后即焚档位（秒），0 = 关闭
-  mediaBurnOn: initialBurnPref.media,   // 语音视频焚毁模式：开启后发送的语音/视频才参与「播完即焚」，关闭则音视频不参与焚毁
+  burnSeconds: 0,        // 当前会话生效的焚毁时长（秒），0 = 不焚毁；进会话时由 GET /burn-settings/conversations/:cid 解析
+  burnSource: 'none',    // 生效来源：contact_setting | conversation_setting | global_default | none
+  burnGlobalDefault: 0,  // 服务端全局默认（app_users.default_burn_ttl_seconds），只读展示
+  burnMySetting: null,   // 我在本会话的个人设置 { ttl_seconds, updated_at }，null = 未单独设置
+  mediaBurnOn: false,    // 语音视频焚毁模式（只作用于本次会话的音视频发送，纯前端状态，不写服务端）
   burnLeft: {},          // 焚毁本地倒计时：消息 id -> 剩余秒数（种入后端 remain_seconds，摆脱两端时钟偏差）
   burnMsgs: {},          // 焚毁消息快照：id -> {id,sender_id,created_at,conversation_id}（切走会话后焚毁也能持久化占位）
   mediaPending: {},      // 音视频焚毁消息待消费登记：id -> message 对象（已 reveal 未 consume，离开聊天页时批量 consume）
@@ -320,9 +294,6 @@ export async function login(phone, password) {
   storage.demo = false
   state.demoMode = false
   state.me = d.user
-  const burnPref = burnPrefOfUser(d.user)
-  state.burnSeconds = burnPref.seconds
-  state.mediaBurnOn = burnPref.media
   if (d.force_change_pwd || d.user.force_change_pwd) {
     state.view = 'changePwd'
     storage.forceChangePwd = true
@@ -341,9 +312,6 @@ export function enterDemo() {
   state.demoMode = true
   state.me = DEMO.me
   storage.user = DEMO.me
-  const burnPref = burnPrefOfUser(DEMO.me)
-  state.burnSeconds = burnPref.seconds
-  state.mediaBurnOn = burnPref.media
   state.view = 'main'
   bootstrap()
   showToast('已进入演示模式（数据为本地模拟）')
@@ -617,15 +585,10 @@ export async function bootstrap() {
   if (!state.demoMode) {
     if (storage.token) connectWs(storage.token) // 刷新页面后凭本地 token 恢复 WS 连接
     try {
-      state.me = keepLocalBurnPref(await api.getProfile())
+      state.me = await api.getProfile()
       storage.user = state.me
       if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
-      // 焚毁时长持久化：档位跟着账号走（换设备/重装后仍保留），null/缺省 = 关闭
-      const ttl = state.me && state.me.default_burn_ttl_seconds
-      state.burnSeconds = (ttl == null || !(Number(ttl) > 0)) ? 0 : Number(ttl)
-      const burnPref = burnPrefOfUser(state.me)
-      state.burnSeconds = burnPref.seconds
-      state.mediaBurnOn = burnPref.media
+      // 焚毁时长不再从账号字段解析：进会话时按 burn_settings 查生效值（见 loadBurnSetting）
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
     initE2E() // 异步：确保密钥对存在并上传公钥，不阻塞启动
   }
@@ -812,6 +775,12 @@ export async function openChat(c) {
   state.loadingEarlier = false
   state.hasMore = true // 重置已读水位线，私聊随后按回执重建
   state.e2eOn = c.type === 'private' && localStorage.getItem('bm_e2e_on_' + c.id) === '1' // 恢复本会话加密开关
+  // 焚毁时长：进会话按人/按会话解析生效值（V6.1，异步不阻塞消息加载）
+  state.burnSeconds = 0
+  state.burnSource = 'none'
+  state.burnMySetting = null
+  state.mediaBurnOn = false
+  if (!state.demoMode) loadBurnSetting(c.id)
   if (c.type !== 'private') loadGroupMembers() // 预取群成员：消息发送者名称/头像、群管理页共用
   await loadMessages()
   // 已读上报带上界：只标到「当前可见的最后一条」，避免刚进会话就把后面没看过的也标成已读
@@ -861,6 +830,11 @@ async function loadReadWatermark() {
 export function closeChat() {
   state.chat = null
   state.messages = []
+  // 焚毁时长是「按会话」的：离开就清空，避免下一个会话串用上一个的档位
+  state.burnSeconds = 0
+  state.burnSource = 'none'
+  state.burnMySetting = null
+  state.mediaBurnOn = false
   loadConvs(true)
 }
 
@@ -1081,7 +1055,32 @@ async function onWsNewMessage(p) {
     if (!mine) {
       const c = state.convs.find(x => String(x.id) === String(cid))
       if (c) c.unread = (c.unread || 0) + 1
-      if (!mentionsMe(m)) showToast('新消息：' + (messagePreview(m) || '').slice(0, 30)) // 会话外收到普通消息的文字提示（@ 已在上面统一提示）
+      // 右下角通知卡片（点击直达该会话）；@ 我的带前缀
+      const popCard = conv => {
+        // 私聊且会话详情没带 other_user 时，用发送者信息补个显示名，避免标题只剩「私聊」
+        if (conv && conv.type === 'private' && !conv.other_user && m.sender_id) {
+          const sender = state.contacts.find(u => String(u.id) === String(m.sender_id))
+          conv = { ...conv, other_user: sender || { id: m.sender_id } }
+        }
+        const mention = mentionsMe(m)
+        try {
+          notifyNewMessage({
+            title: (mention ? '@我 · ' : '') + convName(conv),
+            message: messagePreview(m) || '',
+            onClick: () => openChat(conv)
+          })
+        } catch (e) { /* 通知失败不影响消息处理 */ }
+      }
+      if (c) popCard(c)
+      else if (!state.demoMode) {
+        // 全新会话的首条消息：本地列表里还没有它，拉一次详情拿到名字再弹
+        api.getConversation(cid).then(conv => {
+          if (conv && conv.id) popCard(conv)
+          else showToast('新消息：' + (messagePreview(m) || '').slice(0, 30))
+        }).catch(() => showToast('新消息：' + (messagePreview(m) || '').slice(0, 30)))
+      } else {
+        showToast('新消息：' + (messagePreview(m) || '').slice(0, 30))
+      }
     }
     setLastMsg(cid, messagePreview(m))
   }
@@ -1406,35 +1405,68 @@ function readVideoDurationSeconds(file) {
     } catch (e) { resolve(0) }
   })
 }
-function persistBurnPref() {
-  const val = burnCode()
-  state.me = { ...state.me, [BURN_FIELD]: val }
-  storage.user = state.me
-  if (!state.demoMode) api.updateProfile({ [BURN_FIELD]: val }).catch(() => {})
+/** 读取当前会话生效的焚毁时长（V6.1：私聊按人、群/频道按会话，最终回落全局默认） */
+export async function loadBurnSetting(conversationId) {
+  if (!conversationId || state.demoMode) return
+  try {
+    const d = await api.getBurnSetting(conversationId)
+    // 期间已切走会话：丢弃过期结果
+    if (!state.chat || String(state.chat.id) !== String(conversationId)) return
+    state.burnSeconds = Number(d && d.effective_ttl_seconds) || 0
+    state.burnSource = (d && d.source) || 'none'
+    state.burnGlobalDefault = Number(d && d.global_default_seconds) || 0
+    state.burnMySetting = (d && d.my_setting) || null
+  } catch (e) { /* 静默：接口异常时按「不焚毁」展示，不打断聊天 */ }
 }
 
-export function setBurn(v) {
-  state.burnSeconds = v
+/**
+ * 设置当前会话的焚毁时长（V6.1）：
+ *   私聊 → PUT/DELETE /burn-settings/users/:对方id（只约束我发给 TA 的消息）
+ *   群/频道 → PUT/DELETE /burn-settings/conversations/:cid（只约束我在本群发的消息）
+ *   v = 0 → 清除我的设置，回落全局默认
+ * 写成功后回读一次生效值，界面显示以后端为准。
+ */
+export async function setBurn(v) {
+  const c = state.chat
+  if (!c) return
+  const ttl = Number(v) || 0
   state.mediaBurnOn = false // 选时长档位即退出「语音视频焚毁模式」（互斥单选）
-  // 持久化到账号：PUT /auth/profile 三态语义（正整数=设置、null=清除、不传=不变），静默失败不打扰
-  if (!state.demoMode) {
-    api.updateProfile({ default_burn_ttl_seconds: v ? v : null }).catch(() => { /* 忽略：下次进 App 以服务端值为准 */ })
+  if (state.demoMode) {
+    state.burnSeconds = ttl
+    state.burnSource = ttl ? 'contact_setting' : 'none'
+    state.burnMySetting = ttl ? { ttl_seconds: ttl } : null
+    if (ttl) showToast('阅后即焚：' + burnLabelOf(ttl))
+    else showToast('已关闭阅后即焚')
+    return
   }
-  persistBurnPref()
-  if (v) {
-    const label = burnLabelOf(v)
-    if (state.e2eOn) showToast('已同时开启阅后焚毁与明文加密模式：密文将在 ' + label + ' 后销毁')
-    else showToast('阅后即焚：' + label)
-  } else if (state.e2eOn) {
-    showToast('已关闭阅后即焚（明文加密仍开启）')
+  try {
+    if (c.type === 'private') {
+      const peerId = c.other_user && c.other_user.id
+      if (!peerId) throw new Error('缺少聊天对象，无法设置焚毁时长')
+      if (ttl) await api.setUserBurn(peerId, ttl)
+      else await api.clearUserBurn(peerId)
+    } else {
+      if (ttl) await api.setConversationBurn(c.id, ttl)
+      else await api.clearConversationBurn(c.id)
+    }
+    await loadBurnSetting(c.id)
+    if (ttl) {
+      const label = burnLabelOf(ttl)
+      showToast(state.e2eOn ? '已同时开启阅后焚毁与明文加密：密文将在 ' + label + ' 后销毁' : '阅后即焚：' + label)
+    } else if (state.burnSeconds) {
+      showToast('已清除个人设置，按全局默认 ' + burnLabelOf(state.burnSeconds) + ' 焚毁')
+    } else {
+      showToast('已关闭阅后即焚')
+    }
+  } catch (e) {
+    showToast((e && e.message) || '焚毁时长设置失败')
   }
 }
 
-/** 语音视频焚毁模式（播完即焚）：独立互斥档位，开启后发送的语音/视频播放完毕即焚毁，并退出其他焚毁时长档位 */
+/** 语音视频焚毁模式（播完即焚）：只作用于本会话的音视频发送，纯前端状态，不写服务端 */
 export function setMediaBurn(v) {
+  if (!state.chat) return
   state.mediaBurnOn = !!v
-  if (v) state.burnSeconds = 0 // 开启「语音视频焚毁模式」即退出时长档位（互斥单选）
-  persistBurnPref()
   showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
 }
 
@@ -1451,7 +1483,8 @@ export async function sendText(text, mentions, replyToId) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
   if (replyToId) payload.reply_to_id = replyToId // 引用回复：被回复的 Message.id
   if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
-  if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 点开才焚：传点开后多少秒焚毁（后端据此下发马赛克占位，点开 reveal 才给内容）
+  // V6.1：生产环境不再传 burn_ttl_seconds —— 后端按 burn_settings（按人/按会话）解析并快照进消息
+  if (state.demoMode && state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 演示模式无后端解析，本地兜底
   if (state.demoMode) {
     // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
     const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: state.burnSeconds ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
@@ -1561,10 +1594,11 @@ export async function sendFile(file) {
       // 非图片 / gif / 小图 / 压缩失败：原逻辑单上传（file_original_url 不填，下载即该文件）
       const up = await api.upload(file)
       const payload = { conversation_id: state.chat.id, type: isImg ? 'image' : 'file', file_url: up.url, file_name: up.file_name, file_size: up.file_size }
-      if (isVideo) {
-        if (state.mediaBurnOn) { const _dv = await readVideoDurationSeconds(file); payload.burn_ttl_seconds = mediaBurnTtlFor(_dv); if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv)) }
-      } else if (state.burnSeconds) {
-        payload.burn_ttl_seconds = state.burnSeconds
+      // 音视频「播完才焚」仍是消息级参数（V6.1 未改动）；普通文件的时长走后端 burn_settings 解析，这里不再传
+      if (isVideo && state.mediaBurnOn) {
+        const _dv = await readVideoDurationSeconds(file)
+        payload.burn_ttl_seconds = mediaBurnTtlFor(_dv)
+        if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv))
       }
       const m = await api.sendMessage(payload)
       if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
@@ -1575,7 +1609,6 @@ export async function sendFile(file) {
     const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
     const up = await api.upload(cf)
     const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: up.file_size }
-    if (state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds
     const m = await api.sendMessage(payload)
     m.thumb_url = up.thumb_url || null
     pushMsgDedup(m)
@@ -2068,7 +2101,7 @@ export async function updateProfile(payload) {
     return true
   }
   try {
-    state.me = keepLocalBurnPref(await api.updateProfile(payload))
+    state.me = await api.updateProfile(payload)
     storage.user = state.me
     showToast('资料已更新')
     return true

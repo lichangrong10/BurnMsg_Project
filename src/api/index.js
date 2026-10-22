@@ -36,6 +36,18 @@ export const api = {
   getMessages: (conversationId, params = {}) => http.get(`/messages/${conversationId}`, { params: { limit: 50, ...params } }),
   sendMessage: payload => http.post('/messages', payload),
 
+  // ── 焚毁时长（V6.1：按人 / 按会话，存服务端 burn_settings）──
+  // 生效时长：进会话查一次，返回 { effective_ttl_seconds, source, my_setting, global_default_seconds, counterpart }
+  getBurnSetting: conversationId => http.get(`/burn-settings/conversations/${conversationId}`),
+  // 私聊：设置「我发给 TA 的消息」的时长；清除 = 回落全局默认
+  setUserBurn: (userId, ttl_seconds) => http.put(`/burn-settings/users/${userId}`, { ttl_seconds }),
+  clearUserBurn: userId => http.delete(`/burn-settings/users/${userId}`),
+  // 群/频道：设置「我在这个会话里发的消息」的时长（私聊用会 400）
+  setConversationBurn: (conversationId, ttl_seconds) => http.put(`/burn-settings/conversations/${conversationId}`, { ttl_seconds }),
+  clearConversationBurn: conversationId => http.delete(`/burn-settings/conversations/${conversationId}`),
+  // 我的按人设置列表（设置页用）
+  getBurnSettings: (params = {}) => http.get('/burn-settings/users', { params: { page: 1, pageSize: 50, ...params } }),
+
   // ── 端到端加密（E2E） ──
   uploadIdentityKey: identity_pubkey => http.post('/keys', { identity_pubkey }), // 上传自己的 X25519 公钥（覆盖语义）
   getIdentityKey: userId => http.get(`/keys/${userId}`), // 查对方公钥（需同会话，404=对方未上传）

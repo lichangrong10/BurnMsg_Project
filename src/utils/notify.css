@@ -1,0 +1,41 @@
+/* 右下角新消息通知：贴合焚信现有配色（Telegram 风），移动端铺满宽度避免超出屏幕 */
+.el-notification.bm-notify {
+  width: 320px;
+  border-radius: 12px;
+  border: 1px solid var(--tg-divider, #e6e8ea);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  padding: 12px 14px;
+}
+
+.el-notification.bm-notify .el-notification__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tg-text, #0f1419);
+  margin: 0 20px 2px 0;
+}
+
+.el-notification.bm-notify .el-notification__content {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tg-text-secondary, #707579);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.el-notification.bm-notify .el-notification__closeBtn {
+  top: 10px;
+  right: 10px;
+}
+
+@media (max-width: 640px) {
+  .el-notification.bm-notify {
+    left: 12px !important;
+    right: 12px !important;
+    width: auto;
+  }
+}
