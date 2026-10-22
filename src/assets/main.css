@@ -499,3 +499,27 @@ html.bm-desktop .app-root.view-main.layout-desktop .tab-item .tab-badge {
 
 /* 宽屏下弹窗适度限宽 */
 html.bm-desktop .dialog { max-width: 440px; }
+/* 设置项里的开关（桌面消息通知） */
+.notify-switch {
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: #cfd4d9;
+  position: relative;
+  transition: background .15s ease;
+  vertical-align: middle;
+}
+.notify-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  transition: left .15s ease;
+}
+.notify-switch.on { background: var(--tg-blue); }
+.notify-switch.on i { left: 18px; }

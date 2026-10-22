@@ -8,7 +8,7 @@ import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
 import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
-import { notifyNewMessage } from '../utils/notify'
+import { notifyNewMessage, notifySystem } from '../utils/notify'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
@@ -1066,12 +1066,15 @@ async function onWsNewMessage(p) {
           conv = { ...conv, other_user: sender || { id: m.sender_id } }
         }
         const mention = mentionsMe(m)
+        // 标题统一加「焚信 · 」前缀，多标签/通知中心里一眼能认出是哪个应用；@我 放在名字后面
+        const title = '焚信 · ' + convName(conv) + (mention ? '（@我）' : '')
+        const body = messagePreview(m) || ''
+        // 页面在后台 → 系统通知（Windows 通知中心）；前台或未开启 → 右下角卡片
+        const hidden = typeof document !== 'undefined' && document.hidden
+        // tag 带上消息 id：同会话的每条消息各自成一条通知，避免被系统按 tag 替换成"只出现一次"
+        if (hidden && notifySystem({ title, body, tag: String(cid) + ':' + String(m.id), onClick: () => openChat(conv) })) return
         try {
-          notifyNewMessage({
-            title: (mention ? '@我 · ' : '') + convName(conv),
-            message: messagePreview(m) || '',
-            onClick: () => openChat(conv)
-          })
+          notifyNewMessage({ title, message: body, onClick: () => openChat(conv) })
         } catch (e) { /* 通知失败不影响消息处理 */ }
       }
       if (c) popCard(c)
