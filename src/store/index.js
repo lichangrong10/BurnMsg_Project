@@ -2,7 +2,7 @@
  * 全局状态 + 业务动作（轻量 store，无第三方依赖）
  * 视图组件通过 import { state, ...actions } 使用
  */
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
@@ -640,6 +640,29 @@ async function initE2E() {
     state.e2eReady = true
   } catch (e) { console.warn('[焚信] E2E 初始化失败:', e && e.message) }
 }
+
+/* ─── 标签页标题：跟随未读消息数变化 ───
+   无未读：焚信 BurnMsg · 企业加密通讯
+   有未读：焚信 · 您收到了 N 条消息
+   N = 各会话未读之和（与首页「会话」页签的角标同口径：新消息 +1、点开会话清零、服务端回填） */
+const DEFAULT_TITLE = '焚信 BurnMsg · 企业加密通讯'
+
+/** 各会话未读总和 */
+function convUnreadTotal() {
+  let n = 0
+  for (const c of state.convs) n += Math.max(0, Number(c.unread) || 0)
+  return n
+}
+
+/** 按当前未读数同步标签页标题（纯文字，不涉及图标） */
+export function refreshTitle() {
+  if (typeof document === 'undefined') return
+  const n = convUnreadTotal()
+  document.title = n > 0 ? ('焚信 · 您收到了' + n + '条消息') : DEFAULT_TITLE
+}
+
+// 未读数变化即刷新：新消息 +1、打开会话清零、会话列表从服务端重拉
+watch(convUnreadTotal, refreshTitle)
 
 export async function loadConvs(quiet) {
   if (state.demoMode) {
