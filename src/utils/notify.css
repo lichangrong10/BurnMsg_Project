@@ -1,4 +1,6 @@
-/* 右下角新消息通知：贴合焚信现有配色（Telegram 风），移动端铺满宽度避免超出屏幕 */
+/* 右下角新消息通知：贴合焚信现有配色（Telegram 风）。
+   移动端不展示这条卡片（store 里按 state.layout === 'mobile' 直接跳过），
+   所以这里只处理桌面尺寸；窄屏兜底隐藏，避免任何漏网场景压住聊天内容。 */
 .el-notification.bm-notify {
   width: 320px;
   border-radius: 12px;
@@ -33,9 +35,5 @@
 }
 
 @media (max-width: 640px) {
-  .el-notification.bm-notify {
-    left: 12px !important;
-    right: 12px !important;
-    width: auto;
-  }
+  .el-notification.bm-notify { display: none !important; }
 }

@@ -50,10 +50,12 @@
       </div>
     </div>
 
-    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner">
+    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner" :title="burnBannerTitle">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-      <template v-if="state.mediaBurnOn">语音视频焚毁模式已开启：语音/视频播放完毕或中途退出即焚毁</template>
-      <template v-else>阅后即焚已开启：消息将在 {{ burnLabel }} 后销毁<span v-if="burnScopeText">（{{ burnScopeText }}）</span><span v-if="state.e2eOn"> · 明文加密（端到端密文）</span></template>
+      <span class="bb-text">
+        <template v-if="state.mediaBurnOn">语音/视频 · 播完即焚</template>
+        <template v-else>阅后即焚 · {{ burnLabel }}后销毁<span v-if="burnScopeShort" class="bb-scope"> · {{ burnScopeShort }}</span></template><span v-if="state.e2eOn" class="bb-scope"> · 加密</span>
+      </span>
     </div>
 
     <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
@@ -198,7 +200,7 @@
       <input type="file" ref="cameraInput" accept="image/*" capture="camera" style="display:none" @change="onFilePicked">
       <input type="file" ref="fileInput" multiple style="display:none" @change="onFilePicked">
       
-      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? ((!state.burnOff && state.burnSeconds) ? '加密消息 · 阅后即焚' : '加密消息 · 端到端') : ((!state.burnOff && state.burnSeconds) ? '消息 · 阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
+      <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? '加密消息' : ((!state.burnOff && state.burnSeconds) ? '阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
       <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -444,7 +446,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -623,12 +625,25 @@ export default {
     burnLabel() {
       return state.burnSeconds ? burnLabelOf(state.burnSeconds) : ''
     },
-    /** 焚毁时长的作用范围说明（V6.1：私聊按人、群/频道按会话；没设置过 = 关闭，不回落到全局默认） */
-    burnScopeText() {
+    /** 焚毁作用范围：单行短文案（V6.1 私聊按人、群/频道按会话；没设置过 = 关闭） */
+    burnScopeShort() {
       const s = state.burnSource
-      if (s === 'contact_setting') return '仅对你发给对方的消息生效'
-      if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅对你在此频道发的消息生效' : '仅对你在此群发的消息生效'
+      if (s === 'contact_setting') return '仅对TA'
+      if (s === 'conversation_setting') return state.chat && state.chat.type === 'channel' ? '仅本频道' : '仅本群'
       return ''
+    },
+    /** 悬停提示：完整说明（桌面端看细节，不占移动端版面） */
+    burnBannerTitle() {
+      if (state.mediaBurnOn) return '语音视频焚毁模式：语音/视频播放完毕或中途退出即焚毁（文字、图片不受影响）'
+      if (!state.burnSeconds) return ''
+      const scope = state.burnSource === 'contact_setting'
+        ? '仅约束我发给对方的消息'
+        : state.burnSource === 'conversation_setting'
+          ? (state.chat && state.chat.type === 'channel' ? '仅约束我在此频道发的消息' : '仅约束我在此群发的消息')
+          : ''
+      return '阅后即焚：对方点开后 ' + burnLabelOf(state.burnSeconds) + ' 销毁'
+        + (scope ? '（' + scope + '）' : '')
+        + (state.e2eOn ? '；同时开启明文加密（端到端密文）' : '')
     }
   },
   watch: {
@@ -640,6 +655,7 @@ export default {
     'state.msgSeq'() {
       this.autoRevealMedia()
       this.loadMentionReceipts()
+      this.scheduleReadProgressRefresh(10) // 群聊：进会话/翻页后拉最近几条自己消息的已读进度
       const targetId = state.targetMessageId
       if (targetId) {
         state.targetMessageId = null
@@ -670,6 +686,11 @@ export default {
     'state.messages.length'() {
       this.autoRevealMedia()
       if (this.stickBottom) this.scrollBottom()
+      this.scheduleReadProgressRefresh(10) // 群聊：新消息/自己刚发的消息，补拉已读进度
+    },
+    // 有人读了消息（receipt:read）→ 群聊「N/M 已读」重新聚合（强制重拉成员，不用缓存）
+    'state.receiptSeq'() {
+      this.scheduleReadProgressRefresh(3, true)
     },
     // 切换会话 → 频道会话时拉「我的频道」id，兜底判断作者身份
     'state.chat.id'(id) {
@@ -700,12 +721,19 @@ export default {
     // 群 @消息 已读回执：进聊天页先拉一次，之后每 5s 刷新（别人读到你的 @消息后头像/已读态实时出现）
     this.loadMentionReceipts()
     this._receiptTimer = setInterval(() => { this.loadMentionReceipts() }, 5000)
+    // 群聊「N/M 已读」兜底轮询：后端 receipt:read 不一定每次推送，10s 刷一次最近几条
+    this._progressTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      this.scheduleReadProgressRefresh(3)
+    }, 10000)
     this.autoRevealMedia()
   },
   beforeUnmount() {
     flushPendingMedia() // 卸载时消费剩余的已点开音视频焚毁消息
     window.removeEventListener('bm-back', this.onNativeBack)
     if (this._receiptTimer) { clearInterval(this._receiptTimer); this._receiptTimer = null }
+    if (this._rpTimer) { clearTimeout(this._rpTimer); this._rpTimer = null }
+    if (this._progressTimer) { clearInterval(this._progressTimer); this._progressTimer = null }
     Object.values(this.revealTickers).forEach(clearInterval)
     if (window.visualViewport && this.vvResize) window.visualViewport.removeEventListener('resize', this.vvResize)
     if (this.voiceTimer) clearInterval(this.voiceTimer)
@@ -861,9 +889,10 @@ export default {
       const s = fmtDateTime(t)
       return s || ''
     },
-    /** 群聊已读进度文案（仅本人、群/频道、非撤回/焚毁的消息）：'3/4 已读'；数据未拉取时返回空串不占位 */
+    /** 群聊已读进度文案（仅本人、群/频道、未撤回）：'3/4 已读'；数据未拉取时返回空串不占位。
+     *  墓碑（已焚毁）也展示「焚毁前最后已知」的已读状态。 */
     readProgress(m) {
-      if (!m || m.is_recalled || this.isBurned(m)) return ''
+      if (!m || m.is_recalled) return ''
       if (!state.chat || state.chat.type === 'private') return ''
       if (String(m.sender_id) !== String(state.me.id)) return ''
       const r = state.readers[this.e2eKey(m)]
@@ -875,12 +904,33 @@ export default {
         : ((Array.isArray(r.readers) ? r.readers : []).filter(x => x.is_read).length)
       return read + '/' + total + ' 已读'
     },
-    /** 打开已读进度明细：拉一次 api.getReaders（失败则用缓存渲染） */
+    /** 打开已读进度明细：用 /receipt 聚合（/readers 已被后端移除） */
     async openReaders(m) {
       if (!m) return
       this.readersMsg = m
       this.readersLoading = true
       try { await loadReaders(m) } finally { this.readersLoading = false }
+    },
+    /** 群聊已读进度自动刷新（节流）：进入会话、发消息、收到回执时各触发一次；force=true 时强制重拉成员 */
+    scheduleReadProgressRefresh(limit, force) {
+      if (!state.chat || state.chat.type === 'private') return
+      this._rpLimit = Math.max(this._rpLimit || 0, Number(limit) || 0)
+      if (force) this._rpForce = true
+      if (this._rpTimer) clearTimeout(this._rpTimer)
+      this._rpTimer = setTimeout(() => { this.refreshReadProgress() }, 400)
+    },
+    async refreshReadProgress() {
+      if (!state.chat || state.chat.type === 'private') return
+      if (this._rpBusy) return
+      const force = !!this._rpForce
+      this._rpLimit = 0
+      this._rpForce = false
+      this._rpBusy = true
+      try {
+        const mine = state.messages.filter(m => String(m.sender_id) === String(state.me.id) && !m.is_recalled)
+        // 一次取成员、本地批量算完（不逐条发请求）；已焚毁的墓碑也一起算，展示「焚毁前最后已知」的已读状态
+        await loadReadersMany(mine, force)
+      } finally { this._rpBusy = false }
     },
     /** 已读进度渲染数据：{ total, revealed, burned, readers:[{name,avatar,read,revealed}] } */
     readersInfo(m) {
@@ -1775,7 +1825,10 @@ export default {
     /** 回执成员的头像/名字：优先从群成员列表按 user_id 匹配，兜底回执自带 display name */
     receiptMeta(r) {
       const gm = (state.groupMembers || []).find(x => String(memberUid(x)) === String(r.user_id))
-      const name = r.user_display_name || (gm ? memberName(gm) : '') || '成员'
+      const gmName = gm ? memberName(gm) : ''
+      // r.user_display_name 可能是兜底文案「成员」，这时优先用群成员里的真实姓名
+      const own = (r.user_display_name && r.user_display_name !== '成员') ? r.user_display_name : ''
+      const name = own || gmName || r.user_display_name || '成员'
       const avatar = gm ? memberAvatar(gm) : null
       return { name, avatar }
     },

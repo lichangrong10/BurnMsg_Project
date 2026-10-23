@@ -77,19 +77,25 @@ export function memberUser(m) {
 }
 
 /** 成员显示名：多字段名兼容，display_name 优先，兜底手机号，再退『成员』 */
-const MEMBER_NAME_KEYS = ['display_name', 'name', 'username', 'nickname', 'nick_name', 'real_name', 'user_name', 'member_name', 'full_name', 'phone']
+const MEMBER_NAME_KEYS = ['display_name', 'user_display_name', 'name', 'username', 'nickname', 'nick_name', 'real_name', 'user_name', 'member_name', 'full_name', 'phone']
 export function memberName(m) {
   const u = memberUser(m)
   for (const k of MEMBER_NAME_KEYS) {
     const v = u[k]
     if (typeof v === 'string' && v.trim()) return v
   }
+  // 原始成员行（后端直出）姓名在顶层 user_display_name，不在嵌套 user 里
+  if (m && typeof m === 'object' && typeof m.user_display_name === 'string' && m.user_display_name.trim()) return m.user_display_name
   return '成员'
 }
 
-/** 成员头像 URL（无则 null） */
+/** 成员头像 URL（无则 null）；兼容后端直出的 user_avatar_url */
 export function memberAvatar(m) {
-  return avatarSrc(memberUser(m))
+  const u = memberUser(m)
+  const url = avatarSrc(u)
+  if (url) return url
+  const raw = m && typeof m === 'object' ? (m.user_avatar_url || null) : null
+  return raw ? avatarSrc({ avatar_url: raw }) : null
 }
 
 /** 成员用户 ID：user_id 优先，兼容嵌套结构，最后才退到记录 id */
@@ -163,11 +169,14 @@ export function fmtSize(s) {
   return (s / 1073741824).toFixed(2) + ' GB'
 }
 
-/** 消息 → 会话列表预览文本（撤回/媒体类型做占位文案） */
+/** 消息 → 会话列表预览文本（撤回/焚毁/加密/媒体类型都做占位文案，绝不泄露正文） */
 export function messagePreview(m) {
   if (!m || typeof m !== 'object') return ''
   if (m.is_recalled) return '此消息已撤回'
   if (m.is_blurred) return '焚毁消息'
+  // 焚毁消息：即使是自己发的、或后端已经把正文返回（发送方/已点开），预览也只能显示占位，
+  // 否则会话列表会直接把焚毁消息的明文漏出来
+  if (m.burn_ttl_seconds != null || m.burn_at != null || m.destroy_at != null || m.is_burned) return '焚毁消息'
   if (m.is_encrypted || m.e2e === true || m.e2eFail === true) return '加密消息'
   switch (m.type) {
     case 'text': return m.content || ''

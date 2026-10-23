@@ -61,6 +61,11 @@
         <span class="cell-label">主题颜色</span>
         <span class="cell-value"><span class="theme-dot" :style="{ background: themeColor }"></span>{{ themeColor }}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px"><path d="m9 18 6-6-6-6"/></svg></span>
       </div>
+      <div class="cell" v-if="sysNotifyAvailable" @click="toggleSysNotify">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="cell-label">桌面消息通知</span>
+        <span class="cell-value"><span class="notify-switch" :class="{ on: sysNotifyEnabled }"><i></i></span></span>
+      </div>
       <div class="cell" v-if="state.me.role === 'admin'" @click="state.showAdmin = true">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 8 2 2 4-4"/></svg>
         <span class="cell-label">账号管理</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
@@ -208,6 +213,7 @@ import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
 import { storage } from '../utils/storage'
 import { onWs, WS_EVENTS } from '../utils/ws'
+import { sysNotifySupported, sysNotifyOn, setSysNotifyOn, requestSysNotifyPermission } from '../utils/notify'
 import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
 import { initPush, getPushRegistrationId, getPushAlias, pushDiag, isPushActive, ensureNotificationPermission, checkNotificationPermission, openNotificationSettings } from '../utils/push'
 import { enableKeepAlive, setKeepAlive, isKeepAliveOn } from '../utils/keepalive'
@@ -233,6 +239,8 @@ export default {
       showLogout: false,
       showTheme: false,
       themeColor: getThemeColor(),
+      sysNotifyAvailable: sysNotifySupported(), // 桌面浏览器才显示这一行
+      sysNotifyEnabled: sysNotifyOn(),          // 用户开关（localStorage）
       // 检查更新相关
       appVersionName: '1.0',
       updateStatus: '',          // '' | 'checking' | 'latest' | 'available'
@@ -285,6 +293,26 @@ export default {
   methods: {
     avatarColor,
     avatarSrc,
+    /** 桌面消息通知开关：打开时才申请浏览器通知权限（有用户手势，Chrome 才会真正弹授权框） */
+    async toggleSysNotify() {
+      if (!this.sysNotifyAvailable) return
+      if (this.sysNotifyEnabled) {
+        setSysNotifyOn(false)
+        this.sysNotifyEnabled = false
+        showToast('已关闭桌面消息通知')
+        return
+      }
+      const perm = await requestSysNotifyPermission()
+      if (perm === 'granted') {
+        setSysNotifyOn(true)
+        this.sysNotifyEnabled = true
+        showToast('已开启：窗口最小化时用系统通知提醒新消息')
+      } else if (perm === 'denied') {
+        showToast('通知权限被拒绝，请在浏览器地址栏的站点设置里允许通知')
+      } else {
+        showToast('未获得通知权限')
+      }
+    },
     openFeedback,
     openNotifyGuide,
     /** 是否本机：主判据是登录时存下的设备表主键（storage.deviceRowId），

@@ -8,7 +8,7 @@ import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
 import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
-import { notifyNewMessage } from '../utils/notify'
+import { notifyNewMessage, notifySystem } from '../utils/notify'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS, isWsConnected } from '../utils/ws'
 import { bindPushAlias, unbindPushAlias, isPushActive } from '../utils/push'
 import { setupAppState } from '../utils/appstate'
@@ -74,7 +74,9 @@ export const state = reactive({
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
+  groupMembersAt: 0,      // 群成员列表拉取时间（群已读进度据此判断是否要重拉）
   readWatermark: 0,       // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
+  receiptSeq: 0,          // 收到 receipt:read 时 +1（驱动群聊「3/4 已读」重新聚合）
   showAnnouncements: false, // 公告中心页（覆盖层）
   announcements: [],      // 公告列表（含 is_read 标记）
   annUnread: 0,           // 未读公告数（首页铃铛角标）
@@ -254,9 +256,62 @@ export async function confirmDestroyed(cid) {
   }
 }
 
-/* 群聊已读进度：拉取单条消息的阅读者（api.getReaders），缓存到 state.readers 供气泡下方「3/4 已读」展示。
-   失败静默返回 null（不展示），不阻塞消息渲染。 */
-export async function loadReaders(m) {
+/* 群聊已读进度（自己的消息「N/M 已读」）。
+   后端已移除 /messages/{id}/readers，且 receipt.is_read 目前不会被 read 接口更新，
+   所以真实来源是成员的 last_read_message_id（/groups/{cid}/members）：
+   成员的最后已读消息时间 ≥ 本条消息时间 → 该成员已读。
+   结果缓存到 state.readers，供气泡下方进度和明细面板使用。失败静默。 */
+const READER_NAME_OK = n => !!(n && n !== '成员')
+
+/** 用一份成员列表算出单条消息的已读聚合（纯本地计算，不发请求）。
+ *  墓碑消息（已焚毁）也用同一个规则：按 created_at 与成员 last_read 位置比较，得到「焚毁前最后已知」的已读状态。 */
+function computeReaderAgg(m, members) {
+  const mTime = msgTime(m)
+  const readers = (members || [])
+    .filter(x => String(memberUid(x)) !== String(state.me.id))
+    .map(x => {
+      const lr = x && x.last_read_message_id
+      let read = false
+      if (lr != null) {
+        if (String(lr) === String(m.id)) read = true
+        else if (mTime > 0) {
+          const lrMsg = state.messages.find(y => String(y.id) === String(lr))
+          read = !!(lrMsg && msgTime(lrMsg) >= mTime)
+        }
+      }
+      const nm = memberName(x)
+      return { user_id: memberUid(x), user_display_name: READER_NAME_OK(nm) ? nm : '', is_read: read, is_revealed: false, read_at: null, burn_at: null }
+    })
+  return { total: readers.length, revealed: readers.filter(r => r.is_read).length, burned: 0, readers }
+}
+
+/** 取成员列表：force 或缓存超过 8 秒才重拉；重拉走 enrichMemberList，避免原始行覆盖导致姓名丢失 */
+async function ensureMembersForReaders(force) {
+  const cid = state.chat && state.chat.id
+  if (!cid) return null
+  let members = state.groupMembers
+  if (force || !members || !members.length || (Date.now() - (state.groupMembersAt || 0)) > 8000) {
+    members = enrichMemberList(asArray(await api.getGroupMembers(cid)))
+    state.groupMembers = members
+    state.groupMembersAt = Date.now()
+  }
+  return members
+}
+
+/** 批量计算多条消息的已读进度：一次成员请求 + 本地循环，避免逐条发请求 */
+export async function loadReadersMany(msgs, force) {
+  const list = (msgs || []).filter(m => m && m.id != null)
+  if (!list.length) return
+  const cid = state.chat && state.chat.id
+  if (!cid || state.chat.type === 'private' || state.demoMode) return
+  try {
+    const members = await ensureMembersForReaders(force)
+    if (!members) return
+    for (const m of list) state.readers[String(m.id)] = computeReaderAgg(m, members)
+  } catch (e) { /* 静默 */ }
+}
+
+export async function loadReaders(m, force) {
   if (!m || m.id == null) return null
   const key = String(m.id)
   if (state.demoMode) {
@@ -266,10 +321,14 @@ export async function loadReaders(m) {
     state.readers[key] = mock
     return mock
   }
+  const cid = state.chat && state.chat.id
+  if (!cid || state.chat.type === 'private') return null
   try {
-    const r = await api.getReaders(m.id)
-    if (r && (Array.isArray(r.readers) || r.total != null)) state.readers[key] = r
-    return r
+    const members = await ensureMembersForReaders(force)
+    if (!members) return null
+    const agg = computeReaderAgg(m, members)
+    state.readers[key] = agg
+    return agg
   } catch (e) {
     return null
   }
@@ -415,6 +474,56 @@ export function togglePin(c) {
 /* ─── 会话删除（本地隐藏，不调用后端删除；收到新消息也不恢复显示） ─── */
 export function hiddenConvIds() {
   try { return JSON.parse(localStorage.getItem('bm_hidden_convs') || '[]') } catch { return [] }
+}
+
+/* ─── 本机「已读到哪」标记（按会话）───
+   后端 unread_count 不随已读减少（实测读完后仍是旧值），刷新会把已读又显示成未读；
+   这里记住本机最后一次读到的时间点，会话最后一条消息不晚于它就算已读。 */
+function readMarkKey(cid) { return 'bm_read_mark_' + cid }
+export function getReadMark(cid) {
+  if (cid == null) return 0
+  try { return Number(localStorage.getItem(readMarkKey(cid))) || 0 } catch (e) { return 0 }
+}
+export function setReadMark(cid, iso) {
+  if (cid == null) return
+  const t = Date.parse(iso || '') || Date.now()
+  try { localStorage.setItem(readMarkKey(cid), String(t)) } catch (e) { /* 忽略 */ }
+}
+
+/* ─── 本机未读计数 ───
+   后端 unread_count 只增不减（实测读完仍是旧值），跨端不可信；这里完全由本机维护：
+   收到 WS 消息 +1、进会话清零；没有本地记录的会话在首次加载时按「上次读到的时间点」数一遍。 */
+function unreadStore() {
+  try { return JSON.parse(localStorage.getItem('bm_unread_local') || '{}') } catch (e) { return {} }
+}
+function saveUnreadStore(m) {
+  try { localStorage.setItem('bm_unread_local', JSON.stringify(m)) } catch (e) { /* 忽略 */ }
+}
+export function getLocalUnread(cid) {
+  if (cid == null) return null
+  const v = unreadStore()[String(cid)]
+  return v == null ? null : Math.max(0, Number(v) || 0)
+}
+export function setLocalUnread(cid, n) {
+  if (cid == null) return
+  const m = unreadStore()
+  m[String(cid)] = Math.max(0, Math.floor(Number(n) || 0))
+  saveUnreadStore(m)
+}
+
+/** 首次补算：按「我的已读时间点」数出该会话真实的未读条数（每个会话只会算一次） */
+async function fillLocalUnread(list) {
+  for (const c of list || []) {
+    if (state.demoMode) return
+    try {
+      const msgs = asArray(await api.getMessages(c.id, { limit: 200 }))
+      const mark = getReadMark(c.id)
+      const n = msgs.filter(m => String(m.sender_id) !== String(state.me.id) && msgTime(m) > mark).length
+      setLocalUnread(c.id, n)
+      const cur = state.convs.find(x => String(x.id) === String(c.id))
+      if (cur && (!state.chat || String(state.chat.id) !== String(c.id))) cur.unread = n
+    } catch (e) { setLocalUnread(c.id, 0) }
+  }
 }
 export function deleteConversation(c) {
   if (!c) return
@@ -665,9 +774,16 @@ export async function loadConvs(quiet) {
     state.convs = list
       .map(c => {
         const old = prev[c.id]
-        // 未读数以服务端为准（unread_count：换设备/重装后不丢未读）；后端未升级时回退本地计数
+        // 未读数以服务端为准（unread_count：换设备/重装后不丢未读）；后端未升级时回退本地计数。
+        // ⚠️ 实测后端 unread_count 不随已读减少（读完后仍是旧值），刷新会把已读又显示成未读，
+        // 所以这里叠加一层本机「已读到哪条」标记：会话最后一条消息不晚于该标记 → 视为已读。
         const serverUnread = c.unread_count ?? c.unread
-        const unread = (serverUnread != null) ? Number(serverUnread) || 0 : ((old && old.unread) || 0)
+        const lastAt = Date.parse(c.last_message_at || '') || 0
+        const mark = getReadMark(c.id)
+        const locallyRead = mark > 0 && lastAt > 0 && lastAt <= mark
+        // 未读数一律用本机计数：后端 unread_count 是累计值（读完不减），只在没有任何本地记录时才拿它兜底
+        const local = getLocalUnread(c.id)
+        const unread = locallyRead ? 0 : (local != null ? local : (Number(serverUnread) || 0))
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
         const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
         let mentionFlag = (old && old.mentionFlag) ? 1 : 0
@@ -686,6 +802,8 @@ export async function loadConvs(quiet) {
         }
       })
       .filter(c => !hidden.includes(String(c.id)))
+    // 没有本地未读记录的会话：按「我上次读到的时间点」逐条数一遍（每会话只算一次，之后走本地计数）
+    fillLocalUnread(state.convs.filter(c => getLocalUnread(c.id) == null))
     if (!quiet) await fillMissingPreviews()
     refreshVisiblePresence() // 会话列表的在线圆点：拉一遍所有私聊对方的在线态（静默、异步）
   } catch (e) { if (!quiet) showToast(e.message) }
@@ -824,10 +942,12 @@ export async function openChat(c) {
   if (!state.demoMode) loadBurnSetting(c.id)
   if (c.type !== 'private') loadGroupMembers() // 预取群成员：消息发送者名称/头像、群管理页共用
   await loadMessages()
-  // 已读上报带上界：只标到「当前可见的最后一条」，避免刚进会话就把后面没看过的也标成已读
+  // 已读上报：后端 up_to_message_id 是「不含该条」的（实测差一条，最后一条永远读不掉），
+  // 所以打开会话时整会话标记（不带 body），并把本机已读时间点记下来抵消后端不减少的 unread_count。
   if (!state.demoMode) {
-    const lastVisible = state.messages[state.messages.length - 1]
-    api.markRead(c.id, lastVisible && lastVisible.id != null ? { up_to_message_id: lastVisible.id } : {}).catch(() => { /* 静默 */ })
+    setReadMark(c.id, new Date().toISOString())
+    setLocalUnread(c.id, 0)
+    api.markRead(c.id).catch(() => { /* 静默 */ })
   }
   // 两阶段销毁：拉完首屏后静默确认上一批墓碑，让服务端真正释放存储（失败不影响主流程）
   if (!state.demoMode) confirmDestroyed(c.id)
@@ -854,18 +974,23 @@ export function toggleE2E() {
   else showToast(state.e2eOn ? '已开启明文加密：消息将端到端加密发送' : '已关闭明文加密')
 }
 
-/** 私聊初始已读水位线：取本人最近一条消息的对方回执，已读则以该消息时间为水位 */
+/**
+ * 私聊已读水位线（刷新后恢复的关键）。
+ * 后端把「已读」记在会话成员的 last_read_message_id 上（回执行 is_read 不更新、
+ * unread_count 也不随之减少），所以恢复水位必须读成员列表：
+ * GET /groups/{cid}/members 对私聊同样有效，能拿到对方读到哪一条。
+ */
 async function loadReadWatermark() {
+  if (!state.chat || state.chat.type !== 'private') return
   try {
-    const mine = state.messages.filter(m => String(m.sender_id) === String(state.me.id) && !m.is_recalled)
-    if (!mine.length) return
-    const rs = asArray(await api.getReceipt(mine[mine.length - 1].id))
-    const other = rs.find(r => String(r.user_id) !== String(state.me.id) && r.is_read)
-    if (other) {
-      const t = Date.parse(other.read_at || '') || msgTime(mine[mine.length - 1])
-      if (t > state.readWatermark) state.readWatermark = t
-    }
-  } catch (e) { /* 静默：回执不可用时仅不显示已读 */ }
+    const members = asArray(await api.getGroupMembers(state.chat.id))
+    const peer = members.find(m => String(m.user_id) !== String(state.me.id))
+    if (!peer || !peer.last_read_message_id) return
+    const idx = state.messages.findIndex(m => String(m.id) === String(peer.last_read_message_id))
+    if (idx < 0) return
+    const t = msgTime(state.messages[idx])
+    if (t > state.readWatermark) state.readWatermark = t
+  } catch (e) { /* 静默：恢复失败只影响「已读」标签，不影响聊天 */ }
 }
 
 export function closeChat() {
@@ -1089,14 +1214,21 @@ async function onWsNewMessage(p) {
     if (!state.messages.some(x => String(x.id) === String(m.id))) {
       state.messages.push(m)
       state.newMsgSeq++ // 驱动吸附滚底 / 新消息浮钮（ChatRoom watch）
-      if (!mine) api.markRead(cid).catch(() => { /* 静默 */ })
+      if (!mine) {
+        api.markRead(cid).catch(() => { /* 静默 */ })
+        setReadMark(cid, new Date().toISOString()) // 本机已读时间点：抵消后端不减少的 unread_count
+        setLocalUnread(cid, 0)
+      }
     }
     syncChatPreview()
   } else {
     // 未打开的会话：未读+1（本人其他端发的除外），预览与排序靠重拉列表兜底
     if (!mine) {
       const c = state.convs.find(x => String(x.id) === String(cid))
-      if (c) c.unread = (c.unread || 0) + 1
+      // 未读数本机累加并持久化（服务端 unread_count 不可信）
+      const nextUnread = (getLocalUnread(cid) ?? ((c && c.unread) || 0)) + 1
+      setLocalUnread(cid, nextUnread)
+      if (c) c.unread = nextUnread
       // 右下角通知卡片（点击直达该会话）；@ 我的带前缀
       const popCard = conv => {
         // 私聊且会话详情没带 other_user 时，用发送者信息补个显示名，避免标题只剩「私聊」
@@ -1105,16 +1237,21 @@ async function onWsNewMessage(p) {
           conv = { ...conv, other_user: sender || { id: m.sender_id } }
         }
         const mention = mentionsMe(m)
+        // 标题统一加「焚信 · 」前缀，多标签/通知中心里一眼能认出是哪个应用；@我 放在名字后面
+        const title = '焚信 · ' + convName(conv) + (mention ? '（@我）' : '')
+        const body = messagePreview(m) || ''
+        // 页面在后台 → 系统通知（Windows 通知中心）；前台或未开启 → 右下角卡片
+        const hidden = typeof document !== 'undefined' && document.hidden
+        // tag 带上消息 id：同会话的每条消息各自成一条通知，避免被系统按 tag 替换成"只出现一次"
+        if (hidden && notifySystem({ title, body, tag: String(cid) + ':' + String(m.id), onClick: () => openChat(conv) })) return
+        // 移动端（含 APK / 窄屏）不弹右下角卡片：会压住聊天内容；未读数/标题已经能提示
+        if (state.layout === 'mobile') return
         try {
           // 本地通知：默认始终弹。
           // 极光只对「离线」用户推送（PUSH_JPUSH.md §0），WS 活着就等于在线、后端不会推，
-          // 所以两者正常不会重叠。仅当实测出现「同一条消息弹两次」时，才把下面开关改 true。
+          // 所以两者正常不会重叠。仅当实测出现「同一条消息弹两次」时，才把 NOTIFY_SUPPRESS_LOCAL 改 true。
           if (!NOTIFY_SUPPRESS_LOCAL || !isPushActive()) {
-            notifyNewMessage({
-              title: (mention ? '@我 · ' : '') + convName(conv),
-              message: messagePreview(m) || '',
-              onClick: () => openChat(conv)
-            })
+            notifyNewMessage({ title, message: body, onClick: () => openChat(conv) })
           }
         } catch (e) { /* 通知失败不影响消息处理 */ }
       }
@@ -1157,6 +1294,8 @@ function onWsReceiptRead(p) {
   if (String(p.user_id) === String(state.me.id)) return // 自己的回执不影响「对方已读」展示
   const t = Date.parse(p.read_at || '') || 0
   if (t > state.readWatermark) state.readWatermark = t
+  // 群聊/频道：有人读了，触发「N/M 已读」重新聚合（私聊行走水位，不需要）
+  if (state.chat.type !== 'private') state.receiptSeq++
 }
 
 /** key:changed：对方轮换公钥 → 拉新公钥本地比对，不一致则告警（自己轮换忽略；payload 只有 user_id+updated_at，不带公钥） */
@@ -1562,15 +1701,13 @@ export async function setBurn(v) {
   }
 }
 
-/** 语音视频焚毁模式（播完即焚）：只作用于本会话的音视频发送；开启时取消本机「关闭」标记 */
+/** 语音视频焚毁模式（播完即焚）：只作用于本会话的语音/视频发送；普通消息保持不焚毁 */
 export function setMediaBurn(v) {
   if (!state.chat) return
   state.mediaBurnOn = !!v
-  if (v) {
-    state.burnOff = false
-    writeBurnOff(state.chat.id, false)
-  }
-  showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁' : '语音视频焚毁模式已关闭')
+  // 注意：不修改 burnOff —— 普通消息的焚毁与否仍由该会话的焚毁设置决定，
+  // 媒体模式只让语音/视频"播完即焚"（发送时带消息级 ttl），不影响文字/图片。
+  showToast(v ? '语音视频焚毁模式已开启：语音/视频播放完毕后即焚毁（文字、图片不受影响）' : '语音视频焚毁模式已关闭')
 }
 
 /** 追加消息到当前会话列表：按 id 去重，防 WS 推送先于 HTTP 响应到达造成的双条闪现 */
@@ -1586,15 +1723,16 @@ export async function sendText(text, mentions, replyToId) {
   const payload = { conversation_id: state.chat.id, type: 'text', content: text }
   if (replyToId) payload.reply_to_id = replyToId // 引用回复：被回复的 Message.id
   if (Array.isArray(mentions) && mentions.length) payload.mentions = mentions // @提及：被@成员 uid 数组
-  // V6.1：生产环境默认不传 burn_ttl_seconds（后端按 burn_settings 解析）；本机「关闭焚毁」时显式传 0 = 这条不焚毁
-  if (state.burnOff) payload.burn_ttl_seconds = 0
+  // 普通消息（文字/图片/文件）不参与「语音视频播完即焚」：
+  // 本机「关闭焚毁」或正处于媒体焚毁模式时，显式传 0 = 这条不焚毁（否则后端会按全局默认把它变成焚毁消息）
+  if (state.burnOff || state.mediaBurnOn) payload.burn_ttl_seconds = 0
   else if (state.demoMode && state.burnSeconds) payload.burn_ttl_seconds = state.burnSeconds // 演示模式无后端解析，本地兜底
   if (state.demoMode) {
     // demo 无后端 reveal，本地用 destroy_at 兜底倒计时（真实后端走 burn_ttl_seconds + reveal）
-    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
+    const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && !state.mediaBurnOn && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
     ;(DEMO.messages[state.chat.id] = DEMO.messages[state.chat.id] || []).push(m)
     state.messages.push(m)
-    state.chat.lastMsg = text
+    state.chat.lastMsg = messagePreview(m) || text // 焚毁消息只显示占位，不把明文写进列表预览
     state.chat.last_message_at = m.created_at
     return true
   }
@@ -1619,8 +1757,9 @@ export async function sendText(text, mentions, replyToId) {
       m.content = text
       m.e2e = true
       pushMsgDedup(m)
-      state.chat.lastMsg = text
-      setLastMsg(state.chat.id, text)
+      // 加密消息：列表预览只显示占位，不写明文
+      state.chat.lastMsg = '加密消息'
+      setLastMsg(state.chat.id, '加密消息')
       return true
     } catch (e) {
       showToast(e.message)
@@ -1631,8 +1770,10 @@ export async function sendText(text, mentions, replyToId) {
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
     seedBurnLeft(m) // 自己发的焚毁消息立刻起倒计时，不必等下一轮 4s 轮询（也堵住「发完马上关页面没种入」的窗口）
-    state.chat.lastMsg = text
-    setLastMsg(state.chat.id, text)
+    // 会话列表预览统一走 messagePreview：焚毁/加密消息只显示占位，不能把明文写进去
+    const preview = messagePreview(m) || (payload.burn_ttl_seconds != null ? '焚毁消息' : text)
+    state.chat.lastMsg = preview
+    setLastMsg(state.chat.id, preview)
     return true
   } catch (e) {
     showToast(e.message)
@@ -1703,8 +1844,8 @@ export async function sendFile(file) {
         const _dv = await readVideoDurationSeconds(file)
         payload.burn_ttl_seconds = mediaBurnTtlFor(_dv)
         if (_dv > 0) payload.media_duration_seconds = Math.max(1, Math.round(_dv))
-      } else if (state.burnOff) {
-        payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
+      } else if (state.burnOff || state.mediaBurnOn) {
+        payload.burn_ttl_seconds = 0 // 关闭焚毁 / 仅媒体焚毁模式：图片、文件不焚毁
       }
       const m = await api.sendMessage(payload)
       if (isImg) m.thumb_url = up.thumb_url || null // 上传响应的缩略图存到消息对象（消息接口不传输该字段，仅本地回声用）
@@ -1715,7 +1856,7 @@ export async function sendFile(file) {
     const cf = new File([compressed], ((file.name || 'image').replace(/\.[^.]+$/, '') || 'image') + '.jpg', { type: 'image/jpeg' })
     const up = await api.upload(cf)
     const payload = { conversation_id: state.chat.id, type: 'image', file_url: up.url, file_name: file.name, file_size: up.file_size }
-    if (state.burnOff) payload.burn_ttl_seconds = 0 // 本机关闭焚毁：显式不焚毁
+    if (state.burnOff || state.mediaBurnOn) payload.burn_ttl_seconds = 0 // 关闭焚毁 / 仅媒体焚毁模式：图片不焚毁
     const m = await api.sendMessage(payload)
     m.thumb_url = up.thumb_url || null
     pushMsgDedup(m)
@@ -1884,9 +2025,9 @@ export async function editMessage(m, content) {
   try {
     const nm = await api.editMessage(m.id, content)
     Object.assign(m, nm)
-    // 编辑的是会话最后一条消息时，同步会话列表预览
+    // 编辑的是会话最后一条消息时，同步会话列表预览（焚毁/加密消息仍走占位文案）
     if (state.chat && state.messages[state.messages.length - 1] === m) {
-      state.chat.lastMsg = m.content || content
+      state.chat.lastMsg = messagePreview(m) || content
       setLastMsg(state.chat.id, state.chat.lastMsg)
     }
     return true
@@ -1934,6 +2075,20 @@ export function openChatInfo() {
   if (state.chat && state.chat.type !== 'private') loadGroupMembers()
 }
 
+/** 成员列表补全：本人用 state.me；其余优先用通讯录补 user 对象（后端直出行只有 user_display_name） */
+function enrichMemberList(list) {
+  const cmap = {}
+  for (const c of state.contacts || []) if (c && c.id) cmap[c.id] = c
+  return (list || []).map(m => {
+    const uid = memberUid(m)
+    if (state.me && uid !== '' && String(uid) === String(state.me.id)) return { ...m, user: state.me }
+    const u = memberUser(m)
+    const hasName = u && (u.display_name || u.name || u.username || u.nickname || u.phone)
+    if (hasName || !uid || !cmap[uid]) return m
+    return { ...m, user: cmap[uid] }
+  })
+}
+
 export async function loadGroupMembers() {
   if (!state.chat) return
   if (state.demoMode) {
@@ -1942,17 +2097,8 @@ export async function loadGroupMembers() {
   }
   try {
     const list = asArray(await api.getGroupMembers(state.chat.id))
-    // 用户信息兜底：成员未内联用户信息时按 user_id 用通讯录补齐；本人以 state.me 为准（通讯录不含自己）
-    const cmap = {}
-    for (const c of state.contacts || []) if (c && c.id) cmap[c.id] = c
-    state.groupMembers = list.map(m => {
-      const uid = memberUid(m)
-      if (state.me && uid !== '' && String(uid) === String(state.me.id)) return { ...m, user: state.me }
-      const u = memberUser(m)
-      const hasName = u && (u.display_name || u.name || u.username || u.nickname || u.phone)
-      if (hasName || !uid || !cmap[uid]) return m
-      return { ...m, user: cmap[uid] }
-    })
+    state.groupMembers = enrichMemberList(list)
+    state.groupMembersAt = Date.now()
   } catch (e) {
     showToast(e.message)
   }
