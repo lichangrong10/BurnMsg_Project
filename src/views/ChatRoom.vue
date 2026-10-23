@@ -446,7 +446,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -889,9 +889,10 @@ export default {
       const s = fmtDateTime(t)
       return s || ''
     },
-    /** 群聊已读进度文案（仅本人、群/频道、非撤回/焚毁的消息）：'3/4 已读'；数据未拉取时返回空串不占位 */
+    /** 群聊已读进度文案（仅本人、群/频道、未撤回）：'3/4 已读'；数据未拉取时返回空串不占位。
+     *  墓碑（已焚毁）也展示「焚毁前最后已知」的已读状态。 */
     readProgress(m) {
-      if (!m || m.is_recalled || this.isBurned(m)) return ''
+      if (!m || m.is_recalled) return ''
       if (!state.chat || state.chat.type === 'private') return ''
       if (String(m.sender_id) !== String(state.me.id)) return ''
       const r = state.readers[this.e2eKey(m)]
@@ -921,16 +922,14 @@ export default {
     async refreshReadProgress() {
       if (!state.chat || state.chat.type === 'private') return
       if (this._rpBusy) return
-      const limit = this._rpLimit || 10
       const force = !!this._rpForce
       this._rpLimit = 0
       this._rpForce = false
       this._rpBusy = true
       try {
-        const mine = state.messages.filter(m => String(m.sender_id) === String(state.me.id) && !m.is_recalled && !this.isBurned(m))
-        for (const m of mine.slice(-limit)) {
-          try { await loadReaders(m, force) } catch (e) { /* 单条失败不影响其它 */ }
-        }
+        const mine = state.messages.filter(m => String(m.sender_id) === String(state.me.id) && !m.is_recalled)
+        // 一次取成员、本地批量算完（不逐条发请求）；已焚毁的墓碑也一起算，展示「焚毁前最后已知」的已读状态
+        await loadReadersMany(mine, force)
       } finally { this._rpBusy = false }
     },
     /** 已读进度渲染数据：{ total, revealed, burned, readers:[{name,avatar,read,revealed}] } */
@@ -1826,7 +1825,10 @@ export default {
     /** 回执成员的头像/名字：优先从群成员列表按 user_id 匹配，兜底回执自带 display name */
     receiptMeta(r) {
       const gm = (state.groupMembers || []).find(x => String(memberUid(x)) === String(r.user_id))
-      const name = r.user_display_name || (gm ? memberName(gm) : '') || '成员'
+      const gmName = gm ? memberName(gm) : ''
+      // r.user_display_name 可能是兜底文案「成员」，这时优先用群成员里的真实姓名
+      const own = (r.user_display_name && r.user_display_name !== '成员') ? r.user_display_name : ''
+      const name = own || gmName || r.user_display_name || '成员'
       const avatar = gm ? memberAvatar(gm) : null
       return { name, avatar }
     },

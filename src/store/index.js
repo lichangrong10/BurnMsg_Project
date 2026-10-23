@@ -250,6 +250,56 @@ export async function confirmDestroyed(cid) {
    所以真实来源是成员的 last_read_message_id（/groups/{cid}/members）：
    成员的最后已读消息时间 ≥ 本条消息时间 → 该成员已读。
    结果缓存到 state.readers，供气泡下方进度和明细面板使用。失败静默。 */
+const READER_NAME_OK = n => !!(n && n !== '成员')
+
+/** 用一份成员列表算出单条消息的已读聚合（纯本地计算，不发请求）。
+ *  墓碑消息（已焚毁）也用同一个规则：按 created_at 与成员 last_read 位置比较，得到「焚毁前最后已知」的已读状态。 */
+function computeReaderAgg(m, members) {
+  const mTime = msgTime(m)
+  const readers = (members || [])
+    .filter(x => String(memberUid(x)) !== String(state.me.id))
+    .map(x => {
+      const lr = x && x.last_read_message_id
+      let read = false
+      if (lr != null) {
+        if (String(lr) === String(m.id)) read = true
+        else if (mTime > 0) {
+          const lrMsg = state.messages.find(y => String(y.id) === String(lr))
+          read = !!(lrMsg && msgTime(lrMsg) >= mTime)
+        }
+      }
+      const nm = memberName(x)
+      return { user_id: memberUid(x), user_display_name: READER_NAME_OK(nm) ? nm : '', is_read: read, is_revealed: false, read_at: null, burn_at: null }
+    })
+  return { total: readers.length, revealed: readers.filter(r => r.is_read).length, burned: 0, readers }
+}
+
+/** 取成员列表：force 或缓存超过 8 秒才重拉；重拉走 enrichMemberList，避免原始行覆盖导致姓名丢失 */
+async function ensureMembersForReaders(force) {
+  const cid = state.chat && state.chat.id
+  if (!cid) return null
+  let members = state.groupMembers
+  if (force || !members || !members.length || (Date.now() - (state.groupMembersAt || 0)) > 8000) {
+    members = enrichMemberList(asArray(await api.getGroupMembers(cid)))
+    state.groupMembers = members
+    state.groupMembersAt = Date.now()
+  }
+  return members
+}
+
+/** 批量计算多条消息的已读进度：一次成员请求 + 本地循环，避免逐条发请求 */
+export async function loadReadersMany(msgs, force) {
+  const list = (msgs || []).filter(m => m && m.id != null)
+  if (!list.length) return
+  const cid = state.chat && state.chat.id
+  if (!cid || state.chat.type === 'private' || state.demoMode) return
+  try {
+    const members = await ensureMembersForReaders(force)
+    if (!members) return
+    for (const m of list) state.readers[String(m.id)] = computeReaderAgg(m, members)
+  } catch (e) { /* 静默 */ }
+}
+
 export async function loadReaders(m, force) {
   if (!m || m.id == null) return null
   const key = String(m.id)
@@ -263,34 +313,9 @@ export async function loadReaders(m, force) {
   const cid = state.chat && state.chat.id
   if (!cid || state.chat.type === 'private') return null
   try {
-    // 成员的最后已读位置会随别人阅读变化；force=true（收到 receipt:read）时强制重拉，否则缓存 8 秒
-    let members = state.groupMembers
-    if (force || !members || !members.length || (Date.now() - (state.groupMembersAt || 0)) > 8000) {
-      members = asArray(await api.getGroupMembers(cid))
-      state.groupMembers = members
-      state.groupMembersAt = Date.now()
-    }
-    const mTime = msgTime(m)
-    const readers = members
-      .filter(x => String(memberUid(x)) !== String(state.me.id))
-      .map(x => {
-        const lr = x && x.last_read_message_id
-        let read = false
-        if (lr != null) {
-          if (String(lr) === String(m.id)) read = true
-          else {
-            const lrMsg = state.messages.find(y => String(y.id) === String(lr))
-            read = !!(lrMsg && msgTime(lrMsg) >= mTime)
-          }
-        }
-        return { user_id: memberUid(x), user_display_name: memberName(x), is_read: read, is_revealed: false, read_at: null, burn_at: null }
-      })
-    const agg = {
-      total: readers.length,
-      revealed: readers.filter(r => r.is_read).length,
-      burned: 0,
-      readers
-    }
+    const members = await ensureMembersForReaders(force)
+    if (!members) return null
+    const agg = computeReaderAgg(m, members)
     state.readers[key] = agg
     return agg
   } catch (e) {
@@ -1979,6 +2004,20 @@ export function openChatInfo() {
   if (state.chat && state.chat.type !== 'private') loadGroupMembers()
 }
 
+/** 成员列表补全：本人用 state.me；其余优先用通讯录补 user 对象（后端直出行只有 user_display_name） */
+function enrichMemberList(list) {
+  const cmap = {}
+  for (const c of state.contacts || []) if (c && c.id) cmap[c.id] = c
+  return (list || []).map(m => {
+    const uid = memberUid(m)
+    if (state.me && uid !== '' && String(uid) === String(state.me.id)) return { ...m, user: state.me }
+    const u = memberUser(m)
+    const hasName = u && (u.display_name || u.name || u.username || u.nickname || u.phone)
+    if (hasName || !uid || !cmap[uid]) return m
+    return { ...m, user: cmap[uid] }
+  })
+}
+
 export async function loadGroupMembers() {
   if (!state.chat) return
   if (state.demoMode) {
@@ -1987,17 +2026,7 @@ export async function loadGroupMembers() {
   }
   try {
     const list = asArray(await api.getGroupMembers(state.chat.id))
-    // 用户信息兜底：成员未内联用户信息时按 user_id 用通讯录补齐；本人以 state.me 为准（通讯录不含自己）
-    const cmap = {}
-    for (const c of state.contacts || []) if (c && c.id) cmap[c.id] = c
-    state.groupMembers = list.map(m => {
-      const uid = memberUid(m)
-      if (state.me && uid !== '' && String(uid) === String(state.me.id)) return { ...m, user: state.me }
-      const u = memberUser(m)
-      const hasName = u && (u.display_name || u.name || u.username || u.nickname || u.phone)
-      if (hasName || !uid || !cmap[uid]) return m
-      return { ...m, user: cmap[uid] }
-    })
+    state.groupMembers = enrichMemberList(list)
     state.groupMembersAt = Date.now()
   } catch (e) {
     showToast(e.message)

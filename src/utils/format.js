@@ -77,19 +77,25 @@ export function memberUser(m) {
 }
 
 /** 成员显示名：多字段名兼容，display_name 优先，兜底手机号，再退『成员』 */
-const MEMBER_NAME_KEYS = ['display_name', 'name', 'username', 'nickname', 'nick_name', 'real_name', 'user_name', 'member_name', 'full_name', 'phone']
+const MEMBER_NAME_KEYS = ['display_name', 'user_display_name', 'name', 'username', 'nickname', 'nick_name', 'real_name', 'user_name', 'member_name', 'full_name', 'phone']
 export function memberName(m) {
   const u = memberUser(m)
   for (const k of MEMBER_NAME_KEYS) {
     const v = u[k]
     if (typeof v === 'string' && v.trim()) return v
   }
+  // 原始成员行（后端直出）姓名在顶层 user_display_name，不在嵌套 user 里
+  if (m && typeof m === 'object' && typeof m.user_display_name === 'string' && m.user_display_name.trim()) return m.user_display_name
   return '成员'
 }
 
-/** 成员头像 URL（无则 null） */
+/** 成员头像 URL（无则 null）；兼容后端直出的 user_avatar_url */
 export function memberAvatar(m) {
-  return avatarSrc(memberUser(m))
+  const u = memberUser(m)
+  const url = avatarSrc(u)
+  if (url) return url
+  const raw = m && typeof m === 'object' ? (m.user_avatar_url || null) : null
+  return raw ? avatarSrc({ avatar_url: raw }) : null
 }
 
 /** 成员用户 ID：user_id 优先，兼容嵌套结构，最后才退到记录 id */
