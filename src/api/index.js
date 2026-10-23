@@ -61,9 +61,7 @@ export const api = {
   revealMessage: (id, body) => http.post(`/messages/${id}/reveal`, body || {}), // 点开才焚：查马赛克焚毁消息的完整内容，并开始个人焚毁倒计时（音视频焚毁可传 media_duration_seconds 放宽消费窗口）
   consumeMessage: id => http.post(`/messages/${id}/consume`, {}), // 音视频播完才焚：播放完成/中途退出时消费本人这份提前焚毁（幂等，返回焚毁视图）
   markRead: (conversationId, body) => http.post(`/messages/${conversationId}/read`, body || {}), // 注意：文档约定此处 id 为会话 ID；body 可带 { up_to_message_id } 限制已读上界
-  getReceipt: id => http.get(`/messages/${id}/receipt`),
-  // 群聊已读进度：{ total, revealed, burned, readers:[{user_id,is_read,is_revealed,...}] }
-  getReaders: id => http.get(`/messages/${id}/readers`),
+  getReceipt: id => http.get(`/messages/${id}/receipt`), // 回执数组（含 is_sender）：others = items.filter(r => !r.is_sender)，已读 = others.filter(r => r.is_read)
   // 两阶段销毁（第二阶段）：进会话时查本人在该会话里待真删的墓碑消息
   getPendingDestroy: conversationId => http.get(`/messages/${conversationId}/pending-destroy`),
   // 确认清理：body { message_ids: [...] }，返回 { acked, purged, purged_ids }

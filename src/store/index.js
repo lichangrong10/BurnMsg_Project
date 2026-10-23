@@ -64,7 +64,9 @@ export const state = reactive({
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
+  groupMembersAt: 0,      // 群成员列表拉取时间（群已读进度据此判断是否要重拉）
   readWatermark: 0,       // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
+  receiptSeq: 0,          // 收到 receipt:read 时 +1（驱动群聊「3/4 已读」重新聚合）
   showAnnouncements: false, // 公告中心页（覆盖层）
   announcements: [],      // 公告列表（含 is_read 标记）
   annUnread: 0,           // 未读公告数（首页铃铛角标）
@@ -243,9 +245,12 @@ export async function confirmDestroyed(cid) {
   }
 }
 
-/* 群聊已读进度：拉取单条消息的阅读者（api.getReaders），缓存到 state.readers 供气泡下方「3/4 已读」展示。
-   失败静默返回 null（不展示），不阻塞消息渲染。 */
-export async function loadReaders(m) {
+/* 群聊已读进度（自己的消息「N/M 已读」）。
+   后端已移除 /messages/{id}/readers，且 receipt.is_read 目前不会被 read 接口更新，
+   所以真实来源是成员的 last_read_message_id（/groups/{cid}/members）：
+   成员的最后已读消息时间 ≥ 本条消息时间 → 该成员已读。
+   结果缓存到 state.readers，供气泡下方进度和明细面板使用。失败静默。 */
+export async function loadReaders(m, force) {
   if (!m || m.id == null) return null
   const key = String(m.id)
   if (state.demoMode) {
@@ -255,10 +260,39 @@ export async function loadReaders(m) {
     state.readers[key] = mock
     return mock
   }
+  const cid = state.chat && state.chat.id
+  if (!cid || state.chat.type === 'private') return null
   try {
-    const r = await api.getReaders(m.id)
-    if (r && (Array.isArray(r.readers) || r.total != null)) state.readers[key] = r
-    return r
+    // 成员的最后已读位置会随别人阅读变化；force=true（收到 receipt:read）时强制重拉，否则缓存 8 秒
+    let members = state.groupMembers
+    if (force || !members || !members.length || (Date.now() - (state.groupMembersAt || 0)) > 8000) {
+      members = asArray(await api.getGroupMembers(cid))
+      state.groupMembers = members
+      state.groupMembersAt = Date.now()
+    }
+    const mTime = msgTime(m)
+    const readers = members
+      .filter(x => String(memberUid(x)) !== String(state.me.id))
+      .map(x => {
+        const lr = x && x.last_read_message_id
+        let read = false
+        if (lr != null) {
+          if (String(lr) === String(m.id)) read = true
+          else {
+            const lrMsg = state.messages.find(y => String(y.id) === String(lr))
+            read = !!(lrMsg && msgTime(lrMsg) >= mTime)
+          }
+        }
+        return { user_id: memberUid(x), user_display_name: memberName(x), is_read: read, is_revealed: false, read_at: null, burn_at: null }
+      })
+    const agg = {
+      total: readers.length,
+      revealed: readers.filter(r => r.is_read).length,
+      burned: 0,
+      readers
+    }
+    state.readers[key] = agg
+    return agg
   } catch (e) {
     return null
   }
@@ -1189,6 +1223,8 @@ function onWsReceiptRead(p) {
   if (String(p.user_id) === String(state.me.id)) return // 自己的回执不影响「对方已读」展示
   const t = Date.parse(p.read_at || '') || 0
   if (t > state.readWatermark) state.readWatermark = t
+  // 群聊/频道：有人读了，触发「N/M 已读」重新聚合（私聊行走水位，不需要）
+  if (state.chat.type !== 'private') state.receiptSeq++
 }
 
 /** key:changed：对方轮换公钥 → 拉新公钥本地比对，不一致则告警（自己轮换忽略；payload 只有 user_id+updated_at，不带公钥） */
@@ -1962,6 +1998,7 @@ export async function loadGroupMembers() {
       if (hasName || !uid || !cmap[uid]) return m
       return { ...m, user: cmap[uid] }
     })
+    state.groupMembersAt = Date.now()
   } catch (e) {
     showToast(e.message)
   }

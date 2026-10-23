@@ -655,6 +655,7 @@ export default {
     'state.msgSeq'() {
       this.autoRevealMedia()
       this.loadMentionReceipts()
+      this.scheduleReadProgressRefresh(10) // 群聊：进会话/翻页后拉最近几条自己消息的已读进度
       const targetId = state.targetMessageId
       if (targetId) {
         state.targetMessageId = null
@@ -685,6 +686,11 @@ export default {
     'state.messages.length'() {
       this.autoRevealMedia()
       if (this.stickBottom) this.scrollBottom()
+      this.scheduleReadProgressRefresh(10) // 群聊：新消息/自己刚发的消息，补拉已读进度
+    },
+    // 有人读了消息（receipt:read）→ 群聊「N/M 已读」重新聚合（强制重拉成员，不用缓存）
+    'state.receiptSeq'() {
+      this.scheduleReadProgressRefresh(3, true)
     },
     // 切换会话 → 频道会话时拉「我的频道」id，兜底判断作者身份
     'state.chat.id'(id) {
@@ -715,12 +721,19 @@ export default {
     // 群 @消息 已读回执：进聊天页先拉一次，之后每 5s 刷新（别人读到你的 @消息后头像/已读态实时出现）
     this.loadMentionReceipts()
     this._receiptTimer = setInterval(() => { this.loadMentionReceipts() }, 5000)
+    // 群聊「N/M 已读」兜底轮询：后端 receipt:read 不一定每次推送，10s 刷一次最近几条
+    this._progressTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      this.scheduleReadProgressRefresh(3)
+    }, 10000)
     this.autoRevealMedia()
   },
   beforeUnmount() {
     flushPendingMedia() // 卸载时消费剩余的已点开音视频焚毁消息
     window.removeEventListener('bm-back', this.onNativeBack)
     if (this._receiptTimer) { clearInterval(this._receiptTimer); this._receiptTimer = null }
+    if (this._rpTimer) { clearTimeout(this._rpTimer); this._rpTimer = null }
+    if (this._progressTimer) { clearInterval(this._progressTimer); this._progressTimer = null }
     Object.values(this.revealTickers).forEach(clearInterval)
     if (window.visualViewport && this.vvResize) window.visualViewport.removeEventListener('resize', this.vvResize)
     if (this.voiceTimer) clearInterval(this.voiceTimer)
@@ -890,12 +903,35 @@ export default {
         : ((Array.isArray(r.readers) ? r.readers : []).filter(x => x.is_read).length)
       return read + '/' + total + ' 已读'
     },
-    /** 打开已读进度明细：拉一次 api.getReaders（失败则用缓存渲染） */
+    /** 打开已读进度明细：用 /receipt 聚合（/readers 已被后端移除） */
     async openReaders(m) {
       if (!m) return
       this.readersMsg = m
       this.readersLoading = true
       try { await loadReaders(m) } finally { this.readersLoading = false }
+    },
+    /** 群聊已读进度自动刷新（节流）：进入会话、发消息、收到回执时各触发一次；force=true 时强制重拉成员 */
+    scheduleReadProgressRefresh(limit, force) {
+      if (!state.chat || state.chat.type === 'private') return
+      this._rpLimit = Math.max(this._rpLimit || 0, Number(limit) || 0)
+      if (force) this._rpForce = true
+      if (this._rpTimer) clearTimeout(this._rpTimer)
+      this._rpTimer = setTimeout(() => { this.refreshReadProgress() }, 400)
+    },
+    async refreshReadProgress() {
+      if (!state.chat || state.chat.type === 'private') return
+      if (this._rpBusy) return
+      const limit = this._rpLimit || 10
+      const force = !!this._rpForce
+      this._rpLimit = 0
+      this._rpForce = false
+      this._rpBusy = true
+      try {
+        const mine = state.messages.filter(m => String(m.sender_id) === String(state.me.id) && !m.is_recalled && !this.isBurned(m))
+        for (const m of mine.slice(-limit)) {
+          try { await loadReaders(m, force) } catch (e) { /* 单条失败不影响其它 */ }
+        }
+      } finally { this._rpBusy = false }
     },
     /** 已读进度渲染数据：{ total, revealed, burned, readers:[{name,avatar,read,revealed}] } */
     readersInfo(m) {
