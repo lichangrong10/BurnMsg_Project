@@ -1205,6 +1205,8 @@ async function onWsNewMessage(p) {
         const hidden = typeof document !== 'undefined' && document.hidden
         // tag 带上消息 id：同会话的每条消息各自成一条通知，避免被系统按 tag 替换成"只出现一次"
         if (hidden && notifySystem({ title, body, tag: String(cid) + ':' + String(m.id), onClick: () => openChat(conv) })) return
+        // 移动端（含 APK / 窄屏）不弹右下角卡片：会压住聊天内容；未读数/标题已经能提示
+        if (state.layout === 'mobile') return
         try {
           notifyNewMessage({ title, message: body, onClick: () => openChat(conv) })
         } catch (e) { /* 通知失败不影响消息处理 */ }
