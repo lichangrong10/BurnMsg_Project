@@ -1,5 +1,18 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 极光推送（PUSH_JPUSH.md §3.3）：Android 13+ 必须声明 POST_NOTIFICATIONS，否则通知完全不显示
+         （targetSdk 36 还要求在运行时动态申请，见 push.js / 后续原生侧实现） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 后台保活前台服务：让进程不被系统优先冻结，极光长连接才能存活更久（后台收推送的前提） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+（API 34）要求按类型声明前台服务权限，dataSync 类型对应下面的 foregroundServiceType -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:usesCleartextTraffic="true"
@@ -9,6 +22,20 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!-- ═══ 极光推送（PUSH_JPUSH.md §3.2）═══
+             路线 A 用 Cordova 插件时，插件生成的 meta-data 取的是 plugin.xml 里的 preference 默认值
+             （APP_KEY 无默认值 → 会写成 android:value="undefined"），Capacitor 的 cordova.preferences
+             只喂给 JS、不会写进 manifest。所以 AppKey 必须在这里显式声明并用 tools:replace 覆盖。
+             极光 SDK 从合并后的 AndroidManifest 读取这两个值，读不到 registration_id 就是空串。 -->
+        <meta-data
+            android:name="JPUSH_APPKEY"
+            android:value="914c13fbf4fb53d54e895053"
+            tools:replace="android:value" />
+        <meta-data
+            android:name="JPUSH_CHANNEL"
+            android:value="developer-default"
+            tools:replace="android:value" />
 
         <!-- 键盘弹出压缩窗口（adjustResize），输入栏不被遮挡（V5.8.4；前端另有 visualViewport 兜底） -->
         <activity
@@ -26,6 +53,14 @@
             </intent-filter>
 
         </activity>
+
+        <!-- 后台保活前台服务（KeepAliveService）：进程保活，让极光长连接在后台存活更久。
+             dataSync 类型是 Android 14+ 的强制要求；exported=false 不对其他应用暴露。 -->
+        <service
+            android:name=".KeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

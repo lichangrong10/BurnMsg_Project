@@ -1,0 +1,13 @@
+<!-- 极光推送通知小图标（PUSH_JPUSH.md §3.5）
+     必须是 24×24 纯白透明剪影（alpha-only），彩色图在通知栏会显示成灰块。
+     引用方式：后端推送 notification.android.small_icon = "ic_stat_notify"，
+     或极光控制台「应用设置 → 基础设置 → 通知图标」填 ic_stat_notify。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.89,2 2,2zM18,16v-5c0,-3.07 -1.64,-5.64 -4.5,-6.32V4c0,-0.83 -0.67,-1.5 -1.5,-1.5s-1.5,0.67 -1.5,1.5v0.68C7.63,5.36 6,7.92 6,11v5l-2,2v1h16v-1l-2,-2z" />
+</vector>

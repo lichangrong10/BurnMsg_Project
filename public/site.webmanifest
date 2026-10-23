@@ -1,0 +1,21 @@
+{
+  "name": "焚信 BurnMsg · 企业加密通讯",
+  "short_name": "焚信",
+  "description": "阅后即焚的企业加密通讯",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#3390EC",
+  "background_color": "#ffffff"
+}

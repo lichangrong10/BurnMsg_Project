@@ -14,6 +14,7 @@
   <AnnouncementsView v-if="state.showAnnouncements" />
   <FeedbackView v-if="state.showFeedback" />
   <GlobalSearch v-if="state.showGlobalSearch" />
+  <NotifyGuide v-if="state.showNotifyGuide" />
 
   <!-- 全局 Toast -->
   <div v-if="state.toast" class="toast">{{ state.toast }}</div>
@@ -66,9 +67,10 @@
 </template>
 
 <script>
-import { state, forceLogout, bootstrap, startTimers, stopTimers, showToast } from './store'
+import { state, forceLogout, bootstrap, startTimers, stopTimers, showToast, openChatById, maybeShowNotifyGuide } from './store'
 import { storage } from './utils/storage'
 import { onWs, WS_EVENTS } from './utils/ws'
+import { initPush, onPushOpened, ensureNotificationPermission } from './utils/push'
 import { setupBackHandler } from './utils/back'
 import { setupStatusBar } from './utils/statusbar'
 import { checkAppUpdate, downloadAndInstallApk } from './utils/update'
@@ -81,13 +83,14 @@ import ChatInfo from './views/ChatInfo.vue'
 import AdminView from './views/Admin.vue'
 import AnnouncementsView from './views/Announcements.vue'
 import FeedbackView from './views/Feedback.vue'
+import NotifyGuide from './views/NotifyGuide.vue'
 import GlobalSearch from './views/GlobalSearch.vue'
 
 const DEVICE_TYPE_TEXT = { web: '网页版', mobile: '手机版', desktop: '桌面版' }
 
 export default {
   name: 'App',
-  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView, GlobalSearch },
+  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView, GlobalSearch, NotifyGuide },
   data() {
     return {
       state,
@@ -113,6 +116,21 @@ export default {
     startTimers()
     setupBackHandler()
     setupStatusBar()
+    // 极光推送（PUSH_JPUSH.md §4.2）：启动初始化一次；点击通知 → 按 conversation_id 打开会话
+    initPush().then(async ok => {
+      if (!ok) return
+      // 每次启动只要还没授权就直接弹系统授权框（不需要用户点任何按钮）。
+      // 已授权时原生侧立即返回、不弹；被拒两次后系统自己不再弹，此时由「我的 → 通知权限」一键跳系统设置页。
+      const granted = await ensureNotificationPermission()
+      if (!granted) {
+        showToast('通知权限未开启，可在「我的 → 通知权限」一键打开')
+      } else {
+        // 已登录直接进主界面的场景（刷新/重开 App）在这里引导；首次登录的场景由 store 的 login() 触发
+        maybeShowNotifyGuide()
+      }
+    })
+    maybeShowNotifyGuide()
+    onPushOpened(cid => { openChatById(cid) })
     if (state.view === 'main') bootstrap()
     this.doCheckUpdate()
     onWs(WS_EVENTS.APP_UPDATE, () => this.doCheckUpdate())

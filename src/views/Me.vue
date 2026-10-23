@@ -22,6 +22,22 @@
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
         <span class="cell-label">已登录设备</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
       </div>
+      <div class="cell" @click="openPermissionSetting">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="cell-label">通知权限</span>
+        <span class="cell-value" :style="{ color: notifyGranted ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ notifyGranted ? '已开启' : '未开启 · 点击开启' }}</span>
+      </div>
+      <div class="cell" @click="toggleKeepAlive">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><circle cx="12" cy="12" r="4"/></svg>
+        <span class="cell-label">后台保活
+          <br><small style="color:#707579">关闭后 App 在后台容易被系统冻结，收不到提醒</small>
+        </span>
+        <span class="cell-value" :style="{ color: keepAliveOn ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ keepAliveOn ? '已开启' : '已关闭' }}</span>
+      </div>
+      <div class="cell" @click="openNotifyGuide">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="cell-label">通知设置指引</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+      </div>
       <div class="cell" @click="showPwd = true">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         <span class="cell-label">修改密码</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
@@ -74,6 +90,14 @@
             <span v-else class="cell-value" style="color:#E53935">下线</span>
           </div>
           <div v-if="!devices.length" class="sheet-item" style="color:#707579">暂无设备记录</div>
+        <!-- 极光推送诊断（PUSH_JPUSH.md §7 第 1 步）：真机联调时确认 registration_id 非空，验证完可整块删除 -->
+        <div class="cell" style="border-bottom:1px solid var(--tg-border)" @click="copyPushInfo">
+          <span class="cell-label">
+            推送诊断
+            <br><small style="color:#707579;word-break:break-all">{{ pushInfoText }}</small>
+          </span>
+          <span class="cell-value" style="color:var(--tg-text-secondary)">复制</span>
+        </div>
         </div>
         <div class="sheet-item sheet-cancel" @click="showDevices = false">关闭</div>
       </div>
@@ -179,12 +203,14 @@
 </template>
 
 <script>
-import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, getThemeColor, setTheme, loadPresenceMe } from '../store'
+import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, openNotifyGuide, getThemeColor, setTheme, loadPresenceMe } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
 import { storage } from '../utils/storage'
 import { onWs, WS_EVENTS } from '../utils/ws'
 import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
+import { initPush, getPushRegistrationId, getPushAlias, pushDiag, isPushActive, ensureNotificationPermission, checkNotificationPermission, openNotificationSettings } from '../utils/push'
+import { enableKeepAlive, setKeepAlive, isKeepAliveOn } from '../utils/keepalive'
 
 /** 在线判定窗口：心跳间隔 60s，容忍丢一拍 → 90 秒内有活跃才算在线 */
 const ONLINE_WINDOW_MS = 90 * 1000
@@ -197,6 +223,10 @@ export default {
       devices: [],
       showDevices: false,
       offlineTarget: null,       // 待确认下线的设备（二次确认弹窗用）
+      pushRegId: '',             // 极光 registration_id（诊断用，PUSH_JPUSH.md §7 第 1 步）
+      pushAlias: '',             // 极光侧当前绑定的 alias（应等于登录 userId）
+      notifyGranted: false,      // 系统通知权限是否已开启（Android 13+ 运行时权限）
+      keepAliveOn: true,         // 后台保活前台服务是否开启
       showEditProfile: false,
       profileForm: { display_name: '', signature: '' },
       showPwd: false,
@@ -213,6 +243,7 @@ export default {
     }
   },
   async mounted() {
+    this.keepAliveOn = isKeepAliveOn()
     // 获取当前 App 版本号
     try {
       const cap = window.Capacitor
@@ -234,10 +265,28 @@ export default {
     if (this._offDevOffline) this._offDevOffline()
     if (this._offDevRemoved) this._offDevRemoved()
   },
+  computed: {
+    /** 推送诊断文案：路线 + registration_id + alias + setAlias 结果
+        alias 是与登录 userId 清洗后（去 '-'）比对，极光 alias 只接受字母/数字/下划线 */
+    pushInfoText() {
+      const d = pushDiag()
+      const rawUid = state.me && state.me.id ? state.me.id : ''
+      const expect = rawUid ? rawUid.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40) : ''
+      const reg = d.regId || this.pushRegId || '（空）'
+      let aliasPart = this.pushAlias ? this.pushAlias : '（空）'
+      if (this.pushAlias) aliasPart += expect && this.pushAlias === expect ? ' ✓' : (expect ? ' ✗ 应为 ' + expect : '')
+      return (isPushActive() ? '极光已初始化' : '极光未初始化')
+        + ' · ' + d.mode
+        + ' · reg: ' + reg
+        + ' · alias: ' + aliasPart
+        + ' · setAlias: ' + d.setAlias + (d.at ? ' @' + d.at : '')
+    },
+  },
   methods: {
     avatarColor,
     avatarSrc,
     openFeedback,
+    openNotifyGuide,
     /** 是否本机：主判据是登录时存下的设备表主键（storage.deviceRowId），
         兜底用客户端设备编号（storage.deviceId，永远存在且不被 clear 清除）交叉判定 ——
         避免 deviceRowId 缺失（老版本登录残留 / 登录响应无 device.id）时把本机误标成「可下线」，
@@ -282,9 +331,49 @@ export default {
       if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前活跃'
       return Math.floor(diff / 86400000) + ' 天前活跃'
     },
+    /** 极光诊断：刷新 alias + registration_id + 通知权限（真机联调用；验证完可整块删除） */
+    async refreshPushDiag() {
+      try {
+        await initPush()
+        this.pushRegId = await getPushRegistrationId()
+        this.pushAlias = await getPushAlias()
+        this.notifyGranted = await checkNotificationPermission()
+      } catch (e) {
+        this.pushRegId = ''
+        this.pushAlias = ''
+      }
+    },
+    /**
+     * 「通知权限」行：未开启 → 先尝试弹系统授权框；系统已不再弹（拒绝过两次）则直接跳系统设置页
+     */
+    async openPermissionSetting() {
+      const granted = await ensureNotificationPermission()
+      this.notifyGranted = granted
+      if (granted) { showToast('通知权限已开启'); return }
+      const ok = await openNotificationSettings()
+      if (!ok) showToast('请手动开启：设置 → 应用 → 焚信 → 通知')
+    },
+    /** 「后台保活」开关：关闭后常驻通知消失，但后台更容易被系统冻结 */
+    async toggleKeepAlive() {
+      const next = !this.keepAliveOn
+      this.keepAliveOn = next
+      const ok = await setKeepAlive(next)
+      if (next && !ok) showToast('当前环境无需保活（仅 Android App 生效）')
+      else showToast(next ? '已开启后台保活' : '已关闭后台保活，后台可能收不到提醒')
+    },
+    async copyPushInfo() {
+      const text = this.pushInfoText
+      try {
+        await navigator.clipboard.writeText(text)
+        showToast('推送诊断信息已复制')
+      } catch (e) {
+        showToast(text)
+      }
+    },
     async openDevices() {
       this.showDevices = true
       this.devices = []
+      this.refreshPushDiag()
       if (state.demoMode) {
         this.devices = [{ id: storage.deviceRowId || '1', device_name: 'Android App（本机）', device_type: 'mobile', is_online: true, last_active_at: new Date().toISOString() }]
         return

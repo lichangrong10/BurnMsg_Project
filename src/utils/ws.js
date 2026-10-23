@@ -73,6 +73,11 @@ export function disconnectWs() {
   }
 }
 
+/** 当前是否已连上（供后台切回前台时判断要不要重连） */
+export function isWsConnected() {
+  return !!(socket && socket.connected)
+}
+
 /** 用新 token 重建连接（token 刷新后调用） */
 export function reconnectWs(token) {
   connectWs(token)

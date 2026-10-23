@@ -9,5 +9,11 @@
   "android": {
     "allowMixedContent": true,
     "adjustMarginsForEdgeToEdge": "disable"
+  },
+  "cordova": {
+    "preferences": {
+      "APP_KEY": "914c13fbf4fb53d54e895053",
+      "CHANNEL": "developer-default"
+    }
   }
 }

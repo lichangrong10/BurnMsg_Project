@@ -9,7 +9,17 @@ import { api } from '../api'
 import { DEMO } from '../mock/demo'
 import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
 import { notifyNewMessage } from '../utils/notify'
-import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS } from '../utils/ws'
+import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS, isWsConnected } from '../utils/ws'
+import { bindPushAlias, unbindPushAlias, isPushActive } from '../utils/push'
+import { setupAppState } from '../utils/appstate'
+import { enableKeepAlive, disableKeepAlive } from '../utils/keepalive'
+
+/**
+ * 是否让本地通知给极光让位。
+ * 默认 false：极光只推离线用户，而 WS 活着=在线，后端不推，二者不重叠（PUSH_JPUSH.md §0/§8）。
+ * 仅当实测出现「同一条消息弹两次」才改 true。
+ */
+const NOTIFY_SUPPRESS_LOCAL = false
 import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 import { Capacitor } from '@capacitor/core'
@@ -74,6 +84,7 @@ export const state = reactive({
   feedbackList: [],       // 我的反馈列表（含管理员回复）
   feedbackLoading: false, // 反馈列表加载中
   showGlobalSearch: false, // 全局消息搜索页（覆盖层）
+  showNotifyGuide: false,  // 通知设置指引页（覆盖层，PUSH_JPUSH.md §9）
   targetMessageId: null,   // 全局搜索跳转定位：目标消息 id（ChatRoom 消费后清空）
   layout: 'mobile'         // 布局模式：mobile(默认/原生App) | tablet(web中屏) | desktop(web宽屏双栏)
 })
@@ -302,7 +313,10 @@ export async function login(phone, password) {
   } else {
     state.view = 'main'
     connectWs(d.access_token)
+    bindPushAlias(d.user && d.user.id) // 极光 alias = userId（PUSH_JPUSH.md §4.2），离线推送靠它投递
     bootstrap()
+    maybeShowNotifyGuide() // 首次装好登录后引导一次通知设置（§9）；不能在 App 挂载时判，那时还在登录页
+    enableKeepAlive() // 登录后开启前台服务保活，让极光长连接在后台存活更久（否则切后台一会儿就收不到）
   }
   return d
 }
@@ -376,6 +390,8 @@ export function forceLogout() {
   state.destroyAcking = {}
   state.sessionConflict = null
   for (const k of Object.keys(burnDeadline)) delete burnDeadline[k]
+  unbindPushAlias() // 解绑极光 alias：否则换人登录仍会收到上一个人的消息（PUSH_JPUSH.md §8）
+  disableKeepAlive() // 退出登录后关掉保活前台服务（常驻通知不该在未登录时还挂着）
   disconnectWs()
 }
 
@@ -588,6 +604,10 @@ export async function bootstrap() {
     try {
       state.me = await api.getProfile()
       storage.user = state.me
+      // 冷启动 / 刷新页面恢复登录时也要绑一次 alias：
+      // 只有走 login() 才绑的话，重装 APK 或清数据后 alias 会丢，推送静默失效（PUSH_JPUSH.md §4.2）
+      bindPushAlias(state.me && state.me.id)
+      enableKeepAlive() // 冷启动恢复登录时同样开启保活（前台服务是进程级的，重启后需要重新拉起）
       if (state.me && typeof state.me.topic === 'string' && state.me.topic.startsWith('#')) applyTheme(state.me.topic) // 以服务端保存的主题色为准
       // 焚毁时长不再从账号字段解析：进会话时按 burn_settings 查生效值（见 loadBurnSetting）
     } catch (e) { /* 忽略，沿用登录返回的用户信息 */ }
@@ -764,6 +784,25 @@ export function getConvDraft(cid) {
 export function setConvDraft(cid, text) {
   if (cid == null) return
   try { const k = convDraftKey(cid); if (text) localStorage.setItem(k, text); else localStorage.removeItem(k) } catch (e) {}
+}
+
+/**
+ * 按会话 id 打开会话 —— 供极光推送点击跳转使用（本工程无 vue-router，见 utils/push.js 顶部说明）
+ * 冷启动时推送可能先到、会话列表还没拉到，这里会先补拉一次列表再找。
+ * @returns {Promise<boolean>} 是否找到并打开
+ */
+export async function openChatById(cid) {
+  if (cid == null || cid === '') return false
+  const find = () => (state.convs || []).find(x => String(x.id) === String(cid))
+  let c = find()
+  if (!c) {
+    try { await loadConvs(true) } catch (e) { /* 忽略：拉不到就当找不到 */ }
+    c = find()
+  }
+  if (!c) return false
+  state.tab = 'chats'
+  await openChat(c)
+  return true
 }
 
 export async function openChat(c) {
@@ -1067,11 +1106,16 @@ async function onWsNewMessage(p) {
         }
         const mention = mentionsMe(m)
         try {
-          notifyNewMessage({
-            title: (mention ? '@我 · ' : '') + convName(conv),
-            message: messagePreview(m) || '',
-            onClick: () => openChat(conv)
-          })
+          // 本地通知：默认始终弹。
+          // 极光只对「离线」用户推送（PUSH_JPUSH.md §0），WS 活着就等于在线、后端不会推，
+          // 所以两者正常不会重叠。仅当实测出现「同一条消息弹两次」时，才把下面开关改 true。
+          if (!NOTIFY_SUPPRESS_LOCAL || !isPushActive()) {
+            notifyNewMessage({
+              title: (mention ? '@我 · ' : '') + convName(conv),
+              message: messagePreview(m) || '',
+              onClick: () => openChat(conv)
+            })
+          }
         } catch (e) { /* 通知失败不影响消息处理 */ }
       }
       if (c) popCard(c)
@@ -1342,6 +1386,31 @@ export async function loadFeedback(quiet) {
 export function openFeedback() {
   state.showFeedback = true
   loadFeedback(true)
+}
+
+/**
+ * 打开「通知设置指引」页（PUSH_JPUSH.md §9）
+ * 国产 ROM 光有通知权限还不够：电池优化/自启动/后台锁定不配，App 过一会儿就收不到推送。
+ */
+export function openNotifyGuide() {
+  state.showNotifyGuide = true
+  try { storage.notifyGuideSeen = true } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 首次进入主界面时自动引导一次（只弹一次）。
+ * 必须在「登录成功之后」调用：首次安装时 App 挂载那一刻还停在登录页，那时判断 state.view 会直接失败。
+ */
+let notifyGuideTried = false
+export function maybeShowNotifyGuide() {
+  if (notifyGuideTried) return
+  if (state.demoMode || state.view !== 'main') return
+  if (!isPushActive()) return          // 极光都没起来，先按 §7 第 1 步查初始化，别急着引导
+  if (storage.notifyGuideSeen) return
+  notifyGuideTried = true
+  setTimeout(() => {
+    if (!state.showNotifyGuide && state.view === 'main' && !storage.notifyGuideSeen) openNotifyGuide()
+  }, 800)
 }
 
 /** 提交意见反馈（content 必填，contact 选填），成功后静默刷新列表 */
@@ -2176,6 +2245,20 @@ function sendHeartbeat() {
   api.heartbeat(id).catch(() => { /* 忽略：下一次心跳再补 */ })
 }
 
+/**
+ * App 切到后台：主动断开 WS。
+ *
+ * 为什么必须断开：后端按「WS 是否连着」判断在线，在线就不推极光（PUSH_JPUSH.md §0「在线用户不推」）。
+ * 不断开的话后端永远认为在线 → 业务消息永远不会走极光推送 → 后台/锁屏收不到任何系统通知；
+ * 而「本地通知」是画在页面里的卡片，后台根本看不见，于是用户感知不到任何提醒。
+ * 断开后后端判离线 → 发消息时才会真正调极光 → 后台能收到系统通知栏通知。
+ * 回到前台由 onWake() 重连并补拉数据，不会丢消息。
+ */
+function onHide() {
+  if (state.view !== 'main' || state.demoMode) return
+  disconnectWs()
+}
+
 /** 回到前台：重拉数据 + 重同步倒计时 + 心跳 + 确认墓碑。
     后台/锁屏期间 setInterval 被系统挂起，本地秒表会落后于服务端，这一步把状态拉回一致（修「僵尸消息」）。 */
 function onWake() {
@@ -2185,6 +2268,8 @@ function onWake() {
   clearTimeout(wakeTimer)
   wakeTimer = setTimeout(() => {
     if (state.view !== 'main' || state.demoMode) return
+    // 后台时 WS 被主动断开（见 onHide），回前台第一件事是重连，否则实时消息收不到
+    if (!isWsConnected()) connectWs(storage.token)
     if (state.chat) {
       loadMessages(true).then(() => { resyncBurnCountdown(); confirmDestroyed() }).catch(() => { /* 静默 */ })
     } else {
@@ -2193,6 +2278,12 @@ function onWake() {
     refreshAnnUnread()
     sendHeartbeat()
   }, 300) // 去抖：visibilitychange 与 focus 常常同时触发
+}
+
+/** visibilitychange：后台断开 WS、前台走 onWake（focus 事件单独绑 onWake，避免切走时误触发） */
+function onVisibilityChange() {
+  if (typeof document !== 'undefined' && document.hidden) onHide()
+  else onWake()
 }
 
 export function startTimers() {
@@ -2216,11 +2307,14 @@ export function startTimers() {
     refreshPeerPresence()
     refreshVisiblePresence()
   }, 30000))
-  // 回到前台/重新聚焦：校正秒表 + 重拉数据（见 onWake）
+  // 切后台/回前台：后台断 WS（让后端判离线→走极光推送），回前台重连+补拉（见 onHide / onWake）
   if (!burnWakeHandler && typeof document !== 'undefined') {
     burnWakeHandler = onWake
-    document.addEventListener('visibilitychange', burnWakeHandler)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('focus', burnWakeHandler)
+    // 原生侧再挂一层：Android WebView 的 document.hidden 不一定随 app 切后台更新，
+    // 只靠 visibilitychange 可能永远不断开 WS（后端 socket_count 保持 1 → 判在线 → 不推极光）
+    setupAppState(onHide, onWake)
   }
 }
 export function stopTimers() {
@@ -2229,7 +2323,7 @@ export function stopTimers() {
   clearTimeout(wakeTimer)
   wakeTimer = null
   if (burnWakeHandler) {
-    document.removeEventListener('visibilitychange', burnWakeHandler)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
     window.removeEventListener('focus', burnWakeHandler)
     burnWakeHandler = null
   }

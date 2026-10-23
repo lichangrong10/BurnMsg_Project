@@ -43,6 +43,18 @@ export const storage = {
   get forceChangePwd() { return localStorage.getItem('bm_force_change_pwd') === '1' },
   set forceChangePwd(v) { v ? localStorage.setItem('bm_force_change_pwd', '1') : localStorage.removeItem('bm_force_change_pwd') },
 
+  // 通知设置指引是否已展示过（设备级，不随换号清除）；首次原生启动自动弹一次，之后从「我的」手动进入
+  get notifyGuideSeen() { return localStorage.getItem('bm_notify_guide_seen') === '1' },
+  set notifyGuideSeen(v) { v ? localStorage.setItem('bm_notify_guide_seen', '1') : localStorage.removeItem('bm_notify_guide_seen') },
+
+  // 通知权限是否已自动申请过（设备级）：只自动弹一次系统授权框，之后由用户在「通知设置指引」手动触发/跳设置
+  get notifyPermAsked() { return localStorage.getItem('bm_notify_perm_asked') === '1' },
+  set notifyPermAsked(v) { v ? localStorage.setItem('bm_notify_perm_asked', '1') : localStorage.removeItem('bm_notify_perm_asked') },
+
+  // 后台保活开关（设备级，默认开启）：关闭后 App 在后台更容易被系统冻结，收不到推送
+  get keepAliveEnabled() { return localStorage.getItem('bm_keepalive_off') !== '1' },
+  set keepAliveEnabled(v) { v ? localStorage.removeItem('bm_keepalive_off') : localStorage.setItem('bm_keepalive_off', '1') },
+
   // 注意：bm_device_id 故意不在清理清单里——清了它，每次登录都会变成"新设备"
   clear() {
     ['bm_access_token', 'bm_refresh_token', 'bm_user', 'bm_demo', 'bm_force_change_pwd'].forEach(k => localStorage.removeItem(k))

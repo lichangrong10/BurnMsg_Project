@@ -34,7 +34,26 @@ public class MainActivity extends BridgeActivity {
         // registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(DownloadApkPlugin.class);
         registerPlugin(MediaSaverPlugin.class); // v5.8.8：图片保存到系统相册
+        registerPlugin(NotifyPermissionPlugin.class); // Android 13+ 运行时申请通知权限
+        registerPlugin(KeepAlivePlugin.class);        // 后台保活前台服务开关
         super.onCreate(savedInstanceState);
+
+        // ── 极光推送通知渠道（PUSH_JPUSH.md §3.5）──
+        // Android 8+ 通知必须归属某个渠道，且这里的 id 必须与后端推送体里的 channel_id 完全一致（约定统一用 messages）。
+        // 不一致或没创建 → 系统静默丢弃通知，现象是「极光控制台显示发送成功，但手机不弹」。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.NotificationManager nm =
+                    (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null && nm.getNotificationChannel("messages") == null) {
+                android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                        "messages", "消息通知", android.app.NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("新消息提醒");
+                ch.enableVibration(true);
+                // 锁屏不展示正文：与后端内容脱敏配合，避免阅后即焚消息在锁屏上露出
+                ch.setLockscreenVisibility(android.app.Notification.VISIBILITY_PRIVATE);
+                nm.createNotificationChannel(ch);
+            }
+        }
 
         // ── Android 15/16 强制 edge-to-edge 修复 ──
         // 系统 API：状态栏透明悬浮，WebView 内容顶到屏幕顶端，导致顶部 UI 与状态栏重叠。
@@ -105,6 +124,143 @@ public class MainActivity extends BridgeActivity {
                 && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{ android.Manifest.permission.RECORD_AUDIO }, 1001);
+        }
+    }
+
+    /**
+     * Capacitor 自定义插件：后台保活前台服务的开关（供 JS 在登录后开启 / 退出登录时关闭）
+     */
+    @CapacitorPlugin(name = "KeepAlive")
+    public static class KeepAlivePlugin extends Plugin {
+
+        @PluginMethod
+        public void enable(PluginCall call) {
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            try {
+                Intent i = new Intent(getContext(), KeepAliveService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    getContext().startForegroundService(i);
+                } else {
+                    getContext().startService(i);
+                }
+                ret.put("running", true);
+                call.resolve(ret);
+            } catch (Exception e) {
+                ret.put("running", false);
+                ret.put("error", String.valueOf(e.getMessage()));
+                call.resolve(ret);
+            }
+        }
+
+        @PluginMethod
+        public void disable(PluginCall call) {
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            try {
+                getContext().stopService(new Intent(getContext(), KeepAliveService.class));
+                ret.put("running", false);
+            } catch (Exception e) {
+                ret.put("running", false);
+            }
+            call.resolve(ret);
+        }
+    }
+
+    /**
+     * Capacitor 自定义插件：Android 13+ 运行时申请通知权限（POST_NOTIFICATIONS）
+     *
+     * 为什么不用 Cordova 插件的 requestPermission()：它内部依赖 Cordova 全局 device 对象，
+     * App 挂载那一刻 device 往往还没注入 → 抛异常被 try/catch 吞掉 → 系统弹窗从来没出现过。
+     * 这里直接用 Capacitor 的 @Permission 机制，可靠且能拿到用户的选择结果。
+     */
+    @CapacitorPlugin(
+        name = "NotifyPermission",
+        permissions = @com.getcapacitor.annotation.Permission(
+            alias = "notifications",
+            strings = { android.Manifest.permission.POST_NOTIFICATIONS }
+        )
+    )
+    public static class NotifyPermissionPlugin extends Plugin {
+
+        /** 检查并按需申请；已授权则直接返回 granted=true，不重复打扰 */
+        @PluginMethod
+        public void ensure(PluginCall call) {
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            ret.put("sdk", Build.VERSION.SDK_INT);
+            // Android 13 以下没有该运行时权限，通知默认可用
+            if (Build.VERSION.SDK_INT < 33) {
+                ret.put("granted", true);
+                ret.put("needRequest", false);
+                call.resolve(ret);
+                return;
+            }
+            boolean granted = getPermissionState("notifications") == com.getcapacitor.PermissionState.GRANTED;
+            if (granted) {
+                ret.put("granted", true);
+                ret.put("needRequest", false);
+                call.resolve(ret);
+                return;
+            }
+            ret.put("granted", false);
+            ret.put("needRequest", true);
+            call.resolve(ret);
+            // 弹系统授权框（结果在回调里，前端不阻塞等待）
+            requestPermissionForAlias("notifications", null, "onPermissionResult");
+        }
+
+        @com.getcapacitor.annotation.PermissionCallback
+        private void onPermissionResult(PluginCall call) {
+            boolean granted = getPermissionState("notifications") == com.getcapacitor.PermissionState.GRANTED;
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            ret.put("granted", granted);
+            ret.put("needRequest", !granted);
+            if (call != null) call.resolve(ret);
+            notifyListeners("permissionResult", ret);
+        }
+
+        /**
+         * 只查询当前是否已授权（不弹任何框），供「我的」页展示状态
+         */
+        @PluginMethod
+        public void check(PluginCall call) {
+            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+            boolean granted = Build.VERSION.SDK_INT < 33
+                    || getPermissionState("notifications") == com.getcapacitor.PermissionState.GRANTED;
+            ret.put("granted", granted);
+            ret.put("sdk", Build.VERSION.SDK_INT);
+            call.resolve(ret);
+        }
+
+        /**
+         * 直达系统的「本应用通知设置」页。
+         * 用户拒绝过两次后系统不再弹授权框，只能靠这个入口手动打开。
+         */
+        @PluginMethod
+        public void openSettings(PluginCall call) {
+            try {
+                Intent intent;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // Android 8+：直达「焚信 → 通知」页，少点两层
+                    intent = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                    intent.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+                } else {
+                    intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    intent.setData(android.net.Uri.parse("package:" + getContext().getPackageName()));
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+                call.resolve();
+            } catch (Exception e) {
+                // 部分 ROM 没有该 Action，退回应用详情页
+                try {
+                    Intent fallback = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    fallback.setData(android.net.Uri.parse("package:" + getContext().getPackageName()));
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(fallback);
+                    call.resolve();
+                } catch (Exception e2) {
+                    call.reject("打开设置页失败: " + e2.getMessage());
+                }
+            }
         }
     }
 
