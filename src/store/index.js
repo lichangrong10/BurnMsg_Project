@@ -1600,7 +1600,7 @@ export async function sendText(text, mentions, replyToId) {
     const m = { id: DEMO.uid(), sender_id: state.me.id, created_at: new Date().toISOString(), is_recalled: false, is_edited: false, ...payload, destroy_at: (!state.burnOff && !state.mediaBurnOn && state.burnSeconds) ? new Date(Date.now() + state.burnSeconds * 1000).toISOString() : undefined }
     ;(DEMO.messages[state.chat.id] = DEMO.messages[state.chat.id] || []).push(m)
     state.messages.push(m)
-    state.chat.lastMsg = text
+    state.chat.lastMsg = messagePreview(m) || text // 焚毁消息只显示占位，不把明文写进列表预览
     state.chat.last_message_at = m.created_at
     return true
   }
@@ -1625,8 +1625,9 @@ export async function sendText(text, mentions, replyToId) {
       m.content = text
       m.e2e = true
       pushMsgDedup(m)
-      state.chat.lastMsg = text
-      setLastMsg(state.chat.id, text)
+      // 加密消息：列表预览只显示占位，不写明文
+      state.chat.lastMsg = '加密消息'
+      setLastMsg(state.chat.id, '加密消息')
       return true
     } catch (e) {
       showToast(e.message)
@@ -1637,8 +1638,10 @@ export async function sendText(text, mentions, replyToId) {
     const m = await api.sendMessage(payload)
     pushMsgDedup(m)
     seedBurnLeft(m) // 自己发的焚毁消息立刻起倒计时，不必等下一轮 4s 轮询（也堵住「发完马上关页面没种入」的窗口）
-    state.chat.lastMsg = text
-    setLastMsg(state.chat.id, text)
+    // 会话列表预览统一走 messagePreview：焚毁/加密消息只显示占位，不能把明文写进去
+    const preview = messagePreview(m) || (payload.burn_ttl_seconds != null ? '焚毁消息' : text)
+    state.chat.lastMsg = preview
+    setLastMsg(state.chat.id, preview)
     return true
   } catch (e) {
     showToast(e.message)
@@ -1890,9 +1893,9 @@ export async function editMessage(m, content) {
   try {
     const nm = await api.editMessage(m.id, content)
     Object.assign(m, nm)
-    // 编辑的是会话最后一条消息时，同步会话列表预览
+    // 编辑的是会话最后一条消息时，同步会话列表预览（焚毁/加密消息仍走占位文案）
     if (state.chat && state.messages[state.messages.length - 1] === m) {
-      state.chat.lastMsg = m.content || content
+      state.chat.lastMsg = messagePreview(m) || content
       setLastMsg(state.chat.id, state.chat.lastMsg)
     }
     return true

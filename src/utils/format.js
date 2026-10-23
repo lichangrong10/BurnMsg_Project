@@ -163,11 +163,14 @@ export function fmtSize(s) {
   return (s / 1073741824).toFixed(2) + ' GB'
 }
 
-/** 消息 → 会话列表预览文本（撤回/媒体类型做占位文案） */
+/** 消息 → 会话列表预览文本（撤回/焚毁/加密/媒体类型都做占位文案，绝不泄露正文） */
 export function messagePreview(m) {
   if (!m || typeof m !== 'object') return ''
   if (m.is_recalled) return '此消息已撤回'
   if (m.is_blurred) return '焚毁消息'
+  // 焚毁消息：即使是自己发的、或后端已经把正文返回（发送方/已点开），预览也只能显示占位，
+  // 否则会话列表会直接把焚毁消息的明文漏出来
+  if (m.burn_ttl_seconds != null || m.burn_at != null || m.destroy_at != null || m.is_burned) return '焚毁消息'
   if (m.is_encrypted || m.e2e === true || m.e2eFail === true) return '加密消息'
   switch (m.type) {
     case 'text': return m.content || ''
