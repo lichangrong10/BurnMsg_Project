@@ -264,25 +264,76 @@ export async function confirmDestroyed(cid) {
 const READER_NAME_OK = n => !!(n && n !== '成员')
 
 /** 用一份成员列表算出单条消息的已读聚合（纯本地计算，不发请求）。
+ *  ctx = { times: Map(消息id → ms), missing: Set(找不到的消息id) }
  *  墓碑消息（已焚毁）也用同一个规则：按 created_at 与成员 last_read 位置比较，得到「焚毁前最后已知」的已读状态。 */
-function computeReaderAgg(m, members) {
+function computeReaderAgg(m, members, ctx) {
   const mTime = msgTime(m)
+  const times = (ctx && ctx.times) || new Map()
+  const missing = (ctx && ctx.missing) || new Set()
   const readers = (members || [])
     .filter(x => String(memberUid(x)) !== String(state.me.id))
     .map(x => {
       const lr = x && x.last_read_message_id
       let read = false
       if (lr != null) {
-        if (String(lr) === String(m.id)) read = true
-        else if (mTime > 0) {
-          const lrMsg = state.messages.find(y => String(y.id) === String(lr))
-          read = !!(lrMsg && msgTime(lrMsg) >= mTime)
-        }
+        const key = String(lr)
+        if (key === String(m.id)) read = true
+        else if (times.has(key)) read = mTime > 0 && times.get(key) >= mTime
+        // 定位不到那条消息（多已被焚毁销毁）：视为已读，否则「读过了却显示未读」
+        else if (missing.has(key)) read = true
       }
       const nm = memberName(x)
       return { user_id: memberUid(x), user_display_name: READER_NAME_OK(nm) ? nm : '', is_read: read, is_revealed: false, read_at: null, burn_at: null }
     })
   return { total: readers.length, revealed: readers.filter(r => r.is_read).length, burned: 0, readers }
+}
+
+/* last_read 指向的消息经常不在当前加载窗口里（更早、或已被焚毁删除），
+   这里把它的时间解析出来：本地消息 → 焚毁墓碑 → 往前翻页；都找不到的记为 missing。
+   结果按「会话|消息id」缓存在内存里，避免每次刷新重复翻页。 */
+const lrTimeCache = {}
+async function resolveLastReadCtx(cid, members) {
+  const times = new Map()
+  const unknown = []
+  const ghostAll = burnedMsgMap()
+  const ghosts = Array.isArray(ghostAll[String(cid)]) ? ghostAll[String(cid)] : []
+  for (const mb of members || []) {
+    const lr = mb && mb.last_read_message_id
+    if (!lr) continue
+    const id = String(lr)
+    if (times.has(id)) continue
+    const cacheKey = String(cid) + '|' + id
+    if (lrTimeCache[cacheKey] != null) { times.set(id, lrTimeCache[cacheKey]); continue }
+    const local = state.messages.find(y => String(y.id) === id)
+    const lt = local ? msgTime(local) : 0
+    if (lt) { lrTimeCache[cacheKey] = lt; times.set(id, lt); continue }
+    const g = ghosts.find(x => String(x.id) === id)
+    const gt = g && g.created_at ? Date.parse(g.created_at) : 0
+    if (gt) { lrTimeCache[cacheKey] = gt; times.set(id, gt); continue }
+    unknown.push(id)
+  }
+  if (!unknown.length) return { times, missing: new Set() }
+  // 往前翻页找（最多 5 页 × 100 条）
+  const oldest = state.messages.reduce((acc, m) => { const t = msgTime(m); return (t && (!acc || t < acc)) ? t : acc }, 0)
+  let before = oldest ? new Date(oldest).toISOString() : null
+  for (let page = 0; page < 5 && unknown.length && before; page++) {
+    let list = []
+    try { list = asArray(await api.getMessages(cid, { limit: 100, before })) } catch (e) { break }
+    if (!list.length) break
+    for (const m of list) {
+      const id = String(m.id)
+      const i = unknown.indexOf(id)
+      if (i >= 0) {
+        const t = msgTime(m)
+        if (t) { lrTimeCache[String(cid) + '|' + id] = t; times.set(id, t) }
+        unknown.splice(i, 1)
+      }
+    }
+    const pageOldest = list.reduce((acc, m) => { const t = msgTime(m); return (t && (!acc || t < acc)) ? t : acc }, 0)
+    if (!pageOldest) break
+    before = new Date(pageOldest).toISOString()
+  }
+  return { times, missing: new Set(unknown) }
 }
 
 /** 取成员列表：force 或缓存超过 8 秒才重拉；重拉走 enrichMemberList，避免原始行覆盖导致姓名丢失 */
@@ -307,7 +358,8 @@ export async function loadReadersMany(msgs, force) {
   try {
     const members = await ensureMembersForReaders(force)
     if (!members) return
-    for (const m of list) state.readers[String(m.id)] = computeReaderAgg(m, members)
+    const ctx = await resolveLastReadCtx(cid, members)
+    for (const m of list) state.readers[String(m.id)] = computeReaderAgg(m, members, ctx)
   } catch (e) { /* 静默 */ }
 }
 
@@ -326,7 +378,8 @@ export async function loadReaders(m, force) {
   try {
     const members = await ensureMembersForReaders(force)
     if (!members) return null
-    const agg = computeReaderAgg(m, members)
+    const ctx = await resolveLastReadCtx(cid, members)
+    const agg = computeReaderAgg(m, members, ctx)
     state.readers[key] = agg
     return agg
   } catch (e) {
