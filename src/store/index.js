@@ -564,18 +564,54 @@ export function setLocalUnread(cid, n) {
   saveUnreadStore(m)
 }
 
-/** 首次补算：按「我的已读时间点」数出该会话真实的未读条数（每个会话只会算一次） */
+/* 未读补算：以服务端「我读到哪条」为准（成员表的 last_read_message_id，私聊/群聊都有效），
+   数出该会话里这条之后、别人发的消息条数。这样即使清缓存/重新登录、本地标记全没了，
+   也不会把历史消息全算成未读；本地标记只负责运行期的即时增减。 */
+const unreadFilledAt = {} // cid -> 上次补算时间（避免每次 loadConvs 都重算）
+async function computeUnreadFromServer(cid, conv) {
+  try {
+    const members = asArray(await api.getGroupMembers(cid))
+    const mine = members.find(m => String(memberUid(m)) === String(state.me.id))
+    const lr = mine && mine.last_read_message_id
+    const msgs = asArray(await api.getMessages(cid, { limit: 200 }))
+    let after = msgs
+    if (lr) {
+      const idx = msgs.findIndex(m => String(m.id) === String(lr))
+      // 找得到 → 只数它之后的；找不到（更早/已销毁）→ 整页都在它之后
+      if (idx >= 0) after = msgs.slice(idx + 1)
+    }
+    const n = after.filter(m => String(m.sender_id) !== String(state.me.id) && !m.is_recalled).length
+    setLocalUnread(cid, n)
+    unreadFilledAt[String(cid)] = Date.now()
+    const cur = state.convs.find(x => String(x.id) === String(cid)) || conv
+    if (cur && (!state.chat || String(state.chat.id) !== String(cid))) cur.unread = n
+    return n
+  } catch (e) {
+    unreadFilledAt[String(cid)] = Date.now() // 失败也记时间，别每轮都重试
+    // 补算失败：退回服务端计数（可能偏大），总比一直 0 漏掉真未读强
+    const srv = Number(conv && (conv.unread_count ?? conv.unread)) || 0
+    setLocalUnread(cid, srv)
+    const cur = state.convs.find(x => String(x.id) === String(cid)) || conv
+    if (cur && (!state.chat || String(state.chat.id) !== String(cid))) cur.unread = srv
+    return null
+  }
+}
+
+/** 给「缺本地记录 / 本地显示为 0 但服务端还有新消息」的会话补算未读（顺序执行，避免并发打爆接口） */
 async function fillLocalUnread(list) {
-  for (const c of list || []) {
+  const now = Date.now()
+  const need = (list || []).filter(c => {
+    if (state.demoMode || !c || c.id == null) return false
+    if (now - (unreadFilledAt[String(c.id)] || 0) < 30000) return false // 30 秒内算过就不再算
+    const local = getLocalUnread(c.id)
+    if (local == null) return true // 清缓存/新登录：必须用服务端位置重算
+    const lastAt = Date.parse(c.last_message_at || '') || 0
+    const mark = getReadMark(c.id)
+    return local === 0 && lastAt > mark // 本地记 0 但服务端有更新的消息 → 可能漏算
+  })
+  for (const c of need.slice(0, 6)) {
     if (state.demoMode) return
-    try {
-      const msgs = asArray(await api.getMessages(c.id, { limit: 200 }))
-      const mark = getReadMark(c.id)
-      const n = msgs.filter(m => String(m.sender_id) !== String(state.me.id) && msgTime(m) > mark).length
-      setLocalUnread(c.id, n)
-      const cur = state.convs.find(x => String(x.id) === String(c.id))
-      if (cur && (!state.chat || String(state.chat.id) !== String(c.id))) cur.unread = n
-    } catch (e) { setLocalUnread(c.id, 0) }
+    await computeUnreadFromServer(c.id, c)
   }
 }
 export function deleteConversation(c) {
@@ -834,9 +870,10 @@ export async function loadConvs(quiet) {
         const lastAt = Date.parse(c.last_message_at || '') || 0
         const mark = getReadMark(c.id)
         const locallyRead = mark > 0 && lastAt > 0 && lastAt <= mark
-        // 未读数一律用本机计数：后端 unread_count 是累计值（读完不减），只在没有任何本地记录时才拿它兜底
+        // 未读数一律用本机计数：后端 unread_count 是累计值（读完不减）；
+        // 本地没有记录（清缓存/新登录）时先显示 0，随后由 fillLocalUnread 按服务端「我读到哪条」补算
         const local = getLocalUnread(c.id)
-        const unread = locallyRead ? 0 : (local != null ? local : (Number(serverUnread) || 0))
+        const unread = locallyRead ? 0 : (local != null ? local : 0)
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
         const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
         let mentionFlag = (old && old.mentionFlag) ? 1 : 0
@@ -855,8 +892,8 @@ export async function loadConvs(quiet) {
         }
       })
       .filter(c => !hidden.includes(String(c.id)))
-    // 没有本地未读记录的会话：按「我上次读到的时间点」逐条数一遍（每会话只算一次，之后走本地计数）
-    fillLocalUnread(state.convs.filter(c => getLocalUnread(c.id) == null))
+    // 缺本地未读记录的会话（清缓存/新登录）：按服务端「我读到哪条」重算，不把历史消息算成未读
+    fillLocalUnread(state.convs)
     if (!quiet) await fillMissingPreviews()
     refreshVisiblePresence() // 会话列表的在线圆点：拉一遍所有私聊对方的在线态（静默、异步）
   } catch (e) { if (!quiet) showToast(e.message) }
