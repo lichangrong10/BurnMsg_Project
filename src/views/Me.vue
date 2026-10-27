@@ -27,12 +27,13 @@
         <span class="cell-label">通知权限</span>
         <span class="cell-value" :style="{ color: notifyGranted ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ notifyGranted ? '已开启' : '未开启 · 点击开启' }}</span>
       </div>
-      <div class="cell" @click="toggleKeepAlive">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><circle cx="12" cy="12" r="4"/></svg>
-        <span class="cell-label">后台保活
-          <br><small style="color:#707579">关闭后 App 在后台容易被系统冻结，收不到提醒</small>
+      <!-- 后台保活：仅 Android App 有效。PC/网页端直接置灰不可点（保活是原生前台服务，网页没有这东西） -->
+      <div class="cell" :class="{ 'cell-self': !isNativeApp }" @click="toggleKeepAlive">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="isNativeApp ? 'var(--tg-blue)' : '#A8AFB6'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><circle cx="12" cy="12" r="4"/></svg>
+        <span class="cell-label" :style="{ color: isNativeApp ? '' : '#A8AFB6' }">后台保活
+          <br><small style="color:#707579">{{ isNativeApp ? '关闭后 App 在后台容易被系统冻结，收不到提醒' : '仅手机 App 有效，网页端无需开启' }}</small>
         </span>
-        <span class="cell-value" :style="{ color: keepAliveOn ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ keepAliveOn ? '已开启' : '已关闭' }}</span>
+        <span class="cell-value" :style="{ color: !isNativeApp ? '#A8AFB6' : (keepAliveOn ? 'var(--tg-text-secondary)' : 'var(--tg-danger)') }">{{ isNativeApp ? (keepAliveOn ? '已开启' : '已关闭') : '不可用' }}</span>
       </div>
       <div class="cell" @click="openNotifyGuide">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -233,6 +234,7 @@ export default {
       pushAlias: '',             // 极光侧当前绑定的 alias（应等于登录 userId）
       notifyGranted: false,      // 系统通知权限是否已开启（Android 13+ 运行时权限）
       keepAliveOn: true,         // 后台保活前台服务是否开启
+      isNativeApp: false,        // 是否运行在 Android/iOS 原生容器（PC/网页端没有前台服务，保活不可用）
       showEditProfile: false,
       profileForm: { display_name: '', signature: '' },
       showPwd: false,
@@ -251,6 +253,13 @@ export default {
     }
   },
   async mounted() {
+    // 是否原生容器：PC/网页端无前台服务，保活行置灰不可点
+    try {
+      const { Capacitor } = await import('@capacitor/core')
+      this.isNativeApp = Capacitor.isNativePlatform()
+    } catch (e) {
+      this.isNativeApp = false
+    }
     this.keepAliveOn = isKeepAliveOn()
     // 获取当前 App 版本号
     try {
@@ -381,12 +390,16 @@ export default {
       const ok = await openNotificationSettings()
       if (!ok) showToast('请手动开启：设置 → 应用 → 焚信 → 通知')
     },
-    /** 「后台保活」开关：关闭后常驻通知消失，但后台更容易被系统冻结 */
+    /** 「后台保活」开关：仅 Android App 可切换；PC/网页端点击只弹提示，不改变状态 */
     async toggleKeepAlive() {
+      if (!this.isNativeApp) {
+        showToast('后台保活仅手机 App 有效，网页端无需开启')
+        return
+      }
       const next = !this.keepAliveOn
       this.keepAliveOn = next
       const ok = await setKeepAlive(next)
-      if (next && !ok) showToast('当前环境无需保活（仅 Android App 生效）')
+      if (next && !ok) showToast('开启失败，请检查通知权限是否已允许')
       else showToast(next ? '已开启后台保活' : '已关闭后台保活，后台可能收不到提醒')
     },
     async copyPushInfo() {
