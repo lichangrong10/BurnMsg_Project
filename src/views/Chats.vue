@@ -27,10 +27,12 @@
         <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
         <!-- 私聊在线圆点：绿=在线，灰=离线；未取到在线态时不显示 -->
         <span v-if="peerOnline(c) !== null" class="online-dot" :class="{ on: peerOnline(c) }" :title="peerOnline(c) ? '在线' : '离线'"></span>
+          <!-- 右上角：焚毁时间（加密聊天剩余有效期 / 会话焚毁时长） -->
+          <span v-if="burnBadge(c)" class="conv-burn-badge" :title="'焚毁时间 ' + burnBadge(c)">{{ burnBadge(c) }}</span>
       </div>
       <div class="conv-main">
         <div class="conv-row">
-          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ convName(c) }}</div>
+          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ convName(c) }}<span v-if="c.e2e_mode === 1" class="conv-enc">{{ c.e2e_state === 1 ? '加密请求' : '加密' }}</span></div>
           <div class="conv-time">{{ fmtTime(c.last_message_at) }}</div>
         </div>
         <div class="conv-row" style="align-items:center">
@@ -85,6 +87,10 @@ export default {
           return !k || convName(c).toLowerCase().includes(k)
         })
         .sort((a, b) => {
+          // 加密聊天请求置顶（pending 的 last_message_at 为 null，否则会沉到最底）
+          const ap = (a.e2e_mode === 1 && (a.e2e_state === 1 || a.e2e_state === 2)) ? 1 : 0
+          const bp = (b.e2e_mode === 1 && (b.e2e_state === 1 || b.e2e_state === 2)) ? 1 : 0
+          if (ap !== bp) return bp - ap
           if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
           return (new Date(b.last_message_at || 0).getTime()) - (new Date(a.last_message_at || 0).getTime())
         })
@@ -104,6 +110,27 @@ export default {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    /** 头像右上角焚毁时间：加密聊天取剩余有效期，普通会话取会话焚毁时长 */
+    burnBadge(c) {
+      if (!c) return ''
+      if (c.e2e_mode === 1) {
+        const at = c.e2e_expires_at
+        if (!at) return ''
+        const ms = Date.parse(at) - Date.now()
+        if (!(ms > 0)) return ''
+        const d = Math.ceil(ms / 86400000)
+        if (d >= 1) return d + 'd'
+        const h = Math.ceil(ms / 3600000)
+        if (h >= 1) return h + 'h'
+        return Math.max(1, Math.ceil(ms / 60000)) + 'm'
+      }
+      const ttl = Number(c.burn_ttl_seconds || 0)
+      if (!(ttl > 0)) return ''
+      if (ttl >= 86400) return Math.round(ttl / 86400) + 'd'
+      if (ttl >= 3600) return Math.round(ttl / 3600) + 'h'
+      if (ttl >= 60) return Math.round(ttl / 60) + 'm'
+      return ttl + 's'
+    },
     /** 私聊对方是否在线：返回 true/false；群/频道或数据未到返回 null（不显示圆点） */
     peerOnline(c) {
       if (!c || c.type !== 'private' || !c.other_user || c.other_user.id == null) return null
@@ -276,4 +303,6 @@ export default {
   box-sizing: border-box;
 }
 .online-dot.on { background: #31C48D; }
+  .conv-enc { font-size: 10px; color: var(--tg-blue); border: 1px solid rgba(51,144,236,.45); border-radius: 4px; padding: 0 3px; line-height: 1.5; margin-left: 4px; font-weight: 500; }
+  .conv-burn-badge { position: absolute; right: -7px; top: -7px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
 </style>

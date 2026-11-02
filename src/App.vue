@@ -1,5 +1,6 @@
 <template>
   <div class="app-root" :class="rootClass">
+
     <LoginView v-if="state.view === 'login'" />
   <ChangePwdView v-else-if="state.view === 'changePwd'" />
   <HomeView v-else />
@@ -63,7 +64,6 @@
     </div>
   </div>
   </div>
-
 </template>
 
 <script>
@@ -196,4 +196,5 @@ export default {
     }
   }
 }
+
 </script>
