@@ -19,10 +19,6 @@
       <div class="topbar-icon" @click="toggleChatSearch" title="搜索消息">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       </div>
-      <div class="topbar-icon todo-btn" @click="showTofuTodo = true" title="密钥待办">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        <span v-if="pendingCount" class="todo-dot">{{ pendingCount > 9 ? '9+' : pendingCount }}</span>
-      </div>
     </div>
 
     <!-- ═══════ 会话内消息搜索面板 ═══════ -->
@@ -314,26 +310,6 @@
     </div>
 
     <!-- ═══════ 密钥待办（「稍后处理」收纳的密钥变更） ═══════ -->
-    <div v-if="showTofuTodo" class="overlay" @click.self="showTofuTodo = false">
-      <div class="sheet">
-        <div class="sheet-title">{{ pendingCount ? pendingCount + ' 项密钥待确认' : '密钥待办' }}</div>
-        <div class="todo-scroll">
-          <div v-if="!pendingCount" class="todo-empty">暂无待处理的密钥变更</div>
-          <div v-for="p in pendingList" :key="p.user_id" class="todo-item">
-            <div class="todo-item-head">
-              <span class="todo-item-name"><svg class="todo-key" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> {{ p.name }}</span>
-              <span class="todo-item-time">{{ fmtClock(p.created_at) }}</span>
-            </div>
-            <div class="todo-item-tip">对方的端到端安全密钥已变更，确认信任后才能继续加密收发</div>
-            <div class="todo-item-actions">
-              <button class="todo-trust" @click="trustPending(p)">确认信任新密钥</button>
-              <button class="todo-ignore" @click="ignorePending(p)">忽略</button>
-            </div>
-          </div>
-        </div>
-        <div class="sheet-item sheet-cancel" @click="showTofuTodo = false">关闭</div>
-      </div>
-    </div>
 
     <!-- ═══════ 对方资料（加密聊天入口） ═══════ -->
     <div v-if="secretSheet" class="overlay" @click.self="secretSheet = false">
@@ -551,7 +527,6 @@ export default {
       pendingFiles: [],         // 待发送文件列表：{ file, url }（url 为图片预览 objectURL）
       showPendingFiles: false,  // 待发送确认层开关
       sendingFiles: false,      // 正在发送待发送文件
-      showTofuTodo: false,
       msgAction: null,
       editing: null,       // 正在编辑的消息
       replyTo: null,       // 引用回复：正在回复的消息
