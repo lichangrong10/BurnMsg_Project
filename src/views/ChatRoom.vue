@@ -12,16 +12,31 @@
         <div class="chat-title">{{ convName(state.chat) }}</div>
         <div class="chat-status">{{ chatStatus }}</div>
       </div>
-      <div class="topbar-icon secret-btn" @click="onSecretBtn" :title="isSecretCh ? '加密聊天' : '开启加密聊天'">
+      <div class="topbar-icon more-btn" @click.stop="chatMenu = !chatMenu" title="更多">
         <span v-if="secretPendingMine" class="secret-dot"></span>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-      </div>
-      <div class="topbar-icon" @click="toggleChatSearch" title="搜索消息">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
       </div>
     </div>
 
-    <!-- ═══════ 会话内消息搜索面板 ═══════ -->
+    <!-- ═══════ 顶栏「⋯」下拉菜单（fixed 定位） ═══════ -->
+  <div v-if="chatMenu" class="chat-menu-mask" @click="chatMenu = false"></div>
+  <div v-if="chatMenu" class="chat-menu">
+    <div class="chat-menu-item" :class="{ 'mi-urgent': secretPendingMine }" @click="onMenuSecret">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+      <span class="mi-label">{{ menuSecretLabel }}</span>
+      <span v-if="secretPendingMine" class="chat-menu-dot"></span>
+    </div>
+    <div class="chat-menu-item" @click="onMenuSearch">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+      <span class="mi-label">搜索消息</span>
+    </div>
+    <div class="chat-menu-item" @click="onMenuInfo">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
+      <span class="mi-label">{{ state.chat && state.chat.type === 'private' ? '聊天信息' : '群组信息' }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════ 会话内消息搜索面板 ═══════ -->
     <div v-if="chatSearchOpen" class="chat-search-panel">
       <div class="chat-search-bar">
         <input class="chat-search-input" v-model="chatSearchKeyword" @input="onChatSearchInput" placeholder="搜索消息（至少2个字符）" autofocus>
@@ -513,7 +528,8 @@ export default {
   name: 'ChatRoom',
   data() {
     return {
-      secretSheet: false,
+      chatMenu: false,
+    secretSheet: false,
       confirmCloseSecret: false,
       state,
       burnOptions: BURN_OPTIONS, // 与旧版一致：关闭 / 5 秒 … 30 天（关闭 = 本机在该会话不焚毁）
@@ -574,6 +590,11 @@ export default {
     }
   },
   computed: {
+    menuSecretLabel() {
+      if (this.isSecretActiveCh) return '加密聊天（已开启）'
+      if (this.isSecretPendingCh) return this.isSecretInitiatorHere ? '加密聊天（等待接受）' : '加密聊天（待确认）'
+      return '开启加密聊天'
+    },
     /** 该对方是否已有我发起的、等待对方接受的加密请求 */
     secretPendingMine() {
       const peerId = state.chat && state.chat.other_user && state.chat.other_user.id
@@ -855,6 +876,9 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    onMenuSecret() { this.chatMenu = false; this.onSecretBtn() },
+    onMenuSearch() { this.chatMenu = false; this.toggleChatSearch() },
+    onMenuInfo() { this.chatMenu = false; this.openInfo() },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
     onSecretBtn() {
       const c = state.chat
@@ -2331,4 +2355,29 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .sheet-item.secret-primary { color: var(--tg-blue); font-weight: 600; }
 .sheet-item.secret-tip { font-size: 12px; color: #9AA0A6; padding-top: 2px; padding-bottom: 10px; }
 
+
+/* ═══════ 顶栏「⋯」下拉菜单（贴合主题色） ═══════ */
+.more-btn { position: relative; }
+.chat-menu-mask { position: fixed; inset: 0; z-index: 198; background: rgba(0,0,0,.06); animation: chatMaskIn .14s ease-out; }
+.chat-menu { position: fixed; top: 52px; right: 10px; z-index: 199; min-width: 186px; padding: 6px;
+  background: var(--tg-bg); border-radius: 14px;
+  border: 1px solid var(--tg-border);
+  box-shadow: 0 12px 36px rgba(0,0,0,.26), 0 2px 8px rgba(var(--tg-blue-rgb), .10);
+  animation: chatMenuIn .16s cubic-bezier(.2,.9,.3,1); transform-origin: top right; overflow: hidden; }
+@keyframes chatMenuIn { from { opacity: 0; transform: scale(.92) translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes chatMaskIn { from { opacity: 0 } to { opacity: 1 } }
+.chat-menu-item { display: flex; align-items: center; gap: 11px; padding: 11px 12px; border-radius: 10px;
+  font-size: 14.5px; color: var(--tg-text); cursor: pointer; white-space: nowrap;
+  transition: background .13s ease, color .13s ease; }
+.chat-menu-item + .chat-menu-item { margin-top: 2px; }
+.chat-menu-item:hover, .chat-menu-item:active { background: var(--tg-blue-tint); }
+.chat-menu-item:hover svg, .chat-menu-item:active svg { color: var(--tg-blue-dark); }
+/* 图标胶囊底：让每个功能块有主题色识别度 */
+.chat-menu-item .mi-ico { width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--tg-blue-tint); color: var(--tg-blue); flex-shrink: 0; }
+.chat-menu-item .mi-label { flex: 1; }
+.chat-menu-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tg-danger); box-shadow: 0 0 0 3px rgba(229,57,53,.14); }
+/* 待处理状态：整项用主题色描边提示 */
+.chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
+.chat-menu-item.mi-urgent .mi-label { color: var(--tg-blue-dark); font-weight: 600; }
 </style>
