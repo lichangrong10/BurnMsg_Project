@@ -16,15 +16,16 @@
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
     </div>
-    <div v-for="c in filteredConvs" :key="c.id" class="conv-item" :class="{ 'is-pinned': c.pinned }"
+    <div v-for="c in filteredConvs" :key="c.id" class="conv-item" :class="{ 'is-pinned': c.pinned, 'has-unread': c.unread }"
       @click="onClickConv(c)"
       @contextmenu.prevent="openMenu(c, $event)"
       @touchstart="touchStart($event, c)"
       @touchmove="touchMove"
       @touchend="touchEnd"
       @touchcancel="cancelLongPress">
+      <span v-if="c.unread" class="conv-badge-top">{{ c.unread > 99 ? '99+' : c.unread }}</span>
       <div class="avatar-wrap">
-        <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
+        <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(c.type === 'private' ? String((c.other_user && c.other_user.id) || convName(c)) : convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
         <!-- 私聊在线圆点：绿=在线，灰=离线；未取到在线态时不显示 -->
         <span v-if="peerOnline(c) !== null" class="online-dot" :class="{ on: peerOnline(c) }" :title="peerOnline(c) ? '在线' : '离线'"></span>
           <!-- 右上角：焚毁时间（加密聊天剩余有效期 / 会话焚毁时长） -->
@@ -32,16 +33,18 @@
       </div>
       <div class="conv-main">
         <div class="conv-row">
-          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ convName(c) }}<span v-if="c.e2e_mode === 1" class="conv-enc">{{ c.e2e_state === 1 ? '加密请求' : '加密' }}</span></div>
-          <div class="conv-time">{{ fmtTime(c.last_message_at) }}</div>
+          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ displayName(c) }}<span v-if="c.e2e_mode === 1" class="conv-enc">{{ c.e2e_state === 1 ? '加密请求' : '加密' }}</span></div>
         </div>
         <div class="conv-row" style="align-items:center">
           <div class="conv-preview"><svg v-if="c.burning" class="burn-tag" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg><span v-if="c.mentionFlag" class="conv-mention">有人@了你</span><template v-else>{{ c.lastMsg || '开始聊天吧' }}</template></div>
           <div class="conv-right">
-            <span v-if="c.dissolved_at" class="type-tag" style="color:#E53935;background:rgba(229,57,53,.1)">已解散</span>
-            <span v-else-if="c.unread" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
-            <span v-else-if="c.is_channel || c.type === 'channel'" class="type-tag">频道</span>
-            <span v-else-if="c.type === 'group'" class="type-tag">群组</span>
+              <span class="conv-time-bottom">{{ fmtTime(c.last_message_at) }}</span>
+              <span v-if="c.dissolved_at" class="type-tag" style="color:#E53935;background:rgba(229,57,53,.1)">已解散</span>
+              <span v-if="c.e2e_mode === 1" class="type-tag" style="color:var(--tg-blue);background:rgba(51,144,236,.1)">加密</span>
+              <span v-else-if="c.is_channel || c.type === 'channel'" class="type-tag">频道</span>
+              <span v-else-if="c.type === 'group'" class="type-tag">群组</span>
+              <span v-else class="type-tag">私聊</span>
+              
           </div>
         </div>
       </div>
@@ -73,6 +76,18 @@ export default {
     }
   },
   computed: {
+    /** 当前列表里重名的私聊（同名不同人）→ 给名字加唯一后缀 */
+    dupNameIds() {
+      const list = Array.isArray(state.convs) ? state.convs : []
+      const cnt = {}
+      list.filter(c => c.type === 'private' && c.e2e_mode !== 1).forEach(c => {
+        const n = convName(c)
+        cnt[n] = (cnt[n] || 0) + 1
+      })
+      const set = new Set()
+      list.filter(c => c.type === 'private' && c.e2e_mode !== 1 && cnt[convName(c)] > 1).forEach(c => set.add(String(c.id)))
+      return set
+    },
     filteredConvs() {
       const k = state.keyword.toLowerCase()
       const list = Array.isArray(state.convs) ? state.convs : []
@@ -110,6 +125,14 @@ export default {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    /** 展示名：重名时追加部门/工号，没有则追加 ID 后 4 位，保证可区分 */
+    displayName(c) {
+      const base = convName(c)
+      if (!c || c.type !== 'private' || c.e2e_mode === 1 || !this.dupNameIds.has(String(c.id))) return base
+      const u = c.other_user || {}
+      const extra = u.department || u.employee_no || String(u.id || '').slice(-4)
+      return extra ? base + ' · ' + extra : base
+    },
     /** 头像右上角焚毁时间：加密聊天取剩余有效期，普通会话取会话焚毁时长 */
     burnBadge(c) {
       if (!c) return ''
@@ -304,5 +327,8 @@ export default {
 }
 .online-dot.on { background: #31C48D; }
   .conv-enc { font-size: 10px; color: var(--tg-blue); border: 1px solid rgba(51,144,236,.45); border-radius: 4px; padding: 0 3px; line-height: 1.5; margin-left: 4px; font-weight: 500; }
-  .conv-burn-badge { position: absolute; right: -7px; top: -7px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
+  .conv-item { position: relative; }
+.conv-badge-top { position: absolute; top: 7px; right: 12px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; background: #F04438; color: #fff; font-size: 11px; font-weight: 600; border-radius: 9px; line-height: 1; z-index: 2; }
+.conv-time-bottom { font-size: 11.5px; color: #9AA0A6; margin-right: 6px; flex-shrink: 0; }
+.conv-burn-badge { position: absolute; right: -7px; top: -7px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
 </style>
