@@ -20,7 +20,7 @@ import { enableKeepAlive, disableKeepAlive } from '../utils/keepalive'
  * 仅当实测出现「同一条消息弹两次」才改 true。
  */
 const NOTIFY_SUPPRESS_LOCAL = false
-import { e2eSupported, ensureIdentity, ensureDeviceIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E, clearPlaintextFor, getDeviceIdentity } from '../utils/e2e'
+import { e2eSupported, ensureIdentity, ensureDeviceIdentity, migrateE2EStorage, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E, clearPlaintextFor, getDeviceIdentity } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
 import {
   isSecretConv, isSecretPending, isSecretActive,
@@ -802,6 +802,7 @@ async function fillMissingPreviews() {
 }
 
 export async function bootstrap() {
+  migrateE2EStorage() // 一次性清理旧「用户级加密」残留（旧密钥/明文缓存/TOFU 待办）
   applyTheme(curThemeColor) // 进主界面先按本地已存主题色恢复，避免等接口期间闪回默认蓝
   await Promise.all([loadConvs(), loadContacts()])
   loadAnnouncements(true).then(maybeAutoPopup)

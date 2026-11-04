@@ -293,3 +293,39 @@ export function clearPlaintextFor(msgIds) {
   try { if (changedPt) localStorage.setItem(PT_CACHE, JSON.stringify(pt)) } catch (e) { /* 忽略 */ }
   try { if (changedFail) localStorage.setItem(FAIL_CACHE, JSON.stringify(fail)) } catch (e) { /* 忽略 */ }
 }
+
+/**
+ * 一次性迁移（v2）：把旧的「用户级加密」残留清干净
+ * - bm_e2e_priv_raw / bm_e2e_pub_b64：旧用户级 identity（现改设备级）
+ * - bm_e2e_pt / bm_e2e_fail：旧明文缓存（官方口径：旧加密消息已不可解，本地不该还能看）
+ * - bm_pinned_keys：旧用户级 TOFU 钉
+ * - bm_pending_key_changes：旧密钥变更待办（不清会一直冒红点/假提示）
+ * - bm_e2e_on_<cid>：已下线的「明文加密」开关
+ * - bm_pinned_dev_keys：仅清理旧格式（键不是会话 ID 的），保留新格式
+ */
+const MIGRATED_FLAG = 'bm_e2e_migrated_v2'
+
+export function migrateE2EStorage() {
+  try {
+    if (localStorage.getItem(MIGRATED_FLAG) === '1') return false
+    const hasDeviceIdentity = !!deviceIdentityStorageKey() && !!localStorage.getItem(deviceIdentityStorageKey())
+    // 只有设备级 identity 已就绪时才删旧私钥，否则会导致当前设备无钥匙可用
+    if (hasDeviceIdentity) {
+      localStorage.removeItem(PRIV_RAW)
+      localStorage.removeItem(PUB_KEY)
+    }
+    localStorage.removeItem(PT_CACHE)
+    localStorage.removeItem(FAIL_CACHE)
+    localStorage.removeItem('bm_pinned_keys')
+    localStorage.removeItem('bm_pending_key_changes')
+    // 旧「明文加密」开关
+    Object.keys(localStorage)
+      .filter(k => k.indexOf('bm_e2e_on_') === 0)
+      .forEach(k => localStorage.removeItem(k))
+    localStorage.setItem(MIGRATED_FLAG, '1')
+    return true
+  } catch (e) {
+    console.warn('[焚信] E2E 存储迁移失败:', e && e.message)
+    return false
+  }
+}
