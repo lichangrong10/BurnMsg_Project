@@ -2006,7 +2006,8 @@ export async function sendText(text, mentions, replyToId) {
       }
       // salt 必须与解密端一致（decryptMessage 用会话 ID），否则对方无法解密
       const enc = await encryptText(text, pk.pubkey, state.chat.id)
-      const m = await api.sendMessage({ ...payload, content: '[加密消息]', is_encrypted: true, ...enc })
+      // 加密聊天内一律不焚毁：显式传 0，避免继承普通会话的焚毁设置
+      const m = await api.sendMessage({ ...payload, content: '[加密消息]', is_encrypted: true, burn_ttl_seconds: 0, ...enc })
       cachePlaintext(m.id, text)
       m.content = text
       m.e2e = true
