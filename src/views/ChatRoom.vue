@@ -21,7 +21,7 @@
     <!-- ═══════ 顶栏「⋯」下拉菜单（fixed 定位） ═══════ -->
   <div v-if="chatMenu" class="chat-menu-mask" @click="chatMenu = false"></div>
   <div v-if="chatMenu" class="chat-menu">
-    <div class="chat-menu-item" :class="{ 'mi-urgent': secretPendingMine }" @click="onMenuSecret">
+    <div class="chat-menu-item" :class="{ 'mi-urgent': secretPendingMine, 'mi-danger': isSecretActiveCh }" @click="onMenuSecret">
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
       <span class="mi-label">{{ menuSecretLabel }}</span>
       <span v-if="secretPendingMine" class="chat-menu-dot"></span>
@@ -591,8 +591,8 @@ export default {
   },
   computed: {
     menuSecretLabel() {
-      if (this.isSecretActiveCh) return '加密聊天（已开启）'
-      if (this.isSecretPendingCh) return this.isSecretInitiatorHere ? '加密聊天（等待接受）' : '加密聊天（待确认）'
+      if (this.isSecretActiveCh) return '结束加密聊天'
+      if (this.isSecretPendingCh) return this.isSecretInitiatorHere ? '撤回加密聊天请求' : '接受加密聊天请求'
       return '开启加密聊天'
     },
     /** 该对方是否已有我发起的、等待对方接受的加密请求 */
@@ -881,7 +881,11 @@ export default {
       this.chatMenu = false
       requestAnimationFrame(() => setTimeout(fn, 0))
     },
-    onMenuSecret() { this.runAfterMenu(() => this.onSecretBtn()) },
+    onMenuSecret() {
+      // 已开启：菜单项直接变成「结束加密聊天」→ 弹二次确认
+      if (this.isSecretActiveCh) { this.runAfterMenu(() => { this.confirmCloseSecret = true }); return }
+      this.runAfterMenu(() => this.onSecretBtn())
+    },
     onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
     onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
@@ -2386,6 +2390,8 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .chat-menu-item .mi-ico { width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
   background: var(--tg-blue-tint); color: var(--tg-blue); flex-shrink: 0; }
 .chat-menu-item .mi-label { flex: 1; }
+.chat-menu-item.mi-danger .mi-label { color: var(--tg-danger, #E53935); font-weight: 600; }
+.chat-menu-item.mi-danger .mi-ico { background: rgba(229,57,53,.1); color: var(--tg-danger, #E53935); }
 .chat-menu-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tg-danger); box-shadow: 0 0 0 3px rgba(229,57,53,.14); }
 /* 待处理状态：整项用主题色描边提示 */
 .chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
