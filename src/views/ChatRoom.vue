@@ -876,9 +876,14 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
-    onMenuSecret() { this.chatMenu = false; this.onSecretBtn() },
-    onMenuSearch() { this.chatMenu = false; this.toggleChatSearch() },
-    onMenuInfo() { this.chatMenu = false; this.openInfo() },
+    // 先关菜单、下一帧再执行动作：点击即时响应，避免重渲染卡顿感
+    runAfterMenu(fn) {
+      this.chatMenu = false
+      requestAnimationFrame(() => setTimeout(fn, 0))
+    },
+    onMenuSecret() { this.runAfterMenu(() => this.onSecretBtn()) },
+    onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
+    onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
     onSecretBtn() {
       const c = state.chat
@@ -2358,18 +2363,23 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 
 /* ═══════ 顶栏「⋯」下拉菜单（贴合主题色） ═══════ */
 .more-btn { position: relative; }
-.chat-menu-mask { position: fixed; inset: 0; z-index: 198; background: rgba(0,0,0,.06); animation: chatMaskIn .14s ease-out; }
-.chat-menu { position: fixed; top: 52px; right: 10px; z-index: 199; min-width: 186px; padding: 6px;
+.chat-menu-mask { position: fixed; inset: 0; z-index: 198; background: transparent; }
+.chat-menu { position: fixed; top: 52px; right: 10px; z-index: 199; min-width: 190px; padding: 6px 0;
   background: var(--tg-bg); border-radius: 14px;
   border: 1px solid var(--tg-border);
   box-shadow: 0 12px 36px rgba(0,0,0,.26), 0 2px 8px rgba(var(--tg-blue-rgb), .10);
-  animation: chatMenuIn .16s cubic-bezier(.2,.9,.3,1); transform-origin: top right; overflow: hidden; }
+  animation: chatMenuIn .16s cubic-bezier(.2,.9,.3,1); transform-origin: top right; overflow: hidden; will-change: transform, opacity; }
 @keyframes chatMenuIn { from { opacity: 0; transform: scale(.92) translateY(-6px); } to { opacity: 1; transform: none; } }
 @keyframes chatMaskIn { from { opacity: 0 } to { opacity: 1 } }
-.chat-menu-item { display: flex; align-items: center; gap: 11px; padding: 11px 12px; border-radius: 10px;
+.chat-menu-item { display: flex; align-items: center; gap: 11px; padding: 12px 14px;
   font-size: 14.5px; color: var(--tg-text); cursor: pointer; white-space: nowrap;
   transition: background .13s ease, color .13s ease; }
-.chat-menu-item + .chat-menu-item { margin-top: 2px; }
+/* 无分隔线：靠留白 + 圆角悬停区分（更轻盈） */
+.chat-menu-item { position: relative; border-radius: 10px; margin: 1px 5px; padding: 10px 9px; touch-action: manipulation; }
+.chat-menu-item + .chat-menu-item::before {
+  content: ''; position: absolute; top: -2px; left: 50px; right: 10px; height: 1px;
+  background: var(--tg-border); opacity: .38;
+}
 .chat-menu-item:hover, .chat-menu-item:active { background: var(--tg-blue-tint); }
 .chat-menu-item:hover svg, .chat-menu-item:active svg { color: var(--tg-blue-dark); }
 /* 图标胶囊底：让每个功能块有主题色识别度 */

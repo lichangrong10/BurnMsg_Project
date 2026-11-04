@@ -1129,6 +1129,16 @@ export function closeChat() {
   loadConvs(true)
 }
 
+
+/** 加密会话已不可用（对方结束/被踢）：清本地痕迹 + 提示 + 退出聊天页 */
+function handleSecretGone(cid, why) {
+  const id = cid || (state.chat && state.chat.id)
+  const isCurrent = state.chat && String(state.chat.id) === String(id)
+  cleanupSecretLocal(id)
+  showToast(why || '对方已结束加密聊天')
+  if (isCurrent) closeChat()
+}
+
 export async function loadMessages(quiet) {
   // pending 私密会话没有消息（后端 404），直接跳过避免报错
   if (state.chat && state.chat.e2e_mode === 1 && state.chat.e2e_state === 1) { state.messages = []; return }
@@ -1176,6 +1186,12 @@ export async function loadMessages(quiet) {
     if (!quiet) state.msgSeq++
   } catch (e) {
     console.error('[焚信] 拉取消息失败:', cid, e)
+    const msg = String((e && (e.code || e.message)) || '')
+    const gone = /40[34]|E2E_SESSION_GONE|不存在|无权|Access denied|forbidden|not found/i.test(msg)
+    if (state.chat && state.chat.e2e_mode === 1 && gone) {
+      handleSecretGone(cid, '对方已结束加密聊天')
+      return
+    }
     if (!quiet) showToast(e.message)
   } finally {
     state.msgLoading = false
@@ -2017,6 +2033,11 @@ export async function sendText(text, mentions, replyToId) {
       setLastMsg(state.chat.id, '加密消息')
       return true
     } catch (e) {
+      const msg = String((e && (e.code || e.message)) || '')
+      if (/40[34]|E2E_SESSION_GONE|不存在|Access denied|not found/i.test(msg)) {
+        handleSecretGone(state.chat.id, '对方已结束加密聊天，本条未发送')
+        return false
+      }
       showToast((e && e.message) || '加密发送失败')
       return false
     }
@@ -2727,7 +2748,18 @@ export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
   // 焚毁秒表：按绝对截止时间重算（tickBurn 内部自愈），到点就地焚毁，不再靠「每滴答 -1」
   timers.push(setInterval(tickBurn, 1000))
-  timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
+  timers.push(setInterval(async () => {
+  if (!state.chat || state.chat.e2e_mode !== 1 || state.chat.e2e_state !== 2) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  try {
+    const r = await api.getConversation(state.chat.id)
+    if (!r) handleSecretGone(state.chat.id, '对方已结束加密聊天')
+  } catch (e) {
+    const msg = String((e && (e.code || e.message)) || '')
+    if (/40[34]|不存在|Access denied|not found/i.test(msg)) handleSecretGone(state.chat.id, '对方已结束加密聊天')
+  }
+}, 8000))
+timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   // 消息轮询：后台不轮询 + 在途不叠加
   timers.push(setInterval(async () => {
     if (msgPolling) return
