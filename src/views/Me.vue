@@ -373,7 +373,8 @@ export default {
     deviceSub(d) {
       if (!d) return ''
       const ver = d.browser_version ? ' ' + String(d.browser_version).split('.')[0] : ''
-      let main = d.browser ? (d.browser + ver + (d.os ? ' · ' + d.os + (d.os_version ? ' ' + d.os_version : '') : '')) : ''
+      // 后端优先返回 ua_display（如 "Chrome 129 · Windows 10/11"），有就直接用
+      let main = d.ua_display ? String(d.ua_display) : (d.browser ? (d.browser + ver + (d.os ? ' · ' + d.os + (d.os_version ? ' ' + d.os_version : '') : '')) : '')
       // 老记录没有 browser/os：先试后端存的 user_agent，再对本机用 navigator.userAgent 兜底
       if (!main) main = this.parseUA(d.user_agent)
       if (!main && this.isSelfDevice(d) && typeof navigator !== 'undefined') main = this.parseUA(navigator.userAgent)

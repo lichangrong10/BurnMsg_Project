@@ -2762,16 +2762,24 @@ export function startTimers() {
   // 焚毁秒表：按绝对截止时间重算（tickBurn 内部自愈），到点就地焚毁，不再靠「每滴答 -1」
   timers.push(setInterval(tickBurn, 1000))
   timers.push(setInterval(async () => {
-  if (!state.chat || state.chat.e2e_mode !== 1 || state.chat.e2e_state !== 2) return
+  // 加密会话轮询：pending 等对方接受 / active 感知对方结束
+  if (!state.chat || state.chat.e2e_mode !== 1) return
   if (typeof document !== 'undefined' && document.hidden) return
+  const cid = state.chat.id
+  const wasPending = state.chat.e2e_state === 1
   try {
-    const r = await api.getConversation(state.chat.id)
-    if (!r) handleSecretGone(state.chat.id, '对方已结束加密聊天')
-  } catch (e) {
-    const msg = String((e && (e.code || e.message)) || '')
-    if (/40[34]|不存在|Access denied|not found/i.test(msg)) handleSecretGone(state.chat.id, '对方已结束加密聊天')
-  }
-}, 8000))
+    // 用列表接口判断最稳（后端按当前设备过滤，返回的就是这台设备看到的真实状态）
+    await loadConvs(true)
+    const cur = state.convs.find(x => String(x.id) === String(cid))
+    if (!cur) { handleSecretGone(cid, wasPending ? '对方拒绝了加密聊天请求' : '对方已结束加密聊天'); return }
+    if (wasPending && cur.e2e_state === 2) {
+      Object.assign(state.chat, cur)
+      showToast('对方已接受，加密聊天已开启')
+      loadMessages(true)
+    }
+    if (!wasPending && cur.e2e_state !== 2) handleSecretGone(cid, '对方已结束加密聊天')
+  } catch (e) { /* 网络抖动忽略，下轮再试 */ }
+}, 4000))
 timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   // 消息轮询：后台不轮询 + 在途不叠加
   timers.push(setInterval(async () => {
