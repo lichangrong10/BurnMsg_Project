@@ -70,6 +70,7 @@ export const state = reactive({
   e2eReady: false,       // 本机 E2E 密钥已就绪（旧用户级，兼容保留）
   e2eSecretReady: false, // 本机「设备级」公钥已上传，可发起/接受加密聊天
   e2eSecretBusy: false,  // 加密聊天请求进行中（防重复点击）
+  devices: [],           // 已登录设备（/auth/devices：含 browser / os / 在线态）
   secretPlain: {},       // 加密聊天本机发送的明文兜底（msgId -> text）
   pwdForm: { old: '', n1: '', n2: '' },
   pwdErr: '',
@@ -868,6 +869,18 @@ export function refreshTitle() {
 
 // 未读数变化即刷新：新消息 +1、打开会话清零、会话列表从服务端重拉
 watch(convUnreadTotal, refreshTitle)
+
+/** 加载已登录设备列表（含浏览器/系统识别信息，用于加密聊天"绑定设备"展示） */
+export async function loadDevices(force) {
+  if (state.demoMode) return state.devices
+  if (state.devices.length && !force) return state.devices
+  try {
+    const r = await api.getDevices()
+    const list = Array.isArray(r) ? r : (r && (r.list || r.items)) || []
+    state.devices = list
+    return list
+  } catch (e) { return state.devices }
+}
 
 export async function loadConvs(quiet) {
   // 记录加载前的私密会话，加载后对比：服务端不再返回 = 已结束/被踢 → 清理本地痕迹

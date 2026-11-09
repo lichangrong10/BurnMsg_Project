@@ -89,7 +89,7 @@
           <div v-for="d in devices" :key="d.id" class="cell" :class="{ 'cell-self': isSelfDevice(d) }" style="border-bottom:1px solid var(--tg-border)" @click="onDeviceClick(d)">
             <span class="dev-dot" :class="{ on: isOnline(d) }"></span>
             <span class="cell-label">
-              {{ d.device_name || '未知设备' }}<span v-if="isSelfDevice(d)" class="dev-self">本机</span>
+              {{ d.device_name || (d.browser ? d.browser + (d.os ? ' · ' + d.os : '') : '未知设备') }}<span v-if="isSelfDevice(d)" class="dev-self">本机</span>
               <br><small style="color:#707579">{{ deviceSub(d) }}</small>
             </span>
             <span v-if="isSelfDevice(d)" class="cell-value" style="color:var(--tg-text-secondary)">当前设备</span>
@@ -209,7 +209,7 @@
 </template>
 
 <script>
-import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, openNotifyGuide, getThemeColor, setTheme, loadPresenceMe } from '../store'
+import { state, logout, changePassword, updateProfile, changeMyAvatar, showToast, asArray, openFeedback, openNotifyGuide, getThemeColor, setTheme, loadPresenceMe, loadDevices } from '../store'
 import { api } from '../api'
 import { avatarColor, avatarSrc } from '../utils/format'
 import { storage } from '../utils/storage'
@@ -351,12 +351,42 @@ export default {
       this.offlineTarget = d
     },
     /** 设备副标题：类型 · 在线状态 · 最后活跃时间 */
+    /** 从 User-Agent 兜底解析浏览器/系统（老设备记录 browser/os 为 null 时用） */
+    parseUA(ua) {
+      if (!ua) return ''
+      const u = String(ua)
+      let br = ''
+      if (/Edg\//.test(u)) br = 'Edge'
+      else if (/Chrome\//.test(u)) br = 'Chrome'
+      else if (/Firefox\//.test(u)) br = 'Firefox'
+      else if (/Safari\//.test(u) && !/Chrome/.test(u)) br = 'Safari'
+      else if (/okhttp|Dart|android/i.test(u)) br = 'App'
+      let os = ''
+      if (/Windows NT 10/.test(u)) os = 'Windows 10/11'
+      else if (/Windows/.test(u)) os = 'Windows'
+      else if (/Mac OS X/.test(u)) os = 'macOS'
+      else if (/Android/.test(u)) os = 'Android'
+      else if (/iPhone|iPad/.test(u)) os = 'iOS'
+      else if (/Linux/.test(u)) os = 'Linux'
+      return [br, os].filter(Boolean).join(' · ')
+    },
     deviceSub(d) {
-      const type = d.device_type || '未知类型'
-      const online = this.isOnline(d) ? '在线' : '离线'
-      const t = d.last_active_at || d.last_seen_at || d.last_online_at || d.updated_at
-      const when = t ? this.fmtAgo(t) : ''
-      return [type, online, when].filter(Boolean).join(' · ')
+      if (!d) return ''
+      const ver = d.browser_version ? ' ' + String(d.browser_version).split('.')[0] : ''
+      let main = d.browser ? (d.browser + ver + (d.os ? ' · ' + d.os + (d.os_version ? ' ' + d.os_version : '') : '')) : ''
+      // 老记录没有 browser/os：先试后端存的 user_agent，再对本机用 navigator.userAgent 兜底
+      if (!main) main = this.parseUA(d.user_agent)
+      if (!main && this.isSelfDevice(d) && typeof navigator !== 'undefined') main = this.parseUA(navigator.userAgent)
+      // 再兜底：设备名 + 短 ID（多条都叫 Web 时至少能区分是哪一台，不写"未知浏览器"以免像报错）
+      if (!main) {
+        main = d.device_name || '未知设备'
+        const shortId = d.device_id ? String(d.device_id).replace(/^web-/, '').slice(-4) : (d.id ? String(d.id).slice(0, 4) : '')
+        if (shortId) main += ' · ' + shortId
+        if (d.device_type === 'web') main += ' · 网页端'
+        else if (d.device_type) main += ' · ' + d.device_type
+      }
+      const timeTxt = d.last_seen_at ? ' · ' + String(d.last_seen_at).replace('T', ' ').slice(5, 16) : ''
+      return main + timeTxt
     },
     /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 */
     fmtAgo(t) {
@@ -422,11 +452,29 @@ export default {
       try {
         // 优先走 V6.0 的 /presence/me：本人多设备在线态，后端用 is_current 直接标识本机，
         // 在线位由 WS 连接数 + 心跳维护（比 /auth/devices 的字段语义更准）
-        const me = await loadPresenceMe()
-        if (me && Array.isArray(me.devices) && me.devices.length) {
-          this.devices = me.devices
-          return
-        }
+        // 在线态以 /presence/me 为准，浏览器/系统识别只在 /auth/devices → 按设备 id 合并
+      const [me, detail] = await Promise.all([
+        loadPresenceMe().catch(() => null),
+        loadDevices(true).catch(() => [])
+      ])
+      const detailMap = {}
+      ;(detail || []).forEach(d => { detailMap[String(d.id)] = d })
+      const presenceList = me && Array.isArray(me.devices) ? me.devices : []
+      if (presenceList.length) {
+        this.devices = presenceList.map(p => {
+          const d = detailMap[String(p.id)] || {}
+          return {
+            ...d,
+            ...p,
+            browser: d.browser || p.browser || null,
+            os: d.os || p.os || null,
+            user_agent: d.user_agent || p.user_agent || null,
+            device_name: d.device_name || p.device_name,
+            last_seen_at: p.last_seen_at || d.last_seen_at
+          }
+        })
+        return
+      }
         // 兜底：老后端没有 /presence/me 时退回设备管理接口
         this.devices = asArray(await api.getDevices())
       } catch (e) {

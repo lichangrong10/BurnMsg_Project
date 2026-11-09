@@ -330,6 +330,7 @@
     <div v-if="secretSheet" class="overlay" @click.self="secretSheet = false">
       <div class="sheet">
         <div class="sheet-title">加密聊天</div>
+        <div v-if="myDeviceLabel" class="secret-device-line">本机设备：{{ myDeviceLabel }}</div>
         <template v-if="!isSecretCh">
           <div class="sheet-item secret-primary" @click="doRequestSecret">
             {{ state.e2eSecretReady ? '开启加密聊天' : '开启加密聊天（本机密钥准备中…）' }}
@@ -512,7 +513,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat } from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -590,6 +591,35 @@ export default {
     }
   },
   computed: {
+    /** 本机设备名（来自 /auth/devices 的浏览器/系统识别） */
+    myDeviceLabel() {
+      const list = state.devices || []
+      let did = ''
+      try { did = localStorage.getItem('bm_device_row_id') || '' } catch (e) { /* 忽略 */ }
+      const d = list.find(x => String(x.id) === String(did)) || list.find(x => x.is_current)
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+      const parseUA = u => {
+        if (!u) return ''
+        let br = ''
+        if (/Edg\//.test(u)) br = 'Edge'
+        else if (/Chrome\//.test(u)) br = 'Chrome'
+        else if (/Firefox\//.test(u)) br = 'Firefox'
+        else if (/Safari\//.test(u)) br = 'Safari'
+        let os = ''
+        if (/Windows NT 10/.test(u)) os = 'Windows 10/11'
+        else if (/Windows/.test(u)) os = 'Windows'
+        else if (/Mac OS X/.test(u)) os = 'macOS'
+        else if (/Android/.test(u)) os = 'Android'
+        else if (/iPhone|iPad/.test(u)) os = 'iOS'
+        else if (/Linux/.test(u)) os = 'Linux'
+        return [br, os].filter(Boolean).join(' · ')
+      }
+      if (!d) return parseUA(ua)   // 设备列表还没回来时，至少显示本机浏览器/系统
+      const br = d.browser ? d.browser + (d.browser_version ? ' ' + String(d.browser_version).split('.')[0] : '') : ''
+      const osTxt = d.os || ''
+      const label = [br, osTxt].filter(Boolean).join(' · ')
+      return label || parseUA(d.user_agent) || parseUA(ua) || d.device_name || ''
+    },
     menuSecretLabel() {
       if (this.isSecretActiveCh) return '结束加密聊天'
       if (this.isSecretPendingCh) return this.isSecretInitiatorHere ? '撤回加密聊天请求' : '接受加密聊天请求'
@@ -889,9 +919,10 @@ export default {
     onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
     onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
-    onSecretBtn() {
+    async onSecretBtn() {
       const c = state.chat
       if (!c || c.type !== 'private') { showToast('仅单聊支持加密聊天'); return }
+      loadDevices().catch(() => {})
       this.secretSheet = true
     },
     /** 点头像 → 对方资料（加密聊天入口） */
@@ -2358,6 +2389,7 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .sr-btn.primary { background: var(--tg-blue); color: #fff; }
 .sr-btn.plain { background: #fff; border: 1px solid #DDE1E6; color: #555; }
 .sr-wait { font-size: 12px; color: #9AA0A6; }
+.secret-device-line { text-align: center; font-size: 12px; color: var(--tg-text-secondary); margin: -4px 0 10px; }
 .secret-profile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 14px; }
 .secret-profile-name { font-size: 17px; font-weight: 600; }
 .secret-profile-sub { font-size: 12.5px; color: var(--tg-text-secondary); }
