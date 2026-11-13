@@ -4,7 +4,7 @@
          语音通话时压到 1px 只让音轨继续播（不渲染占画面）。 -->
     <video
       ref="remoteVideo"
-      class="call-surface"
+      class="call-surface call-remote"
       :class="{ 'as-main': focus === 'remote', 'as-pip': focus === 'local', 'audio-only': callState.kind !== 'video', 'has-video': hasRemote }"
       :style="remoteStyle"
       autoplay
@@ -154,8 +154,10 @@ export default {
     }
   },
   watch: {
-    'callState.remoteStream'(v) { this.attachRemote(v) },
-    'callState.localStream'(v) { this.attachLocal(v) },
+    // 本地预览元素带 v-if（要有流才渲染），watcher 触发时 DOM 还没更新，
+    // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
+    'callState.remoteStream'(v) { this.$nextTick(() => this.attachRemote(v)) },
+    'callState.localStream'(v) { this.$nextTick(() => this.attachLocal(v)) },
     'callState.kind'() {
       this.$nextTick(() => {
         this.attachRemote(this.callState.remoteStream)
@@ -164,8 +166,10 @@ export default {
     }
   },
   mounted() {
-    this.attachRemote(this.callState.remoteStream)
-    this.attachLocal(this.callState.localStream)
+    this.$nextTick(() => {
+      this.attachRemote(this.callState.remoteStream)
+      this.attachLocal(this.callState.localStream)
+    })
   },
   beforeUnmount() {
     // 只解除元素绑定，真正的轨道释放在 call.js 的收尾里（这里停轨道会让通话断掉）
@@ -179,13 +183,25 @@ export default {
       const el = this.$refs.remoteVideo
       if (!el) return
       if (el.srcObject !== stream) el.srcObject = stream || null
-      if (stream) el.play().catch(() => { /* 等用户手势后自动恢复 */ })
+      if (stream) this.playSafely(el)
     },
     attachLocal(stream) {
       const el = this.$refs.localVideo
       if (!el) return
+      // 本地预览静音，否则会听到自己的回声；muted 属性在部分 WebView 上不生效，属性+property 都设
+      el.muted = true
+      el.setAttribute('muted', '')
       if (el.srcObject !== stream) el.srcObject = stream || null
-      if (stream) el.play().catch(() => {})
+      if (stream) this.playSafely(el)
+    },
+    /** autoplay 被策略拦时补一次：多数 WebView 静音视频可直接播，失败就等下一次挂载/点击重试 */
+    playSafely(el) {
+      const p = el.play()
+      if (p && p.catch) {
+        p.catch(() => {
+          setTimeout(() => { try { el.play().catch(() => {}) } catch (e) { /* 忽略 */ } }, 300)
+        })
+      }
     },
     onAccept() { acceptCall() },
     onReject() { rejectCurrent('decline') },
@@ -247,7 +263,8 @@ export default {
 }
 /* 语音通话：远端元素压到 1px，只让音轨继续播 */
 .call-surface.audio-only { width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.call-surface:not(.has-video) { opacity: 0; }
+/* 只对**远端**元素做「还没出画就隐藏」；本地元素没有 has-video，不能一起被 rule 命中 */
+.call-surface.call-remote:not(.has-video) { opacity: 0; }
 .call-surface.off { opacity: .35; }
 
 .call-head { position: relative; z-index: 2; text-align: center; max-width: 78%; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
