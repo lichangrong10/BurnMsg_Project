@@ -64,8 +64,6 @@ export const callState = reactive({
   remoteStream: null,
   /** 本轮通话是否拿到了 TURN/STUN 中继；false = 只有 host 候选（通常仅同网络可通） */
   relay: true,
-  /** 当前使用的摄像头朝向：user=前置（本地预览镜像）| environment=后置 */
-  facing: 'user',
 })
 
 /* ─── 非 reactive 的会话资源（MediaStream 放进 reactive 会被 Proxy 包裹，必须 markRaw） ─── */
@@ -239,7 +237,6 @@ function resetLocal() {
   callState.remoteStream = null
   callState.callId = null
   callState.relay = true
-  callState.facing = 'user'
 }
 
 /**
@@ -540,69 +537,15 @@ export function toggleCamera() {
   tracks.forEach(t => { t.enabled = !callState.camOff })
 }
 
-/** 前后摄像头切换。
- *
- * 两条路径，按兼容性从优到劣：
- *  ① `applyConstraints({facingMode})`：同设备组内切换最快、无黑屏帧；
- *  ② `enumerateDevices` 找下一颗 videoinput → `getUserMedia({deviceId})` 取新轨道 →
- *     `RTCRtpSender.replaceTrack()` 热替换（不重新协商，通话不中断）。
- *
- * 为什么必须有 ②：Android WebView 的 MediaStreamTrack 通常只暴露 deviceId，
- * 对轨道级 facingMode 约束抛 OverconstrainedError。旧实现只做 ①且静默吞错，
- * 表现就是「点了翻转没反应」。
- *
- * @returns {Promise<boolean>} 是否真的切成功（失败会弹提示，不再静默）
- */
+/** 前后摄像头切换（失败静默：部分 WebView 不支持 applyConstraints 的 facingMode） */
 export async function switchCamera() {
-  if (!localStream) return false
-  const oldTrack = localStream.getVideoTracks()[0]
-  if (!oldTrack) return false
-
-  // ① 轨道级约束
-  const cur = (oldTrack.getSettings && oldTrack.getSettings().facingMode) || ''
-  const nextFacing = cur === 'environment' ? 'user' : 'environment'
-  try {
-    await oldTrack.applyConstraints({ facingMode: { exact: nextFacing } })
-    callState.facing = nextFacing
-    return true
-  } catch (e) { /* 走 ② */ }
-
-  // ② 换采集设备 + replaceTrack
-  try {
-    const cams = await listCameras()
-    if (cams.length < 2) { showToast('这台设备只有一颗摄像头'); return false }
-    const curId = (oldTrack.getSettings && oldTrack.getSettings().deviceId) || ''
-    const idx = cams.findIndex(c => c.deviceId === curId)
-    const next = cams[(idx + 1 + cams.length) % cams.length]
-    const ns = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { deviceId: { exact: next.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
-    })
-    const newTrack = ns.getVideoTracks()[0]
-    if (!newTrack) { showToast('切换摄像头失败'); return false }
-    const sender = pc && pc.getSenders().find(s => s.track && s.track.kind === 'video')
-    if (sender) await sender.replaceTrack(newTrack)
-    else if (pc) pc.addTrack(newTrack, localStream)
-    // 保持静音/关闭摄像头的当前状态
-    newTrack.enabled = !callState.camOff
-    oldTrack.stop()
-    localStream = markRaw(new MediaStream([...localStream.getAudioTracks(), newTrack]))
-    callState.localStream = localStream
-    callState.facing = /back|rear|environment|后置/i.test(next.label || '') ? 'environment' : 'user'
-    return true
-  } catch (e) {
-    showToast('切换摄像头失败：' + errText(e))
-    return false
-  }
-}
-
-/** 枚举摄像头（有权限后 label 才可读；无权限返回空数组） */
-export async function listCameras() {
-  try {
-    const devs = await navigator.mediaDevices.enumerateDevices()
-    return devs.filter(d => d.kind === 'videoinput')
-  } catch (e) {
-    return []
+  if (!localStream) return
+  const track = localStream.getVideoTracks()[0]
+  if (!track) return
+  const cur = (track.getSettings && track.getSettings().facingMode) || 'user'
+  const next = cur === 'environment' ? 'user' : 'environment'
+  try { await track.applyConstraints({ facingMode: { exact: next } }) } catch (e) {
+    try { await track.applyConstraints({ facingMode: next }) } catch (e2) { /* 该设备不支持切换 */ }
   }
 }
 
