@@ -478,6 +478,18 @@ export async function rejectCurrent(reason = 'decline') {
   finish('ended', reason, reason === 'busy' ? '对方忙线中' : '已拒接')
 }
 
+/** 结果态手动关闭（纯本地，不发任何信令） */
+export function dismissCall() {
+  resetLocal()
+  callState.phase = 'idle'
+  callState.status = ''
+  callState.endedReason = ''
+  callState.error = ''
+  callState.duration = 0
+  callState.muted = false
+  callState.camOff = false
+}
+
 /** 静音 / 取消静音（只切音轨 enabled，不动采集，避免反复开关设备） */
 export function toggleMute() {
   if (!localStream) return
@@ -531,6 +543,10 @@ async function onIncoming(p) {
     const fp = dtlsFingerprintOf(incomingSdp)
     if (!fp || !(await verifyFingerprintMac(incomingCallKey, fp, p.fp_mac))) {
       api.hangupCall(p.call_id, 'hangup').catch(() => {})
+      currentCallId = null // 这通已被我们结束，别让后续 call:ended 弹结果界面
+      incomingCallKey = null
+      incomingSdp = null
+      ephPair = null
       showToast('通话密钥校验失败，已拒绝（可能存在中间人）')
       return
     }
@@ -552,6 +568,10 @@ async function onIncoming(p) {
   } catch (e) {
     // 解密失败 / 公钥缺失 / payload 损坏：直接拒绝，不留半死界面
     api.rejectCall(p.call_id, 'decline').catch(() => {})
+    currentCallId = null
+    incomingCallKey = null
+    incomingSdp = null
+    ephPair = null
     showToast('来电解析失败，已拒绝')
   }
 }

@@ -83,7 +83,7 @@
  * 全屏通话界面（来电 / 拨号 / 通话中 / 结果态）。
  * 只做渲染与用户手势，所有信令与密钥都在 utils/call.js。
  */
-import { callState, acceptCall, endCall, rejectCurrent, toggleMute, toggleCamera, switchCamera } from '../utils/call'
+import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera } from '../utils/call'
 import { avatarColor } from '../utils/format'
 
 /** 秒 → m:ss / h:mm:ss */
@@ -160,7 +160,12 @@ export default {
     },
     onAccept() { acceptCall() },
     onReject() { rejectCurrent('decline') },
-    onHangup() { endCall() },
+    // 结果态点「关闭」只收界面，不再发挂断（避免重复信令）
+    onHangup() {
+      const p = this.callState.phase
+      if (p === 'ended' || p === 'failed') { dismissCall(); return }
+      endCall()
+    },
     onMute() { toggleMute() },
     onCamera() { toggleCamera() },
     onSwitch() { switchCamera() }
