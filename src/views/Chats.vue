@@ -7,8 +7,7 @@
       <span>{{ pullText }}</span>
     </div>
     <div class="chat-tabs" style="margin-top: 10px;">
-      <div class="chat-tab" :class="{ active: chatTab === 'all' }" @click="chatTab = 'all'">全部</div>
-      <div class="chat-tab" :class="{ active: chatTab === 'unread' }" @click="chatTab = 'unread'">未读</div>
+      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="chatTab = 'private'">私聊</div>
       <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'">群组</div>
       <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'">频道</div>
     </div>
@@ -69,7 +68,7 @@ export default {
   data() {
     return {
       state,
-      chatTab: 'all',    // all | unread | group | channel
+      chatTab: 'private', // private | group | channel
       menu: null,        // 长按/右键浮层：{ conv, x, y }
       pullDist: 0,       // 下拉距离 px
       pullState: 'idle'  // idle | pulling | ready | refreshing
@@ -95,11 +94,12 @@ export default {
       return list
         .filter(c => {
           const isCh = c.is_channel || c.type === 'channel'
-          if (tab === 'channel') return isCh
+          const kwOk = !k || convName(c).toLowerCase().includes(k)
+          if (tab === 'channel') return isCh && kwOk
           if (isCh) return false
-          if (tab === 'unread' && !c.unread) return false
-          if (tab === 'group' && c.type !== 'group') return false
-          return !k || convName(c).toLowerCase().includes(k)
+          if (tab === 'private') return c.type === 'private' && kwOk
+          if (tab === 'group') return c.type === 'group' && kwOk
+          return kwOk
         })
         .sort((a, b) => {
           // 加密聊天请求置顶（pending 的 last_message_at 为 null，否则会沉到最底）
