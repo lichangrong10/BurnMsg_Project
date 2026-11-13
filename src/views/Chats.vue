@@ -98,7 +98,7 @@ export default {
       return set
     },
     filteredConvs() {
-      const k = state.keyword.toLowerCase()
+      const k = '' // 会话页不再本地过滤（搜索统一走全局搜索）
       const list = Array.isArray(state.convs) ? state.convs : []
       const tab = this.chatTab
       return list

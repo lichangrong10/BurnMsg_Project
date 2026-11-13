@@ -5,7 +5,7 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
       </div>
       <div class="chat-title-wrap">
-        <div class="chat-title">搜索消息</div>
+        <div class="chat-title">搜索</div>
         <div class="chat-status" v-if="total >= 0">{{ total }} 条结果</div>
       </div>
     </div>
@@ -17,7 +17,7 @@
         class="gs-search-input"
         ref="searchInput"
         v-model.trim="keyword"
-        placeholder="搜索消息内容（至少 2 个字符）"
+        placeholder="搜索联系人 / 会话 / 消息"
         @input="onInput"
         @keydown.enter="doSearch(1)"
       >
@@ -31,7 +31,7 @@
       <!-- 初始空状态 -->
       <div v-if="!hasSearched && !loading" class="gs-empty">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <div>输入关键词搜索全局消息</div>
+        <div>输入关键词搜索联系人、会话或消息</div>
       </div>
 
       <!-- 加载中（首次） -->
@@ -46,6 +46,32 @@
         <div>没有找到相关消息</div>
         <div class="gs-empty-hint">换个关键词试试</div>
       </div>
+
+<!-- 本地分区：联系人 / 会话（输入即搜，无需等服务端） -->
+      <div v-if="keyword && localContacts.length" class="gs-section">
+        <div class="gs-section-title">联系人</div>
+        <div v-for="u in localContacts" :key="'u' + u.id" class="gs-result-item" @click="openContactChat(u)">
+          <div class="gs-result-avatar" :style="{ background: avatarColor(u.display_name || u.name || '?') }">{{ (u.display_name || u.name || '?').charAt(0) }}</div>
+          <div class="gs-result-body">
+            <div class="gs-result-row1"><span class="gs-result-sender">{{ u.display_name || u.name }}</span></div>
+            <div class="gs-result-snippet">{{ u.department || u.phone || '联系人' }}</div>
+          </div>
+        </div>
+      </div>
+      <div v-if="keyword && localConvs.length" class="gs-section">
+        <div class="gs-section-title">会话</div>
+        <div v-for="c in localConvs" :key="'c' + c.id" class="gs-result-item" @click="openConv(c)">
+          <div class="gs-result-avatar" :style="{ background: avatarColor(convName(c)) }">{{ convName(c).charAt(0) }}</div>
+          <div class="gs-result-body">
+            <div class="gs-result-row1">
+              <span class="gs-result-sender">{{ convName(c) }}</span>
+              <span v-if="c.unread" class="gs-unread">{{ c.unread > 99 ? '99+' : c.unread }}</span>
+            </div>
+            <div class="gs-result-snippet">{{ c.lastMsg || (c.type === 'group' ? '群聊' : c.type === 'channel' ? '频道' : '私聊') }}</div>
+          </div>
+        </div>
+      </div>
+      <div v-if="keyword && hasSearched" class="gs-section-title" style="margin-top:10px">消息</div>
 
       <!-- 结果列表 -->
       <template v-else>
@@ -84,9 +110,9 @@
 </template>
 
 <script>
-import { state, openChat } from '../store'
+import { state, openChat, openChatById, showToast } from '../store'
 import { api } from '../api'
-import { avatarColor, fmtTime } from '../utils/format'
+import { avatarColor, fmtTime, convName } from '../utils/format'
 
 export default {
   name: 'GlobalSearchView',
@@ -105,6 +131,23 @@ export default {
     }
   },
   computed: {
+    /** 本地匹配：联系人（输入 1 个字符即生效） */
+    localContacts() {
+      const k = (this.keyword || '').toLowerCase()
+      if (!k) return []
+      const list = Array.isArray(state.contacts) ? state.contacts : []
+      return list.filter(u => {
+        const n = String(u.display_name || u.name || '').toLowerCase()
+        return n.includes(k) || String(u.phone || '').includes(k)
+      }).slice(0, 8)
+    },
+    /** 本地匹配：会话（名字或预览） */
+    localConvs() {
+      const k = (this.keyword || '').toLowerCase()
+      if (!k) return []
+      const list = Array.isArray(state.convs) ? state.convs : []
+      return list.filter(c => convName(c).toLowerCase().includes(k) || String(c.lastMsg || '').toLowerCase().includes(k)).slice(0, 8)
+    },
     noMore() {
       return this.total >= 0 && this.results.length >= this.total
     }
@@ -115,6 +158,16 @@ export default {
     })
   },
   methods: {
+    openConv(c) {
+      state.showGlobalSearch = false
+      openChatById(c.id)
+    },
+    openContactChat(u) {
+      const conv = (state.convs || []).find(c => c.type === 'private' && String((c.other_user || {}).id) === String(u.id))
+      state.showGlobalSearch = false
+      if (conv) { openChatById(conv.id); return }
+      showToast('还没有与该联系人的会话，去通讯录发起吧')
+    },
     avatarColor,
     fmtTime,
 
@@ -346,4 +399,8 @@ function escHtml(s) {
   text-align: center; padding: 16px 0;
   font-size: 12.5px; color: #b0b5bc;
 }
+
+.gs-section { padding: 0; }
+.gs-section-title { padding: 8px 14px 4px; font-size: 12px; color: var(--tg-text-secondary); }
+.gs-unread { margin-left: auto; background: #F04438; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 9px; }
 </style>
