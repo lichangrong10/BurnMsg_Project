@@ -20,22 +20,26 @@
         无通话中继 · 仅同一网络可通
       </div>
       <div v-if="isVideoCall && hasLocal" class="call-hint">点小窗可互换画面 · 双击放大</div>
+      <div v-if="localDead" class="call-hint warn">本地预览未出画（画面仍会发给对方）</div>
     </div>
 
     <div v-if="callState.kind !== 'video' || (!hasRemote && focus === 'remote')" class="call-avatar" :style="{ background: avatarBg }">
       {{ initial }}
     </div>
 
-    <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面 -->
+    <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面。
+         ref 用函数式回调：元素一挂载就绑流，不再依赖 watcher 的时序；
+         元素带 transform 会进合成层，个别 WebView 上会一直黑，所以镜像交给外层不碰 video 本身。 -->
     <video
       v-if="isVideoCall && hasLocal"
-      ref="localVideo"
+      :ref="bindLocalEl"
       class="call-surface"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
       :style="localStyle"
       autoplay
       playsinline
       muted
+      @loadedmetadata="onLocalMeta"
       @click="onSurfaceClick('local')"
       @dblclick.prevent="onDblTap('local')"
     ></video>
@@ -116,7 +120,11 @@ export default {
       /** 主画面是谁：remote=对方铺满（默认）| local=自己铺满（点小窗互换后的状态） */
       focus: 'remote',
       /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
-      zoom: 1
+      zoom: 1,
+      localEl: null,        // 本地 <video> DOM（不走 $refs，避免 v-if 时序坑）
+      localWatchdog: null,  // 1.5s 未出画的自检定时器
+      localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
+      noMirror: false       // 自检失败后关掉镜像 transform（个别 WebView 上 transform 会让 video 黑屏）
     }
   },
   computed: {
@@ -135,7 +143,8 @@ export default {
     },
     localStyle() {
       const z = this.focus === 'local' ? this.zoom : 1
-      const parts = [this.callState.facing === 'user' ? 'scaleX(-1)' : null, z > 1 ? `scale(${z})` : null]
+      const mirror = this.callState.facing === 'user' && !this.noMirror
+      const parts = [mirror ? 'scaleX(-1)' : null, z > 1 ? `scale(${z})` : null]
       const t = parts.filter(Boolean).join(' ')
       return t ? { transform: t } : null
     },
@@ -172,13 +181,40 @@ export default {
     })
   },
   beforeUnmount() {
+    clearTimeout(this.localWatchdog)
     // 只解除元素绑定，真正的轨道释放在 call.js 的收尾里（这里停轨道会让通话断掉）
     const r = this.$refs.remoteVideo
     if (r) r.srcObject = null
-    const l = this.$refs.localVideo
-    if (l) l.srcObject = null
+    if (this.localEl) this.localEl.srcObject = null
   },
   methods: {
+    /**
+     * 本地 video 的 ref 回调：挂载/卸载时都会调一次。
+     * 比 watcher + nextTick 更硬：不管 v-if 什么时候渲染出元素，只要挂上就绑流。
+     */
+    bindLocalEl(el) {
+      this.localEl = el || null
+      if (!el) return
+      this.attachLocal(this.callState.localStream)
+      // 1.5s 后还没有画面（videoWidth=0）就重绑一次；仍不行就关掉镜像再试，最后才标记异常
+      clearTimeout(this.localWatchdog)
+      this.localWatchdog = setTimeout(() => {
+        const v = this.localEl
+        if (!v || v.videoWidth > 0) return
+        const s = this.callState.localStream
+        if (!s) return
+        v.srcObject = null
+        v.srcObject = s
+        this.playSafely(v)
+        this.noMirror = true // 去掉 transform：个别 WebView 上合成层会让实时视频黑屏
+        setTimeout(() => {
+          if (this.localEl && this.localEl.videoWidth === 0) this.localDead = true
+        }, 900)
+      }, 1500)
+    },
+    onLocalMeta() {
+      this.localDead = false
+    },
     attachRemote(stream) {
       const el = this.$refs.remoteVideo
       if (!el) return
@@ -186,7 +222,7 @@ export default {
       if (stream) this.playSafely(el)
     },
     attachLocal(stream) {
-      const el = this.$refs.localVideo
+      const el = this.localEl
       if (!el) return
       // 本地预览静音，否则会听到自己的回声；muted 属性在部分 WebView 上不生效，属性+property 都设
       el.muted = true
@@ -289,6 +325,7 @@ export default {
 
 /* 操作提示：只在视频通话且已有本地画面时出现 */
 .call-hint { margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.55); }
+.call-hint.warn { color: #FF9095; }
 
 .call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }
 .ca-btn {
