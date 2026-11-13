@@ -37,7 +37,7 @@
           <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
         </div>
       </div>
-      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+      <!-- <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div> -->
     </template>
 
     <!-- ═══════════ 页：账号与安全 ═══════════ -->
@@ -68,7 +68,7 @@
           <span class="cell-label">退出登录</span>
         </div>
       </div>
-      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+      <!-- <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div> -->
     </template>
 
     <!-- ═══════════ 页：消息通知 ═══════════ -->
@@ -132,7 +132,7 @@
           <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
         </div>
       </div>
-      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+      <!-- <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div> -->
     </template>
 
     <!-- ═══════ 设备管理 ═══════ -->
