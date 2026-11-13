@@ -179,12 +179,220 @@ function flushRemoteIce() {
 }
 
 /* ══════════ 生命周期 ══════════ */
-/* 说明：resetLocal / cleanup / finish / fail / markActive / 计时器 在后续提交实现，
- * 这里先接上连接状态回调（同模块内函数声明会提升，不存在 TDZ 问题）。 */
+
+/** 释放全部本地资源（幂等；任何单步异常都不许阻断收尾） */
+function resetLocal() {
+  clearRingTimeout()
+  stopTick()
+  stopPoll()
+  clearDialTimeout()
+  stopRing()
+  releaseWakeLock()
+  if (pc) {
+    try {
+      pc.onicecandidate = null
+      pc.ontrack = null
+      pc.onconnectionstatechange = null
+      pc.close()
+    } catch (e) { /* 已关闭 */ }
+    pc = null
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(t => { try { t.stop() } catch (e) { /* 忽略 */ } })
+    localStream = null
+  }
+  remoteStream = null
+  callKey = null
+  ephPair = null
+  peerIKPub = ''
+  currentCallId = null
+  incomingInvite = null
+  incomingCallKey = null
+  incomingSdp = null
+  remoteDescSet = false
+  localIceQueue = []
+  pendingRemoteIce = []
+  if (iceTimer) { clearTimeout(iceTimer); iceTimer = null }
+  callState.localStream = null
+  callState.remoteStream = null
+  callState.callId = null
+}
+
+/**
+ * 收尾并展示结果。phase 用 'ended'（正常）或 'failed'（出错），1.8s 后回 idle。
+ * 用户能看到的只有 reason 文案，绝不带 SDP / 密钥等敏感内容。
+ */
+function finish(phase, reason, text) {
+  resetLocal()
+  callState.status = ''
+  callState.endedReason = reason || ''
+  callState.error = text || ''
+  callState.phase = phase
+  const snapshot = phase
+  setTimeout(() => {
+    if (callState.phase !== snapshot) return
+    callState.phase = 'idle'
+    callState.endedReason = ''
+    callState.error = ''
+    callState.duration = 0
+  }, 1800)
+}
+
+/** 出错收尾：message 已是中文（后端 message 或 errText 翻译） */
+function fail(e) {
+  callState.muted = false
+  callState.camOff = false
+  finish('failed', 'error', typeof e === 'string' ? e : errText(e))
+}
+
+/** 对端媒体真正连通：进 active + 开始计时 */
+function markActive() {
+  if (callState.phase === 'active') return
+  clearRingTimeout()
+  clearDialTimeout()
+  stopPoll()
+  stopRing()
+  callState.phase = 'active'
+  callState.status = ''
+  callState.startedAt = Date.now()
+  callState.duration = 0
+  startTick()
+}
+
+/* ══════════ 计时器 ══════════ */
+
+/** 通话时长（1s 一跳，UI 直接读 callState.duration） */
+function startTick() {
+  stopTick()
+  tickTimer = setInterval(() => {
+    if (!callState.startedAt) return
+    callState.duration = Math.max(0, Math.floor((Date.now() - callState.startedAt) / 1000))
+  }, 1000)
+}
+
+function stopTick() {
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+}
+
+/**
+ * 被叫振铃超时。**必须由前端自己跑**：后端 45s 超时只推 call:rejected(timeout) 给主叫，
+ * 被叫收不到任何事件，界面会一直响下去。
+ */
+function startRingTimeout() {
+  clearRingTimeout()
+  ringTimer = setTimeout(() => {
+    if (callState.phase !== 'incoming') return
+    resetLocal()
+    callState.phase = 'idle'
+    showToast('来电未接听')
+  }, RING_TIMEOUT_MS)
+}
+
+function clearRingTimeout() {
+  if (ringTimer) { clearTimeout(ringTimer); ringTimer = null }
+}
+
+/** 主叫拨号兜底（防 call:accepted 丢失导致界面卡在「正在呼叫」） */
+function startDialTimeout() {
+  clearDialTimeout()
+  dialTimer = setTimeout(() => {
+    if (callState.phase !== 'dialing') return
+    const id = currentCallId
+    if (id) api.hangupCall(id, 'hangup').catch(() => {})
+    finish('ended', 'timeout', '无人接听')
+  }, DIAL_TIMEOUT_MS)
+}
+
+function clearDialTimeout() {
+  if (dialTimer) { clearTimeout(dialTimer); dialTimer = null }
+}
+
+/** 拨号期状态轮询：WS 重连窗口期可能丢 call:accepted，用 REST 对齐 */
+function startDialPoll() {
+  stopPoll()
+  pollTimer = setInterval(async () => {
+    if (callState.phase !== 'dialing' || !currentCallId) return
+    try {
+      const view = await api.getCall(currentCallId)
+      if (!view) return
+      if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
+        finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
+      }
+    } catch (e) { /* 网络抖动忽略，下一轮再试 */ }
+  }, DIAL_POLL_MS)
+}
+
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+/* ══════════ 来电提示（提示音 + 震动） ══════════
+ * 不用音频文件：WebAudio 双音就够，且不受打包资源影响。
+ * iOS/Android 可能因未获用户手势而静音，静默失败不影响来电可用性。
+ */
+let ringCtx = null
+let ringBeepTimer = null
+
+function startRing() {
+  stopRing()
+  try { if (navigator.vibrate) navigator.vibrate([400, 200, 400]) } catch (e) { /* 忽略 */ }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    ringCtx = ringCtx || new Ctx()
+    if (ringCtx.state === 'suspended') ringCtx.resume().catch(() => {})
+    beepOnce()
+    ringBeepTimer = setInterval(beepOnce, 1600)
+  } catch (e) { /* 无声也能接 */ }
+}
+
+function beepOnce() {
+  try {
+    const t = ringCtx.currentTime
+    ;[0, 0.45].forEach(off => {
+      const osc = ringCtx.createOscillator()
+      const gain = ringCtx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = 780
+      gain.gain.setValueAtTime(0, t + off)
+      gain.gain.linearRampToValueAtTime(0.12, t + off + 0.05)
+      gain.gain.linearRampToValueAtTime(0, t + off + 0.35)
+      osc.connect(gain)
+      gain.connect(ringCtx.destination)
+      osc.start(t + off)
+      osc.stop(t + off + 0.4)
+    })
+  } catch (e) { /* 忽略 */ }
+}
+
+function stopRing() {
+  if (ringBeepTimer) { clearInterval(ringBeepTimer); ringBeepTimer = null }
+  try { if (navigator.vibrate) navigator.vibrate(0) } catch (e) { /* 忽略 */ }
+}
+
+/* ══════════ 屏幕常亮 ══════════ */
+
+async function acquireWakeLock() {
+  try {
+    if (!navigator.wakeLock) return
+    wakeLock = await navigator.wakeLock.request('screen')
+  } catch (e) { wakeLock = null }
+}
+
+function releaseWakeLock() {
+  try { wakeLock && wakeLock.release() } catch (e) { /* 忽略 */ }
+  wakeLock = null
+}
 
 /** 连接状态 → UI 阶段（active 计时、失败收尾） */
 function onPcStateChange(conn) {
   const st = conn.connectionState
   if (st === 'connected') markActive()
   else if (st === 'failed') fail('网络连接中断，通话已结束')
+  else if (st === 'disconnected') {
+    // 弱网瞬断很常见，给 5s 自愈窗口，仍未 connected 才收尾
+    setTimeout(() => {
+      if (pc === conn && conn.connectionState !== 'connected') fail('连接中断，通话已结束')
+    }, 5000)
+  }
 }
