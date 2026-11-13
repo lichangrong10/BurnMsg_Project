@@ -20,8 +20,13 @@ import { enableKeepAlive, disableKeepAlive } from '../utils/keepalive'
  * 仅当实测出现「同一条消息弹两次」才改 true。
  */
 const NOTIFY_SUPPRESS_LOCAL = false
-import { e2eSupported, ensureIdentity, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E } from '../utils/e2e'
+import { e2eSupported, ensureIdentity, ensureDeviceIdentity, migrateE2EStorage, encryptText, decryptMessage, cachePlaintext, getPlaintext, cachePlaintextFail, getPlaintextFail, clearE2E, clearPlaintextFor, getDeviceIdentity } from '../utils/e2e'
 import { verifyPeerKey, confirmNewKey, syncPinnedKeys } from '../utils/tofu'
+import {
+  isSecretConv, isSecretPending, isSecretActive,
+  fetchPeerKey, clearPinnedPeerKey, trustPeerKey,
+  requestSecret, acceptSecret, rejectSecret, closeSecret, selfCheckDeviceKey
+} from '../utils/e2eSecret'
 import { Capacitor } from '@capacitor/core'
 
 /* ─── 焚毁时长（V6.1）───
@@ -62,7 +67,11 @@ export const state = reactive({
   tofuAlerts: [],        // TOFU 公钥变更告警横幅队列：[{user_id,name,oldPubkey,newPubkey}]
   pendingKeyChanges: {}, // 待处理密钥变更清单（「稍后处理」收纳处，进会话不再弹横幅）：Map<userId,{user_id,name,oldPubkey,newPubkey,created_at}>
   e2eOn: false,          // 当前会话「明文加密」开关（会话级记忆，仅单聊可开）
-  e2eReady: false,       // 本机 E2E 密钥已就绪（已生成并上传公钥）
+  e2eReady: false,       // 本机 E2E 密钥已就绪（旧用户级，兼容保留）
+  e2eSecretReady: false, // 本机「设备级」公钥已上传，可发起/接受加密聊天
+  e2eSecretBusy: false,  // 加密聊天请求进行中（防重复点击）
+  devices: [],           // 已登录设备（/auth/devices：含 browser / os / 在线态）
+  secretPlain: {},       // 加密聊天本机发送的明文兜底（msgId -> text）
   pwdForm: { old: '', n1: '', n2: '' },
   pwdErr: '',
   pwdLoading: false,
@@ -794,6 +803,7 @@ async function fillMissingPreviews() {
 }
 
 export async function bootstrap() {
+  migrateE2EStorage() // 一次性清理旧「用户级加密」残留（旧密钥/明文缓存/TOFU 待办）
   applyTheme(curThemeColor) // 进主界面先按本地已存主题色恢复，避免等接口期间闪回默认蓝
   await Promise.all([loadConvs(), loadContacts()])
   loadAnnouncements(true).then(maybeAutoPopup)
@@ -817,9 +827,23 @@ export async function bootstrap() {
 async function initE2E() {
   try {
     if (!(await e2eSupported())) { console.warn('[焚信] 当前环境不支持 X25519，端到端加密不可用'); return }
-    const pubB64 = await ensureIdentity()
-    await api.uploadIdentityKey(pubB64)
-    state.e2eReady = true
+    // 设备级 identity（私密会话）：无设备行 ID 时返回 null，等下次登录再启用
+    const devPub = await ensureDeviceIdentity()
+    if (devPub) {
+      try {
+        await api.uploadDeviceKey(devPub)
+        state.e2eSecretReady = true
+      } catch (e) {
+        state.e2eSecretReady = false
+        console.warn('[焚信] 设备公钥上传失败:', e && e.message)
+      }
+    }
+    // 兼容旧开关：仍上传用户级公钥（后端如已下线该接口会 404，静默忽略）
+    try {
+      const pubB64 = await ensureIdentity()
+      await api.uploadIdentityKey(pubB64)
+      state.e2eReady = true
+    } catch (e) { /* 旧接口已下线，忽略 */ }
   } catch (e) { console.warn('[焚信] E2E 初始化失败:', e && e.message) }
 }
 
@@ -846,7 +870,21 @@ export function refreshTitle() {
 // 未读数变化即刷新：新消息 +1、打开会话清零、会话列表从服务端重拉
 watch(convUnreadTotal, refreshTitle)
 
+/** 加载已登录设备列表（含浏览器/系统识别信息，用于加密聊天"绑定设备"展示） */
+export async function loadDevices(force) {
+  if (state.demoMode) return state.devices
+  if (state.devices.length && !force) return state.devices
+  try {
+    const r = await api.getDevices()
+    const list = Array.isArray(r) ? r : (r && (r.list || r.items)) || []
+    state.devices = list
+    return list
+  } catch (e) { return state.devices }
+}
+
 export async function loadConvs(quiet) {
+  // 记录加载前的私密会话，加载后对比：服务端不再返回 = 已结束/被踢 → 清理本地痕迹
+  const prevSecretIds = state.convs.filter(isSecretConv).map(c => String(c.id))
   if (state.demoMode) {
     const ids = pinnedIds()
     const hidden = hiddenConvIds().map(String)
@@ -892,6 +930,15 @@ export async function loadConvs(quiet) {
         }
       })
       .filter(c => !hidden.includes(String(c.id)))
+    // 私密会话：pending 请求置顶（后端 last_message_at 为 null，否则会沉到列表最底）
+    state.convs.forEach(c => {
+      if (c.e2e_mode === 1 && c.e2e_state === 1 && !c.lastMsg) c.lastMsg = '加密聊天请求'
+    })
+    state.convs.sort((a, b) => {
+      const ap = (a.e2e_mode === 1 && (a.e2e_state === 1 || a.e2e_state === 2)) ? 1 : 0
+      const bp = (b.e2e_mode === 1 && (b.e2e_state === 1 || b.e2e_state === 2)) ? 1 : 0
+      return bp - ap
+    })
     // 缺本地未读记录的会话（清缓存/新登录）：按服务端「我读到哪条」重算，不把历史消息算成未读
     fillLocalUnread(state.convs)
     if (!quiet) await fillMissingPreviews()
@@ -1095,7 +1142,19 @@ export function closeChat() {
   loadConvs(true)
 }
 
+
+/** 加密会话已不可用（对方结束/被踢）：清本地痕迹 + 提示 + 退出聊天页 */
+function handleSecretGone(cid, why) {
+  const id = cid || (state.chat && state.chat.id)
+  const isCurrent = state.chat && String(state.chat.id) === String(id)
+  cleanupSecretLocal(id)
+  showToast(why || '对方已结束加密聊天')
+  if (isCurrent) closeChat()
+}
+
 export async function loadMessages(quiet) {
+  // pending 私密会话没有消息（后端 404），直接跳过避免报错
+  if (state.chat && state.chat.e2e_mode === 1 && state.chat.e2e_state === 1) { state.messages = []; return }
   const cid = state.chat.id
   if (state.demoMode) {
     state.messages = (DEMO.messages[cid] || []).filter(m => !m.destroy_at || new Date(m.destroy_at) > new Date())
@@ -1140,6 +1199,12 @@ export async function loadMessages(quiet) {
     if (!quiet) state.msgSeq++
   } catch (e) {
     console.error('[焚信] 拉取消息失败:', cid, e)
+    const msg = String((e && (e.code || e.message)) || '')
+    const gone = /40[34]|E2E_SESSION_GONE|不存在|无权|Access denied|forbidden|not found/i.test(msg)
+    if (state.chat && state.chat.e2e_mode === 1 && gone) {
+      handleSecretGone(cid, '对方已结束加密聊天')
+      return
+    }
     if (!quiet) showToast(e.message)
   } finally {
     state.msgLoading = false
@@ -1205,10 +1270,18 @@ async function decryptMessagesInList(list, cid) {
     if (cached != null) { m.content = cached; m.e2e = true; return }
     if (getPlaintextFail(m.id)) { m.content = '加密消息（本设备无法解密）'; m.e2eFail = true; return }
     try {
-      const pub = await getPub(m.sender_id)
+      let pub
+      const convNow = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
+      if (isSecretConv(convNow)) {
+        const pk = await fetchPeerKey(cid)
+        pub = pk && pk.pubkey
+      } else {
+        pub = await getPub(m.sender_id)
+      }
       if (!pub) throw new Error('no pubkey')
       const text = await decryptMessage(m, pub, cid)
       cachePlaintext(m.id, text)
+      state.secretPlain[String(m.id)] = text
       m.content = text
       m.e2e = true
     } catch (e) {
@@ -1280,16 +1353,28 @@ async function onWsNewMessage(p) {
     if (cached != null) { m.content = cached; m.e2e = true }
     else if (!mine) {
       try {
-        const pub = (await api.getIdentityKey(m.sender_id)).identity_pubkey
+        const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
+        const pub = isSecretConv(convForDec)
+          ? (await fetchPeerKey(cid)).pubkey
+          : (await api.getIdentityKey(m.sender_id)).identity_pubkey
         const text = await decryptMessage(m, pub, cid)
         cachePlaintext(m.id, text)
         m.content = text
         m.e2e = true
+        if (isSecretConv(state.convs.find(x => String(x.id) === String(cid)) || state.chat)) { m.is_blurred = false; state.secretPlain[String(m.id)] = text }
       } catch (e) { cachePlaintextFail(m.id); m.content = '加密消息（本设备无法解密）'; m.e2eFail = true }
     } else {
-      // 本人其他设备发的加密消息：协议上本设备无 ephemeral 私钥无法解密
-      m.content = '加密消息（发送于其他设备）'
-      m.e2eFail = true
+      // 加密聊天：消息直接显示明文（本机发送的读本地缓存）
+      const convOwn = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
+      if (isSecretConv(convOwn)) {
+        m.content = getPlaintext(m.id) || state.secretPlain[String(m.id)] || m.content || '加密消息'
+        m.e2e = true
+        m.is_blurred = false
+      } else {
+        // 本人其他设备发的加密消息：协议上本设备无 ephemeral 私钥无法解密
+        m.content = '加密消息（发送于其他设备）'
+        m.e2eFail = true
+      }
     }
   }
   if (!mine) playMsgDing() // 收到对方消息：提示音（当前会话内外都播）
@@ -1321,6 +1406,8 @@ async function onWsNewMessage(p) {
       if (c) c.unread = nextUnread
       // 右下角通知卡片（点击直达该会话）；@ 我的带前缀
       const popCard = conv => {
+    // 私密（加密）会话：不弹任何本地通知，避免旁人看到"有加密消息"
+    if (isSecretConv(conv)) return
         // 私聊且会话详情没带 other_user 时，用发送者信息补个显示名，避免标题只剩「私聊」
         if (conv && conv.type === 'private' && !conv.other_user && m.sender_id) {
           const sender = state.contacts.find(u => String(u.id) === String(m.sender_id))
@@ -1485,6 +1572,117 @@ onWs(WS_EVENTS.RECEIPT_READ, onWsReceiptRead)
 onWs(WS_EVENTS.KEY_CHANGED, onWsKeyChanged)
 onWs(WS_EVENTS.MESSAGE_DESTROYED, onWsDestroyed)
 onWs(WS_EVENTS.SESSION_CONFLICT, onWsSessionConflict)
+
+/* ─── 私密（加密）会话：WS 事件 ─── */
+onWs(WS_EVENTS.E2E_REQUESTED, () => {
+  showToast('收到一条加密聊天请求')
+  loadConvs(true)
+})
+onWs(WS_EVENTS.E2E_ACCEPTED, async p => {
+  showToast('加密聊天已开启')
+  await loadConvs(true)
+  // 就地进入：对方接受后直接停在同一个聊天页里（不另开新会话）
+  const cid = p && p.conversation_id
+  const conv = state.convs.find(c => String(c.id) === String(cid))
+  if (conv) openChat(conv)
+})
+onWs(WS_EVENTS.E2E_REJECTED, p => {
+  showToast('对方拒绝了加密聊天请求')
+  loadConvs(true)
+})
+onWs(WS_EVENTS.E2E_REQUEST_GONE, () => { loadConvs(true) })
+onWs(WS_EVENTS.E2E_CLOSED, p => {
+  const cid = p && p.conversation_id
+  cleanupSecretLocal(cid)
+  showToast('加密聊天已结束')
+  loadConvs(true)
+})
+
+/** 清理本端与某个私密会话相关的所有痕迹（会话已结束/被踢） */
+function cleanupSecretLocal(cid) {
+  if (!cid) return
+  const c = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
+  if (c) {
+    const ids = (state.chat && String(state.chat.id) === String(cid)) ? state.messages.map(m => m.id) : []
+    clearPlaintextFor(ids)
+  }
+  clearPinnedPeerKey(cid)
+  state.convs = state.convs.filter(x => String(x.id) !== String(cid))
+  if (state.chat && String(state.chat.id) === String(cid)) { state.chat = null; state.messages = [] }
+}
+
+/* ─── 私密（加密）会话：动作 ─── */
+
+/** 发起加密聊天（当前会话的对方） */
+export async function requestSecretChat() {
+  const c = state.chat
+  if (!c) return false
+  if (!state.e2eSecretReady) { showToast('本机密钥尚未就绪，请稍后重试或重新登录'); return false }
+  if (isSecretConv(c)) { showToast('当前已是加密聊天'); return false }
+  const peer = (c.other_user && c.other_user.id) || (state.chat && c.other_user && c.other_user.id)
+  if (!peer) { showToast('仅支持在单聊中发起'); return false }
+  if (state.e2eSecretBusy) return false
+  state.e2eSecretBusy = true
+  try {
+    const r = await requestSecret(peer)
+    await loadConvs(true)
+    // 就地切到新会话（同一聊天页，不另开）
+    const target = state.convs.find(c => isSecretConv(c) && String((c.other_user || {}).id) === String(peer))
+    if (target) openChat(target)
+    if (r && r.already) showToast('你们已有一条进行中的加密聊天')
+    else showToast('请求已发送，等待对方在指定设备上接受')
+    return true
+  } catch (e) {
+    showToast((e && e.message) || '发起失败')
+    return false
+  } finally { state.e2eSecretBusy = false }
+}
+
+/** 接受加密聊天（当前设备绑定） */
+export async function acceptSecretChat(cid) {
+  if (!cid) return false
+  try {
+    await acceptSecret(cid)
+    showToast('已接受：加密聊天仅在本设备可见')
+    await loadConvs(true)
+    const conv = state.convs.find(c => String(c.id) === String(cid))
+    if (conv) openChat(conv)
+    return true
+  } catch (e) { showToast((e && e.message) || '接受失败'); return false }
+}
+
+/** 拒绝加密聊天请求（物理删除） */
+export async function rejectSecretChat(cid) {
+  if (!cid) return false
+  try {
+    await rejectSecret(cid)
+    cleanupSecretLocal(cid)
+    showToast('已拒绝，请求已删除')
+    await loadConvs(true)
+    return true
+  } catch (e) { showToast((e && e.message) || '拒绝失败'); return false }
+}
+
+/** 结束加密聊天（reason: user | lost_device）；服务端物理删除，本端同步清缓存 */
+export async function closeSecretChat(cid, reason = 'user') {
+  const id = cid || (state.chat && state.chat.id)
+  if (!id) return false
+  try {
+    const r = await closeSecret(id, reason)
+    const n = (r && r.deleted_messages) || 0
+    cleanupSecretLocal(id)
+    showToast(n > 0 ? `加密聊天已结束，已删除 ${n} 条消息` : '加密聊天已结束')
+    await loadConvs(true)
+    return true
+  } catch (e) { showToast((e && e.message) || '结束失败'); return false }
+}
+
+/** 本机设备密钥自检（设置页/诊断用） */
+export async function checkSecretReady() {
+  const r = await selfCheckDeviceKey()
+  state.e2eSecretReady = !!r.exists
+  return r
+}
 
 /* ─── 系统公告（App 端只读展示） ─── */
 /** 刷新未读公告角标（启动/轮询/收到推送时调用，静默失败） */
@@ -1826,6 +2024,38 @@ export async function sendText(text, mentions, replyToId) {
     state.chat.last_message_at = m.created_at
     return true
   }
+  // 私密（加密）会话：恒加密，按 conversationId 取对方绑定设备公钥，禁止明文发送
+  if (isSecretConv(state.chat)) {
+    try {
+      if (state.chat.e2e_state !== 2) { showToast('加密聊天尚未开启，无法发送'); return false }
+      const pk = await fetchPeerKey(state.chat.id)
+      if (pk.status === 'missing') { showToast('对方设备密钥尚未准备好，请稍后重试'); return false }
+      if (pk.status === 'changed') {
+        showToast('⚠️ 对方设备密钥已变更，请结束当前加密聊天后重新发起')
+        return false
+      }
+      // salt 必须与解密端一致（decryptMessage 用会话 ID），否则对方无法解密
+      const enc = await encryptText(text, pk.pubkey, state.chat.id)
+      // 加密聊天内一律不焚毁：显式传 0，避免继承普通会话的焚毁设置
+      const m = await api.sendMessage({ ...payload, content: '[加密消息]', is_encrypted: true, burn_ttl_seconds: 0, ...enc })
+      cachePlaintext(m.id, text)
+      m.content = text
+      m.e2e = true
+      pushMsgDedup(m)
+      state.chat.lastMsg = '加密消息'
+      setLastMsg(state.chat.id, '加密消息')
+      return true
+    } catch (e) {
+      const msg = String((e && (e.code || e.message)) || '')
+      if (/40[34]|E2E_SESSION_GONE|不存在|Access denied|not found/i.test(msg)) {
+        handleSecretGone(state.chat.id, '对方已结束加密聊天，本条未发送')
+        return false
+      }
+      showToast((e && e.message) || '加密发送失败')
+      return false
+    }
+  }
+
   // 明文加密（E2E）：仅单聊 + 开关开启 + 密钥就绪；content 存占位，密文走 cipher_* 字段
   if (state.e2eOn && state.e2eReady && state.chat.type === 'private') {
     try {
@@ -2011,11 +2241,16 @@ export async function revealBurn(m) {
       if (cached != null) { m.content = cached; m.e2e = true }
       else {
         try {
-          const pub = (await api.getIdentityKey(m.sender_id)).identity_pubkey
-          const text = await decryptMessage(m, pub, state.chat && state.chat.id)
+          const cid = m.conversation_id || (state.chat && state.chat.id)
+          const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
+          const pub = isSecretConv(convForDec)
+            ? (await fetchPeerKey(cid)).pubkey
+            : (await api.getIdentityKey(m.sender_id)).identity_pubkey
+          const text = await decryptMessage(m, pub, cid)
           cachePlaintext(m.id, text)
           m.content = text
           m.e2e = true
+          if (isSecretConv(convForDec)) m.is_blurred = false
         } catch (e) { cachePlaintextFail(m.id); m.content = '加密消息（本设备无法解密）'; m.e2eFail = true }
       }
     }
@@ -2526,7 +2761,26 @@ export function startTimers() {
   timers.push(setInterval(() => { state.nowTick = Date.now() }, 1000))
   // 焚毁秒表：按绝对截止时间重算（tickBurn 内部自愈），到点就地焚毁，不再靠「每滴答 -1」
   timers.push(setInterval(tickBurn, 1000))
-  timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
+  timers.push(setInterval(async () => {
+  // 加密会话轮询：pending 等对方接受 / active 感知对方结束
+  if (!state.chat || state.chat.e2e_mode !== 1) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  const cid = state.chat.id
+  const wasPending = state.chat.e2e_state === 1
+  try {
+    // 用列表接口判断最稳（后端按当前设备过滤，返回的就是这台设备看到的真实状态）
+    await loadConvs(true)
+    const cur = state.convs.find(x => String(x.id) === String(cid))
+    if (!cur) { handleSecretGone(cid, wasPending ? '对方拒绝了加密聊天请求' : '对方已结束加密聊天'); return }
+    if (wasPending && cur.e2e_state === 2) {
+      Object.assign(state.chat, cur)
+      showToast('对方已接受，加密聊天已开启')
+      loadMessages(true)
+    }
+    if (!wasPending && cur.e2e_state !== 2) handleSecretGone(cid, '对方已结束加密聊天')
+  } catch (e) { /* 网络抖动忽略，下轮再试 */ }
+}, 4000))
+timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
   // 消息轮询：后台不轮询 + 在途不叠加
   timers.push(setInterval(async () => {
     if (msgPolling) return

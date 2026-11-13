@@ -4,21 +4,39 @@
       <div class="topbar-icon" @click="closeChat">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
-      <div class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
+      <div class="avatar-wrap chat-avatar-wrap">
+        <div class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
+        <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
+      </div>
       <div class="chat-title-wrap" @click="openInfo">
         <div class="chat-title">{{ convName(state.chat) }}</div>
         <div class="chat-status">{{ chatStatus }}</div>
       </div>
-      <div class="topbar-icon" @click="toggleChatSearch" title="搜索消息">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-      </div>
-      <div class="topbar-icon todo-btn" @click="showTofuTodo = true" title="密钥待办">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        <span v-if="pendingCount" class="todo-dot">{{ pendingCount > 9 ? '9+' : pendingCount }}</span>
+      <div class="topbar-icon more-btn" @click.stop="chatMenu = !chatMenu" title="更多">
+        <span v-if="secretPendingMine" class="secret-dot"></span>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
       </div>
     </div>
 
-    <!-- ═══════ 会话内消息搜索面板 ═══════ -->
+    <!-- ═══════ 顶栏「⋯」下拉菜单（fixed 定位） ═══════ -->
+  <div v-if="chatMenu" class="chat-menu-mask" @click="chatMenu = false"></div>
+  <div v-if="chatMenu" class="chat-menu">
+    <div class="chat-menu-item" :class="{ 'mi-urgent': secretPendingMine, 'mi-danger': isSecretActiveCh }" @click="onMenuSecret">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+      <span class="mi-label">{{ menuSecretLabel }}</span>
+      <span v-if="secretPendingMine" class="chat-menu-dot"></span>
+    </div>
+    <div class="chat-menu-item" @click="onMenuSearch">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+      <span class="mi-label">搜索消息</span>
+    </div>
+    <div class="chat-menu-item" @click="onMenuInfo">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
+      <span class="mi-label">{{ state.chat && state.chat.type === 'private' ? '聊天信息' : '群组信息' }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════ 会话内消息搜索面板 ═══════ -->
     <div v-if="chatSearchOpen" class="chat-search-panel">
       <div class="chat-search-bar">
         <input class="chat-search-input" v-model="chatSearchKeyword" @input="onChatSearchInput" placeholder="搜索消息（至少2个字符）" autofocus>
@@ -50,7 +68,7 @@
       </div>
     </div>
 
-    <div v-if="(state.burnSeconds && !state.burnOff) || state.mediaBurnOn" class="burn-banner" :title="burnBannerTitle">
+    <div v-if="((state.burnSeconds && !state.burnOff) || state.mediaBurnOn) && !isSecretCh" class="burn-banner" :title="burnBannerTitle">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B25E00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       <span class="bb-text">
         <template v-if="state.mediaBurnOn">语音/视频 · 播完即焚</template>
@@ -58,7 +76,25 @@
       </span>
     </div>
 
-    <div class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
+    <!-- 加密聊天：请求中面板 -->
+    <div v-if="isSecretPendingCh" class="secret-request">
+      <div class="sr-ico">🔒</div>
+      <div class="sr-title">加密聊天请求</div>
+      <div class="sr-desc">
+        只有发起设备与接受设备之间能看到、能解密；你账号下的其他设备看不到这条会话。
+        <template v-if="secretDaysLeft">（剩余 {{ secretDaysLeft }}）</template>
+      </div>
+      <template v-if="isSecretInitiatorHere">
+        <button class="sr-btn plain" @click="doWithdrawSecret">撤回请求</button>
+        <div class="sr-wait">等待对方在指定设备上接受…</div>
+      </template>
+      <template v-else>
+        <button class="sr-btn primary" @click="doAcceptSecret">在当前设备接受</button>
+        <button class="sr-btn plain" @click="doRejectSecret">拒绝</button>
+      </template>
+    </div>
+
+    <div v-show="!isSecretPendingCh" class="msg-scroll" ref="msgBox" @scroll="onMsgScroll">
       <div v-if="state.hasMore" style="text-align:center;color:#707579;font-size:13px;padding:8px;cursor:pointer" @click="loadEarlier">{{ state.loadingEarlier ? '加载中…' : '加载更早的消息' }}</div>
       <div v-if="state.msgLoading" style="text-align:center;color:#707579;font-size:13px;padding:8px">加载中…</div>
       <template v-for="(m, i) in state.messages" :key="msgKey(m, i)">
@@ -118,8 +154,8 @@
               <div v-if="m.content" style="margin-top:4px">{{ m.content }}</div>
             </template>
             <template v-else>
-              <template v-if="isEnc(m) && !isBurnMsg(m) && reveal[e2eKey(m)]"><svg class="e2e-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" title="端到端加密消息"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> <span v-html="renderMentionHtml(m.content)"></span><span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
-              <template v-else-if="isEnc(m) && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
+              <template v-if="isEnc(m) && !isSecretCh && !isBurnMsg(m) && reveal[e2eKey(m)]"><svg class="e2e-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" title="端到端加密消息"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> <span v-html="renderMentionHtml(m.content)"></span><span class="e2e-count">{{ revealLeft[e2eKey(m)] }}s</span></template>
+              <template v-else-if="isEnc(m) && !isSecretCh && !isBurnMsg(m)"><span class="e2e-reveal"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 加密消息 · 点击查看</span></template>
               <template v-else><span v-html="renderMentionHtml(m.content)"></span></template>
             </template>
             
@@ -189,11 +225,17 @@
         <div v-if="!mentionCandidates.length" class="mention-empty">未找到匹配成员</div>
       </div>
     </div>
-    <div v-if="!isDissolved && !channelReadonly" class="input-bar">
-      <button class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
+    <!-- 加密聊天状态条：仅这两台设备可解密 -->
+    <div v-if="isSecretCh && state.chat.e2e_state === 2" class="secret-banner">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      加密聊天 · 仅本设备与对方设备可解密<template v-if="secretDaysLeft"> · {{ secretDaysLeft }} 后自动删除</template>
+    </div>
+
+    <div v-if="!isDissolved && !channelReadonly && !isSecretPendingCh" class="input-bar">
+      <button v-if="!isSecretCh" class="attach-btn" @click="showAttachSheet = true" title="相册 / 拍摄 / 文件">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="attach-btn voice-toggle-btn" :class="{ active: voiceMode }" @click="toggleVoiceMode" title="语音 / 文字切换">
+      <button v-if="!isSecretCh" class="attach-btn voice-toggle-btn" :class="{ active: voiceMode }" @click="toggleVoiceMode" title="语音 / 文字切换">
         <svg width="23" height="23" viewBox="0 0 24 24" fill="none" :stroke="voiceMode ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/></svg>
       </button>
       <input type="file" ref="galleryInput" accept="image/*,video/*" multiple style="display:none" @change="onFilePicked">
@@ -202,10 +244,10 @@
       
       <textarea v-if="!voiceMode" class="msg-textarea" ref="msgInput" v-model="draft" rows="1" :placeholder="state.e2eOn ? '加密消息' : ((!state.burnOff && state.burnSeconds) ? '阅后即焚' : '消息')" @input="onDraftInput" @keydown.enter.exact.prevent="send" @focus="onInputFocus" @paste="onPaste"></textarea>
       <div v-else class="voice-hold" :class="{ cancel: voiceCancelMode }" @touchstart.prevent="voiceStart" @touchend.prevent="voiceEnd" @touchmove="voiceMove" @touchcancel="voiceCancel">按住 说话</div>
-      <button class="burn-btn" :class="{ active: state.e2eOn }" @click="toggleE2E" title="明文加密（端到端，仅单聊）">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="state.e2eOn ? '#3390EC' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <!-- 旧「明文加密」开关已下线：加密统一通过「加密聊天」（点对方头像开启） -->
+      <button v-if="false" class="burn-btn" @click="toggleE2E" title="已下线">
       </button>
-      <button class="fire-btn" :class="{ active: state.burnSeconds || state.mediaBurnOn }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
+      <button v-if="!isSecretCh" class="fire-btn" :class="{ active: state.burnSeconds || state.mediaBurnOn }" @click="showBurnSheet = true" :title="state.burnSeconds && state.e2eOn ? '阅后即焚 + 明文加密（端到端密文）' : '阅后即焚'">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="(state.burnSeconds || state.mediaBurnOn) ? '#E07000' : '#707579'" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
       </button>
       <button class="send-btn" @mousedown.prevent @click="send">
@@ -213,6 +255,7 @@
       </button>
     </div>
     <div v-else-if="isDissolved" class="dissolved-bar">{{ isChannelChat ? '频道' : '群组' }}已解散，无法发送消息</div>
+    <div v-else-if="isSecretPendingCh" class="dissolved-bar">等待对方在指定设备接受后可开始聊天</div>
     <div v-else class="dissolved-bar">只有频道作者可以发布消息</div>
 
     <!-- ═══════ 语音录制浮层：长按录入时居中显示，上滑进入取消区 ═══════ -->
@@ -282,24 +325,48 @@
     </div>
 
     <!-- ═══════ 密钥待办（「稍后处理」收纳的密钥变更） ═══════ -->
-    <div v-if="showTofuTodo" class="overlay" @click.self="showTofuTodo = false">
+
+    <!-- ═══════ 对方资料（加密聊天入口） ═══════ -->
+    <div v-if="secretSheet" class="overlay" @click.self="secretSheet = false">
       <div class="sheet">
-        <div class="sheet-title">{{ pendingCount ? pendingCount + ' 项密钥待确认' : '密钥待办' }}</div>
-        <div class="todo-scroll">
-          <div v-if="!pendingCount" class="todo-empty">暂无待处理的密钥变更</div>
-          <div v-for="p in pendingList" :key="p.user_id" class="todo-item">
-            <div class="todo-item-head">
-              <span class="todo-item-name"><svg class="todo-key" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> {{ p.name }}</span>
-              <span class="todo-item-time">{{ fmtClock(p.created_at) }}</span>
-            </div>
-            <div class="todo-item-tip">对方的端到端安全密钥已变更，确认信任后才能继续加密收发</div>
-            <div class="todo-item-actions">
-              <button class="todo-trust" @click="trustPending(p)">确认信任新密钥</button>
-              <button class="todo-ignore" @click="ignorePending(p)">忽略</button>
-            </div>
+        <div class="sheet-title">加密聊天</div>
+        <div v-if="myDeviceLabel" class="secret-device-line">本机设备：{{ myDeviceLabel }}</div>
+        <template v-if="!isSecretCh">
+          <div class="sheet-item secret-primary" @click="doRequestSecret">
+            {{ state.e2eSecretReady ? '开启加密聊天' : '开启加密聊天（本机密钥准备中…）' }}
           </div>
+          <div class="sheet-item secret-tip">开启后仅本机与对方设备可见，其他设备看不到；仅支持文本消息</div>
+        </template>
+        <template v-else-if="isSecretActiveCh">
+          <div class="sheet-item danger" @click="confirmCloseSecret = true">结束加密聊天（删除全部消息）</div>
+          <div class="sheet-item secret-tip">结束后双方都无法再查看，且不可恢复</div>
+        </template>
+        <template v-else-if="isSecretPendingCh">
+          <template v-if="isSecretInitiatorHere">
+            <div class="sheet-item danger" @click="doWithdrawSecret">撤回加密聊天请求</div>
+            <div class="sheet-item secret-tip">等待对方在指定设备上接受</div>
+          </template>
+          <template v-else>
+            <div class="sheet-item secret-primary" @click="doAcceptSecret">接受加密聊天（本设备）</div>
+            <div class="sheet-item danger" @click="doRejectSecret">拒绝</div>
+          </template>
+        </template>
+        <div class="sheet-item sheet-cancel" @click="secretSheet = false">关闭</div>
+      </div>
+    </div>
+
+    <!-- ═══════ 结束加密聊天确认 ═══════ -->
+    <div v-if="confirmCloseSecret" class="dialog-overlay" @click.self="confirmCloseSecret = false">
+      <div class="dialog">
+        <div class="dialog-title">结束加密聊天？</div>
+        <div class="dialog-body">
+          结束后双方都<b>无法再查看</b>这条会话的任何消息，服务端立即删除，本机缓存也会清空。<br>
+          <b style="color:#D92D20">此操作不可恢复。</b>
         </div>
-        <div class="sheet-item sheet-cancel" @click="showTofuTodo = false">关闭</div>
+        <div class="dialog-actions">
+          <button class="btn-text" @click="confirmCloseSecret = false">取消</button>
+          <button class="btn-text" style="color:#D92D20;font-weight:600" @click="doCloseSecret">结束并删除</button>
+        </div>
       </div>
     </div>
 
@@ -446,7 +513,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence} from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -462,6 +529,9 @@ export default {
   name: 'ChatRoom',
   data() {
     return {
+      chatMenu: false,
+    secretSheet: false,
+      confirmCloseSecret: false,
       state,
       burnOptions: BURN_OPTIONS, // 与旧版一致：关闭 / 5 秒 … 30 天（关闭 = 本机在该会话不焚毁）
       _autoRevealMediaDone: {},  // 已自动 reveal 的音视频焚毁消息 id（防重复）
@@ -474,7 +544,6 @@ export default {
       pendingFiles: [],         // 待发送文件列表：{ file, url }（url 为图片预览 objectURL）
       showPendingFiles: false,  // 待发送确认层开关
       sendingFiles: false,      // 正在发送待发送文件
-      showTofuTodo: false,
       msgAction: null,
       editing: null,       // 正在编辑的消息
       replyTo: null,       // 引用回复：正在回复的消息
@@ -522,6 +591,102 @@ export default {
     }
   },
   computed: {
+    /** 本机设备名（来自 /auth/devices 的浏览器/系统识别） */
+    myDeviceLabel() {
+      const list = state.devices || []
+      let did = ''
+      try { did = localStorage.getItem('bm_device_row_id') || '' } catch (e) { /* 忽略 */ }
+      const d = list.find(x => String(x.id) === String(did)) || list.find(x => x.is_current)
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+      const parseUA = u => {
+        if (!u) return ''
+        let br = ''
+        if (/Edg\//.test(u)) br = 'Edge'
+        else if (/Chrome\//.test(u)) br = 'Chrome'
+        else if (/Firefox\//.test(u)) br = 'Firefox'
+        else if (/Safari\//.test(u)) br = 'Safari'
+        let os = ''
+        if (/Windows NT 10/.test(u)) os = 'Windows 10/11'
+        else if (/Windows/.test(u)) os = 'Windows'
+        else if (/Mac OS X/.test(u)) os = 'macOS'
+        else if (/Android/.test(u)) os = 'Android'
+        else if (/iPhone|iPad/.test(u)) os = 'iOS'
+        else if (/Linux/.test(u)) os = 'Linux'
+        return [br, os].filter(Boolean).join(' · ')
+      }
+      if (!d) return parseUA(ua)   // 设备列表还没回来时，至少显示本机浏览器/系统
+      const br = d.browser ? d.browser + (d.browser_version ? ' ' + String(d.browser_version).split('.')[0] : '') : ''
+      const osTxt = d.os || ''
+      const label = [br, osTxt].filter(Boolean).join(' · ')
+      return label || parseUA(d.user_agent) || parseUA(ua) || d.device_name || ''
+    },
+    menuSecretLabel() {
+      if (this.isSecretActiveCh) return '结束加密聊天'
+      if (this.isSecretPendingCh) return this.isSecretInitiatorHere ? '撤回加密聊天请求' : '接受加密聊天请求'
+      return '开启加密聊天'
+    },
+    /** 该对方是否已有我发起的、等待对方接受的加密请求 */
+    secretPendingMine() {
+      const peerId = state.chat && state.chat.other_user && state.chat.other_user.id
+      if (!peerId) return false
+      return state.convs.some(c => c.e2e_mode === 1 && c.e2e_state === 1 && String((c.other_user || {}).id) === String(peerId))
+    },
+    /** 当前会话是否为私密（加密）会话 */
+    isSecretCh() { return !!(state.chat && state.chat.e2e_mode === 1) },
+    isSecretPendingCh() { return this.isSecretCh && state.chat.e2e_state === 1 },
+    isSecretActiveCh() { return this.isSecretCh && state.chat.e2e_state === 2 },
+    /** 本机是否为请求发起设备 */
+    isSecretInitiatorHere() {
+      if (!this.isSecretCh) return false
+      try { return String(state.chat.e2e_device_a || '') === String(localStorage.getItem('bm_device_row_id') || '') } catch (e) { return false }
+    },
+    /** 头像右上角：剩余有效期徽标 */
+    secretBurnLabel() {
+      if (!this.isSecretCh) return ''
+      const at = state.chat && state.chat.e2e_expires_at
+      if (!at) return ''
+      const ms = Date.parse(at) - Date.now()
+      if (!(ms > 0)) return ''
+      const d = Math.ceil(ms / 86400000)
+      if (d >= 1) return d + 'd'
+      const h = Math.ceil(ms / 3600000)
+      if (h >= 1) return h + 'h'
+      return Math.max(1, Math.ceil(ms / 60000)) + 'm'
+    },
+    secretDaysLeft() {
+      const at = state.chat && state.chat.e2e_expires_at
+      if (!at) return ''
+      const ms = Date.parse(at) - Date.now()
+      return ms > 0 ? Math.ceil(ms / 86400000) + ' 天' : ''
+    },
+    /** 当前会话是否为私密（加密）会话 */
+    isSecretCh() { return !!(state.chat && state.chat.e2e_mode === 1) },
+    isSecretPendingCh() { return this.isSecretCh && state.chat.e2e_state === 1 },
+    isSecretActiveCh() { return this.isSecretCh && state.chat.e2e_state === 2 },
+    /** 本机是否为请求发起设备（决定显示「撤回」还是「接受/拒绝」） */
+    isSecretInitiatorHere() {
+      if (!this.isSecretCh) return false
+      try { return String(state.chat.e2e_device_a || '') === String(localStorage.getItem('bm_device_row_id') || '') } catch (e) { return false }
+    },
+    /** 右上角焚毁时间徽标（会话剩余有效期，仅 pending 有 expires_at） */
+    secretBurnLabel() {
+      if (!this.isSecretCh) return ''
+      const at = state.chat && state.chat.e2e_expires_at
+      if (!at) return ''
+      const ms = Date.parse(at) - Date.now()
+      if (!(ms > 0)) return ''
+      const d = Math.ceil(ms / 86400000)
+      if (d >= 1) return d + 'd'
+      const h = Math.ceil(ms / 3600000)
+      return h >= 1 ? h + 'h' : Math.max(1, Math.ceil(ms / 60000)) + 'm'
+    },
+    secretDaysLeft() {
+      const at = state.chat && state.chat.e2e_expires_at
+      if (!at) return ''
+      const ms = Date.parse(at) - Date.now()
+      if (!(ms > 0)) return ''
+      return Math.ceil(ms / 86400000) + ' 天'
+    },
     // 当前会话相关的用户 id 集合（私聊=对方，群聊=全体成员）
     chatPeerUids() {
       const c = state.chat
@@ -741,6 +906,34 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    // 先关菜单、下一帧再执行动作：点击即时响应，避免重渲染卡顿感
+    runAfterMenu(fn) {
+      this.chatMenu = false
+      requestAnimationFrame(() => setTimeout(fn, 0))
+    },
+    onMenuSecret() {
+      // 已开启：菜单项直接变成「结束加密聊天」→ 弹二次确认
+      if (this.isSecretActiveCh) { this.runAfterMenu(() => { this.confirmCloseSecret = true }); return }
+      this.runAfterMenu(() => this.onSecretBtn())
+    },
+    onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
+    onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
+    /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
+    async onSecretBtn() {
+      const c = state.chat
+      if (!c || c.type !== 'private') { showToast('仅单聊支持加密聊天'); return }
+      loadDevices().catch(() => {})
+      this.secretSheet = true
+    },
+    /** 点头像 → 对方资料（加密聊天入口） */
+    async doRequestSecret() {
+      this.secretSheet = false
+      await requestSecretChat()
+    },
+    async doAcceptSecret() { await acceptSecretChat(state.chat.id) },
+    async doRejectSecret() { const cid = state.chat.id; await rejectSecretChat(cid); this.closeChat() },
+    async doWithdrawSecret() { const cid = state.chat.id; await closeSecretChat(cid, 'user'); this.closeChat() },
+    async doCloseSecret() { this.confirmCloseSecret = false; const cid = state.chat.id; const ok = await closeSecretChat(cid, 'user'); if (ok) this.closeChat() },
     /** 是否在该消息上方显示时间分隔条：首条必显示；其余看与前一条的间隔是否 ≥30 分钟 */
     showTimeDivider(m, i) {
       const t = msgTimestamp(m)
@@ -2181,4 +2374,58 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .pending-foot .sheet-cancel { margin-top: 0; border-top: none; background: var(--tg-gray-bg, #F1F3F5); color: var(--tg-text, #000); font-weight: 500; }
 .pending-send { color: #fff; background: var(--tg-blue); font-weight: 600; }
 .pending-send.disabled { opacity: .5; pointer-events: none; }
+
+/* ═══════ 加密聊天 ═══════ */
+.secret-btn { position: relative; }
+.secret-dot { position: absolute; right: 6px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: #E5484D; }
+.chat-avatar-wrap { position: relative; display: inline-flex; flex-shrink: 0; cursor: pointer; }
+.conv-burn-badge { position: absolute; right: -6px; top: -6px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px #fff; }
+.secret-banner { display: flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; color: #1F6FB2; background: #EEF5FF; border-bottom: 1px solid #DDE9F7; flex: 0 0 auto; }
+.secret-request { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px 22px; text-align: center; }
+.secret-request .sr-ico { font-size: 34px; }
+.secret-request .sr-title { font-size: 17px; font-weight: 600; }
+.secret-request .sr-desc { font-size: 13px; color: #707579; line-height: 1.7; }
+.sr-btn { width: 100%; max-width: 320px; border: none; border-radius: 10px; padding: 12px 0; font-size: 15px; }
+.sr-btn.primary { background: var(--tg-blue); color: #fff; }
+.sr-btn.plain { background: #fff; border: 1px solid #DDE1E6; color: #555; }
+.sr-wait { font-size: 12px; color: #9AA0A6; }
+.secret-device-line { text-align: center; font-size: 12px; color: var(--tg-text-secondary); margin: -4px 0 10px; }
+.secret-profile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 14px; }
+.secret-profile-name { font-size: 17px; font-weight: 600; }
+.secret-profile-sub { font-size: 12.5px; color: var(--tg-text-secondary); }
+.sheet-item.secret-primary { color: var(--tg-blue); font-weight: 600; }
+.sheet-item.secret-tip { font-size: 12px; color: #9AA0A6; padding-top: 2px; padding-bottom: 10px; }
+
+
+/* ═══════ 顶栏「⋯」下拉菜单（贴合主题色） ═══════ */
+.more-btn { position: relative; }
+.chat-menu-mask { position: fixed; inset: 0; z-index: 198; background: transparent; }
+.chat-menu { position: fixed; top: 52px; right: 10px; z-index: 199; min-width: 190px; padding: 6px 0;
+  background: var(--tg-bg); border-radius: 14px;
+  border: 1px solid var(--tg-border);
+  box-shadow: 0 12px 36px rgba(0,0,0,.26), 0 2px 8px rgba(var(--tg-blue-rgb), .10);
+  animation: chatMenuIn .16s cubic-bezier(.2,.9,.3,1); transform-origin: top right; overflow: hidden; will-change: transform, opacity; }
+@keyframes chatMenuIn { from { opacity: 0; transform: scale(.92) translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes chatMaskIn { from { opacity: 0 } to { opacity: 1 } }
+.chat-menu-item { display: flex; align-items: center; gap: 11px; padding: 12px 14px;
+  font-size: 14.5px; color: var(--tg-text); cursor: pointer; white-space: nowrap;
+  transition: background .13s ease, color .13s ease; }
+/* 无分隔线：靠留白 + 圆角悬停区分（更轻盈） */
+.chat-menu-item { position: relative; border-radius: 10px; margin: 1px 5px; padding: 10px 9px; touch-action: manipulation; }
+.chat-menu-item + .chat-menu-item::before {
+  content: ''; position: absolute; top: -2px; left: 50px; right: 10px; height: 1px;
+  background: var(--tg-border); opacity: .38;
+}
+.chat-menu-item:hover, .chat-menu-item:active { background: var(--tg-blue-tint); }
+.chat-menu-item:hover svg, .chat-menu-item:active svg { color: var(--tg-blue-dark); }
+/* 图标胶囊底：让每个功能块有主题色识别度 */
+.chat-menu-item .mi-ico { width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--tg-blue-tint); color: var(--tg-blue); flex-shrink: 0; }
+.chat-menu-item .mi-label { flex: 1; }
+.chat-menu-item.mi-danger .mi-label { color: var(--tg-danger, #E53935); font-weight: 600; }
+.chat-menu-item.mi-danger .mi-ico { background: rgba(229,57,53,.1); color: var(--tg-danger, #E53935); }
+.chat-menu-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tg-danger); box-shadow: 0 0 0 3px rgba(229,57,53,.14); }
+/* 待处理状态：整项用主题色描边提示 */
+.chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
+.chat-menu-item.mi-urgent .mi-label { color: var(--tg-blue-dark); font-weight: 600; }
 </style>

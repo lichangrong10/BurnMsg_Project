@@ -48,10 +48,21 @@ export const api = {
   // 我的按人设置列表（设置页用）
   getBurnSettings: (params = {}) => http.get('/burn-settings/users', { params: { page: 1, pageSize: 50, ...params } }),
 
-  // ── 端到端加密（E2E） ──
+  // ── 端到端加密（E2E）· 用户级（旧，后端已下线，前端 P2 切换后删除） ──
   uploadIdentityKey: identity_pubkey => http.post('/keys', { identity_pubkey }), // 上传自己的 X25519 公钥（覆盖语义）
   getIdentityKey: userId => http.get(`/keys/${userId}`), // 查对方公钥（需同会话，404=对方未上传）
   queryIdentityKeys: user_ids => http.post('/keys/query', { user_ids }), // 批量查公钥（TOFU 比对，1~500 个）
+
+  // ── 设备级密钥（E2E_SECRET_CHAT.md v1.1，后端已实现） ──
+  uploadDeviceKey: identity_pubkey => http.post('/keys/device', { identity_pubkey }), // upsert，user_id/device_id 取自 JWT
+  getMyDeviceKey: () => http.get('/keys/device/me'), // 自检：{ exists, device_id, identity_pubkey, updated_at }
+  getPeerDeviceKey: conversationId => http.get(`/keys/device/${conversationId}`), // 取对方绑定设备公钥（服务端反查）
+
+  // ── 私密会话（设备配对） ──
+  e2eRequest: target_user_id => http.post('/conversations/e2e-request', { target_user_id }),
+  e2eAccept: id => http.post(`/conversations/${id}/e2e-accept`),
+  e2eReject: id => http.post(`/conversations/${id}/e2e-reject`),
+  e2eClose: (id, reason = 'user') => http.post(`/conversations/${id}/e2e-close`, { reason }),
 
   // ── 消息操作 ──
   editMessage: (id, content) => http.put(`/messages/${id}`, { content }),

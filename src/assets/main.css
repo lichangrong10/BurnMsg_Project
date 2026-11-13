@@ -312,7 +312,10 @@ body {
 .burn-banner .bb-scope { opacity: .85; }
 
 /* ============ 弹层 ============ */
-.overlay { position: absolute; inset: 0; background: rgba(0,0,0,.4); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+/* 遮罩层用 fixed：原为 absolute，会被 .content-scroll（overflow-y:auto）裁剪并跟随内容滚动，
+   表现为「PC 窄窗口下滚动页面时遮罩滑走、滑到底部没有遮罩」。fixed 不受祖先 overflow 裁剪。
+   max-width + margin:auto 保持与非 wide/desktop 模式下 #app 的 520px 居中列宽一致。 */
+.overlay { position: fixed; inset: 0; margin: 0 auto; max-width: 520px; background: rgba(0,0,0,.4); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--tg-bg); width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 10px 0 calc(14px + var(--safe-bottom)); animation: sheetUp .22s ease; max-height: 82%; display: flex; flex-direction: column; box-shadow: 0 -8px 30px rgba(0,0,0,.16); }
 @keyframes sheetUp { from { transform: translateY(40%); opacity: .5; } to { transform: none; opacity: 1; } }
 .sheet-title { text-align: center; font-size: 13.5px; color: var(--tg-text-secondary); padding: 8px 16px 10px; }
@@ -320,7 +323,12 @@ body {
 .sheet-item:active { background: var(--tg-gray-bg); }
 .sheet-item.danger { color: var(--tg-danger); }
 .sheet-cancel { margin-top: 8px; border-top: 8px solid var(--tg-gray-bg); font-weight: 600; }
-.dialog-overlay { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 36px; backdrop-filter: blur(2px); }
+.dialog-overlay { position: fixed; inset: 0; margin: 0 auto; max-width: 520px; background: rgba(0,0,0,.45); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 36px; backdrop-filter: blur(2px); }
+/* 宽屏/双栏模式下 #app 是满宽（max-width:none），遮罩也要跟着满宽 */
+html.bm-wide .overlay, html.bm-wide .dialog-overlay,
+html.bm-desktop .overlay, html.bm-desktop .dialog-overlay { max-width: none; }
+/* 弹层打开时锁住内容区滚动：避免遮罩背后还能滚出"多余滑条"，也让 mask 始终是最后可见层 */
+.content-scroll:has(.overlay), .content-scroll:has(.dialog-overlay) { overflow: hidden; }
 .dialog { background: var(--tg-bg); border-radius: var(--radius-md); width: 100%; max-width: 320px; padding: 20px 20px 8px; animation: dialogIn .2s ease; box-shadow: var(--shadow-lg); }
 @keyframes dialogIn { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
 .dialog-title { font-size: 17px; font-weight: 600; margin-bottom: 8px; }

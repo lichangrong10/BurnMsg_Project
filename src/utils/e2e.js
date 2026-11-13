@@ -130,6 +130,9 @@ function loadPrivRaw() {
 }
 
 function loadIdentity() {
+  // 设备级 identity 优先（E2E_SECRET_CHAT v1.1：私密会话按设备绑密钥）
+  const dev = getDeviceIdentity()
+  if (dev) return dev
   const priv = loadPrivRaw()
   const pubStr = localStorage.getItem(PUB_KEY)
   return priv && pubStr ? { priv, pub: unb64(pubStr) } : null
@@ -214,4 +217,115 @@ export function clearE2E() {
   localStorage.removeItem(PRIV_JWK_LEGACY)
   localStorage.removeItem(PUB_KEY)
   localStorage.removeItem(PT_CACHE)
+}
+
+/* ══════════ 设备级 identity（私密会话 / E2E_SECRET_CHAT v1.1） ══════════
+ * 每台设备一把 X25519 identity，存 bm_e2e_id_<deviceRowId>；
+ * 首次升级时若存在旧用户级密钥，直接沿用（同一对密钥，避免已有会话失效）。
+ */
+const DEV_ID_PREFIX = 'bm_e2e_id_'
+
+function deviceRowId() {
+  try { return localStorage.getItem('bm_device_row_id') || '' } catch (e) { return '' }
+}
+
+/** 设备 identity 的 localStorage 键（无设备行 ID 时返回空串） */
+export function deviceIdentityStorageKey() {
+  const d = deviceRowId()
+  return d ? DEV_ID_PREFIX + d : ''
+}
+
+/** 读本设备 identity（{priv,pub} 或 null） */
+export function getDeviceIdentity() {
+  const k = deviceIdentityStorageKey()
+  if (!k) return null
+  try {
+    const o = JSON.parse(localStorage.getItem(k) || 'null')
+    if (!o || !o.priv || !o.pub) return null
+    return { priv: unb64(o.priv), pub: unb64(o.pub) }
+  } catch (e) { return null }
+}
+
+/**
+ * 确保本设备 identity 存在，返回上传用的公钥 base64（无填充）。
+ * 无设备行 ID（老的登录态）时返回 null —— 调用方应等下次登录再启用私密会话。
+ */
+export async function ensureDeviceIdentity() {
+  const k = deviceIdentityStorageKey()
+  if (!k) return null
+  const exist = getDeviceIdentity()
+  if (exist) return stripPad(b64(exist.pub))
+
+  // 迁移：旧用户级密钥直接继承为设备密钥（同一对密钥，历史会话不受影响）
+  const legacyPriv = loadPrivRaw()
+  const legacyPub = localStorage.getItem(PUB_KEY)
+  let priv, pub
+  if (legacyPriv && legacyPub) {
+    priv = legacyPriv
+    pub = unb64(legacyPub)
+  } else {
+    const kp = await genKeyPair()
+    priv = kp.priv
+    pub = kp.pub
+  }
+  // 注意：本地存「带填充」的 base64（atob 不接受无填充），仅上传时才 stripPad
+  localStorage.setItem(k, JSON.stringify({ priv: b64(priv), pub: b64(pub), createdAt: Date.now() }))
+  return stripPad(b64(pub))
+}
+
+/** 清除本设备 identity（登出/设备被下线时调用） */
+export function clearDeviceIdentity() {
+  const k = deviceIdentityStorageKey()
+  if (k) localStorage.removeItem(k)
+}
+
+/** 清除指定消息的明文/失败缓存（关闭私密会话时做无痕清理） */
+export function clearPlaintextFor(msgIds) {
+  const ids = (msgIds || []).map(String)
+  if (!ids.length) return
+  const pt = ptCache()
+  const fail = failCache()
+  let changedPt = false, changedFail = false
+  ids.forEach(id => {
+    if (id in pt) { delete pt[id]; changedPt = true }
+    if (id in fail) { delete fail[id]; changedFail = true }
+  })
+  try { if (changedPt) localStorage.setItem(PT_CACHE, JSON.stringify(pt)) } catch (e) { /* 忽略 */ }
+  try { if (changedFail) localStorage.setItem(FAIL_CACHE, JSON.stringify(fail)) } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 一次性迁移（v2）：把旧的「用户级加密」残留清干净
+ * - bm_e2e_priv_raw / bm_e2e_pub_b64：旧用户级 identity（现改设备级）
+ * - bm_e2e_pt / bm_e2e_fail：旧明文缓存（官方口径：旧加密消息已不可解，本地不该还能看）
+ * - bm_pinned_keys：旧用户级 TOFU 钉
+ * - bm_pending_key_changes：旧密钥变更待办（不清会一直冒红点/假提示）
+ * - bm_e2e_on_<cid>：已下线的「明文加密」开关
+ * - bm_pinned_dev_keys：仅清理旧格式（键不是会话 ID 的），保留新格式
+ */
+const MIGRATED_FLAG = 'bm_e2e_migrated_v2'
+
+export function migrateE2EStorage() {
+  try {
+    if (localStorage.getItem(MIGRATED_FLAG) === '1') return false
+    const hasDeviceIdentity = !!deviceIdentityStorageKey() && !!localStorage.getItem(deviceIdentityStorageKey())
+    // 只有设备级 identity 已就绪时才删旧私钥，否则会导致当前设备无钥匙可用
+    if (hasDeviceIdentity) {
+      localStorage.removeItem(PRIV_RAW)
+      localStorage.removeItem(PUB_KEY)
+    }
+    localStorage.removeItem(PT_CACHE)
+    localStorage.removeItem(FAIL_CACHE)
+    localStorage.removeItem('bm_pinned_keys')
+    localStorage.removeItem('bm_pending_key_changes')
+    // 旧「明文加密」开关
+    Object.keys(localStorage)
+      .filter(k => k.indexOf('bm_e2e_on_') === 0)
+      .forEach(k => localStorage.removeItem(k))
+    localStorage.setItem(MIGRATED_FLAG, '1')
+    return true
+  } catch (e) {
+    console.warn('[焚信] E2E 存储迁移失败:', e && e.message)
+    return false
+  }
 }

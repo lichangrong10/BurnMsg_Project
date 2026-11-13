@@ -12,6 +12,11 @@ export const WS_EVENTS = {
   MESSAGE_NEW: 'message:new',
   MESSAGE_EDITED: 'message:edited',
   MESSAGE_RECALLED: 'message:recalled',
+  E2E_REQUESTED: 'e2e:requested',        // 收到私密（加密）聊天请求
+  E2E_ACCEPTED: 'e2e:accepted',          // 已开启（推给两台绑定设备）
+  E2E_REJECTED: 'e2e:rejected',          // 被拒绝
+  E2E_REQUEST_GONE: 'e2e:request_gone',  // 请求失效/已处理
+  E2E_CLOSED: 'e2e:closed',              // 会话结束（物理删除）
   MESSAGE_DESTROYED: 'message:destroyed', // 消息焚毁（墓碑）：payload { conversation_id, message_ids:[], destroyed_at, destroy_reason }
   RECEIPT_READ: 'receipt:read',
   CONVERSATION_UPDATED: 'conversation:updated',
