@@ -30,10 +30,6 @@
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
       <span class="mi-label">搜索消息</span>
     </div>
-    <div class="chat-menu-item" @click="onMenuInfo">
-      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
-      <span class="mi-label">{{ state.chat && state.chat.type === 'private' ? '聊天信息' : '群组信息' }}</span>
-    </div>
   </div>
 
   <!-- ═══════ 会话内消息搜索面板 ═══════ -->
@@ -917,7 +913,6 @@ export default {
       this.runAfterMenu(() => this.onSecretBtn())
     },
     onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
-    onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
     async onSecretBtn() {
       const c = state.chat
