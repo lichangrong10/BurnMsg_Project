@@ -21,7 +21,7 @@
     </div>
     <div class="content-scroll tab-anim">
       <transition :name="tabTransition">
-      <Chats v-if="state.tab === 'chats'" class="pad-search" />
+      <Chats v-if="state.tab === 'chats'" />
       <Channels v-else-if="state.tab === 'channels'" class="pad-search" />
       <Contacts v-else-if="state.tab === 'contacts'" class="pad-search" />
       <Me v-else />
@@ -29,7 +29,7 @@
     </div>
 
     <!-- 搜索框悬浮：DOM 顺序放在滑动容器之后，同级层叠时后绘制，保证始终浮在切换动画之上 -->
-    <div class="search-wrap" :class="{ 'search-off': state.tab === 'me' || state.tab === 'chats' }">
+    <div v-if="state.tab !== 'me' && state.tab !== 'chats'" class="search-wrap">
       <input class="search-input" v-model.trim="state.keyword" :placeholder="state.tab === 'chats' ? '搜索联系人' : state.tab === 'channels' ? '搜索频道' : '搜索姓名 / 手机号'">
     </div>
     <!-- <div style="height: 10%;background: #E8EBEE;">

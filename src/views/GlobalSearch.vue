@@ -6,7 +6,7 @@
       </div>
       <div class="chat-title-wrap">
         <div class="chat-title">搜索</div>
-        <div class="chat-status" v-if="total >= 0">{{ total }} 条结果</div>
+        <div class="chat-status" v-if="hasSearched">{{ total }} 条消息结果</div>
       </div>
     </div>
 
@@ -27,27 +27,8 @@
     </div>
 
     <!-- 消息列表 -->
-    <div class="gs-body" @scroll="onScroll">
-      <!-- 初始空状态 -->
-      <div v-if="!hasSearched && !loading" class="gs-empty">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <div>输入关键词搜索联系人、会话或消息</div>
-      </div>
-
-      <!-- 加载中（首次） -->
-      <div v-else-if="loading && !results.length" class="gs-empty">
-        <div class="gs-spinner"></div>
-        <div>搜索中…</div>
-      </div>
-
-      <!-- 无结果 -->
-      <div v-else-if="hasSearched && !results.length && !loading" class="gs-empty">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/></svg>
-        <div>没有找到相关消息</div>
-        <div class="gs-empty-hint">换个关键词试试</div>
-      </div>
-
-<!-- 本地分区：联系人 / 会话（输入即搜，无需等服务端） -->
+<div class="gs-body" @scroll="onScroll">
+      <!-- 本地分区：联系人 / 会话（输入即搜） -->
       <div v-if="keyword && localContacts.length" class="gs-section">
         <div class="gs-section-title">联系人</div>
         <div v-for="u in localContacts" :key="'u' + u.id" class="gs-result-item" @click="openContactChat(u)">
@@ -71,46 +52,58 @@
           </div>
         </div>
       </div>
-      <div v-if="keyword && hasSearched" class="gs-section-title" style="margin-top:10px">消息</div>
 
-      <!-- 结果列表 -->
-      <template v-else>
-        <div v-for="item in results" :key="item.id" class="gs-result-item" @click="openResult(item)">
-          <div class="gs-result-avatar" :style="{ background: avatarColor(item.sender_name || '?') }">
-            {{ (item.sender_name || '?').charAt(0) }}
-          </div>
-          <div class="gs-result-body">
-            <div class="gs-result-row1">
-              <span class="gs-result-sender">{{ item.sender_name || '未知用户' }}</span>
-              <span class="gs-result-time">{{ fmtTime(item.created_at) }}</span>
-            </div>
-            <div class="gs-result-snippet" v-html="highlightSnippet(item.content_snippet)"></div>
-            <div class="gs-result-conv">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>{{ getConvName(item.conversation_id) }}</span>
-              <span v-if="item.is_encrypted" class="gs-enc-tag">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                加密
-              </span>
-            </div>
-          </div>
-        </div>
+      <div v-if="keyword && keyword.length === 1" class="gs-section-hint">再输入 1 个字符即可搜索消息（联系人、会话已在上方）</div>
 
-        <!-- 加载更多 -->
-        <div v-if="loadingMore" class="gs-loading-more">
-          <div class="gs-spinner gs-spinner-sm"></div>
-          <span>加载中…</span>
+      <!-- 消息分区 -->
+      <template v-if="keyword && keyword.length >= 2">
+        <div v-if="results.length" class="gs-section">
+          <div class="gs-section-title">消息</div>
+          <div v-for="item in results" :key="item.id" class="gs-result-item" @click="openResult(item)">
+            <div class="gs-result-avatar" :style="{ background: avatarColor(item.sender_name || '?') }">{{ (item.sender_name || '?').charAt(0) }}</div>
+            <div class="gs-result-body">
+              <div class="gs-result-row1">
+                <span class="gs-result-sender">{{ item.sender_name || '未知用户' }}</span>
+                <span class="gs-result-time">{{ fmtTime(item.created_at) }}</span>
+              </div>
+              <div class="gs-result-snippet" v-html="highlightSnippet(item.content_snippet)"></div>
+              <div class="gs-result-conv">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                <span>{{ getConvName(item.conversation_id) }}</span>
+                <span v-if="item.is_encrypted" class="gs-enc-tag">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                  加密
+                </span>
+              </div>
+            </div>
+          </div>
+          <div v-if="loadingMore" class="gs-loading-more">
+            <div class="gs-spinner gs-spinner-sm"></div>
+            <span>加载中…</span>
+          </div>
+          <div v-else-if="noMore" class="gs-no-more">— 已加载全部结果 —</div>
         </div>
-        <div v-else-if="noMore && results.length" class="gs-no-more">
-          — 已加载全部结果 —
+        <div v-else-if="loading" class="gs-empty">
+          <div class="gs-spinner"></div>
+          <div>搜索中…</div>
+        </div>
+        <div v-else-if="hasSearched && !localContacts.length && !localConvs.length" class="gs-empty">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <div>没有找到相关消息</div>
+          <div class="gs-empty-hint">换个关键词试试</div>
         </div>
       </template>
+
+      <div v-if="!keyword" class="gs-empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <div>输入关键词搜索联系人、会话或消息</div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { state, openChat, openChatById, showToast } from '../store'
+import { state, openChat, openChatById, showToast, startChatWith } from '../store'
 import { api } from '../api'
 import { avatarColor, fmtTime, convName } from '../utils/format'
 
@@ -166,22 +159,23 @@ export default {
       const conv = (state.convs || []).find(c => c.type === 'private' && String((c.other_user || {}).id) === String(u.id))
       state.showGlobalSearch = false
       if (conv) { openChatById(conv.id); return }
-      showToast('还没有与该联系人的会话，去通讯录发起吧')
+      // 没有会话：直接创建并进入（startChatWith 内部 createPrivate + 刷新 + openChat）
+      startChatWith(u)
     },
     avatarColor,
     fmtTime,
 
     onInput() {
       clearTimeout(this.debounceTimer)
-      if (this.keyword.length < 2) {
+      if ((this.keyword || '').length < 2) {
         this.results = []
         this.total = -1
         this.hasSearched = false
         return
       }
-      this.debounceTimer = setTimeout(() => {
-        this.doSearch(1)
-      }, 400)
+      // 不节流：输入即搜（同一时刻只允许一个在途请求，避免结果错乱）
+      if (this.loading) { this.debounceTimer = setTimeout(() => this.doSearch(1), 120); return }
+      this.doSearch(1)
     },
 
     async doSearch(page = 1) {
@@ -200,8 +194,10 @@ export default {
           page,
           pageSize: this.pageSize
         })
+        // 兼容两种返回：拦截器已解包 { list } 或原始 { code,data:{list} }
         const data = Array.isArray(res) ? { list: res } : (res || {})
-        const list = data.list || data.items || (Array.isArray(data) ? data : [])
+        const inner = (data.data && (data.data.list || data.data.items)) ? data.data : data
+        const list = Array.isArray(inner) ? inner : (inner.list || inner.items || [])
         if (page === 1) {
           this.results = list
         } else {
@@ -400,7 +396,17 @@ function escHtml(s) {
   font-size: 12.5px; color: #b0b5bc;
 }
 
-.gs-section { padding: 0; }
-.gs-section-title { padding: 8px 14px 4px; font-size: 12px; color: var(--tg-text-secondary); }
+.gs-section { padding: 0 0 4px; }
+.gs-section-title { padding: 14px 14px 6px; font-size: 12px; font-weight: 600; color: var(--tg-text-secondary); letter-spacing: .3px; }
+.gs-section + .gs-section { border-top: 6px solid var(--tg-gray-bg, #F1F3F5); }
 .gs-unread { margin-left: auto; background: #F04438; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 9px; }
+
+.gs-section-hint { padding: 6px 14px 14px; font-size: 12.5px; color: var(--tg-text-secondary); }
+
+
+/* 顶栏标题居中：返回键右侧的「搜索」 */
+.gs-page .chat-topbar { position: relative; }
+.gs-page .chat-topbar .chat-title-wrap { position: absolute; left: 44px; right: 44px; top: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.gs-page .chat-topbar .chat-title { text-align: center; }
+.gs-page .chat-topbar .chat-status { text-align: center; }
 </style>
