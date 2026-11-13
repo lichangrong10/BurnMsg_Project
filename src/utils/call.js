@@ -593,3 +593,124 @@ export async function acceptCall() {
     fail(e)
   }
 }
+
+/* ══════════ WS 事件装配 ══════════ */
+
+const offs = []
+let installed = false
+
+/**
+ * 主叫收到 call:accepted：解密 answer → 取 DTLS 指纹 → 校验 fp_mac → 通过才 setRemoteDescription。
+ * 顺序不能反，否则信令服务器可以替换指纹做 MITM。
+ */
+async function onAccepted(p) {
+  if (!p || !callKey || !pc) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  clearDialTimeout()
+  stopPoll()
+  let sdp
+  try {
+    sdp = await open(callKey, p.payload)
+  } catch (e) {
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('通话密钥协商失败，已挂断')
+    return
+  }
+  const fp = dtlsFingerprintOf(sdp)
+  if (!fp || !(await verifyFingerprintMac(callKey, fp, p.fp_mac))) {
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('对方应答指纹校验失败，已挂断（可能存在中间人）')
+    return
+  }
+  if (pc.signalingState !== 'have-local-offer') return // 重复事件 / 已处理
+  try {
+    await pc.setRemoteDescription({ type: 'answer', sdp })
+    remoteDescSet = true
+    flushRemoteIce()
+    if (callState.phase === 'dialing') {
+      callState.phase = 'connecting'
+      callState.status = ''
+    }
+  } catch (e) {
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('通话连接建立失败，已挂断')
+  }
+}
+
+/** 转发来的加密 ICE（一批一个 payload） */
+async function onRemoteIce(p) {
+  if (!p || !callKey) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  let parsed
+  try {
+    parsed = JSON.parse(await open(callKey, p.payload))
+  } catch (e) {
+    return // 解密失败/非本通电话的候选，静默丢弃
+  }
+  const list = Array.isArray(parsed) ? parsed : [parsed]
+  list.forEach(c => { if (c) addRemoteIce(c) })
+}
+
+/** 拒接 / 忙线 / 振铃超时（主叫侧） */
+function onRejected(p) {
+  if (!p) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  const text = { decline: '对方已拒接', busy: '对方忙线中', timeout: '对方无人接听' }[p.reason] || '通话已结束'
+  finish('ended', p.reason || 'decline', text)
+}
+
+/** 通话结束（双方都会收到；含设备下线 / 会话关闭联动） */
+function onEnded(p) {
+  if (!p) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  const text = {
+    hangup: '通话已结束',
+    reject: '通话已拒接',
+    timeout: '通话超时已结束',
+    peer_offline: '对方设备离线，通话已结束',
+    session_closed: '会话已关闭，通话已结束',
+  }[p.reason] || '通话已结束'
+  finish('ended', p.reason || 'hangup', text)
+}
+
+/** WS 重连后用 REST 对齐一次状态（重连窗口期事件可能丢） */
+async function resyncAfterReconnect() {
+  if (!currentCallId || callState.phase === 'idle') return
+  try {
+    const view = await api.getCall(currentCallId)
+    if (!view) return
+    if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
+      finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
+    }
+  } catch (e) { /* 忽略：后续事件仍会纠正 */ }
+}
+
+/**
+ * 挂上全部通话事件（App 挂载时调用一次）。
+ * ws.js 的 onWs 会在 socket 重连后自动重挂，闭包里全部做幂等判断，重复事件无副作用。
+ */
+export function installCallEvents() {
+  if (installed) return
+  installed = true
+  offs.push(onWs(WS_EVENTS.CALL_INCOMING, p => { onIncoming(p).catch(() => {}) }))
+  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, p => { onAccepted(p).catch(() => {}) }))
+  offs.push(onWs(WS_EVENTS.CALL_REJECTED, p => onRejected(p)))
+  offs.push(onWs(WS_EVENTS.CALL_ICE, p => { onRemoteIce(p).catch(() => {}) }))
+  offs.push(onWs(WS_EVENTS.CALL_ENDED, p => onEnded(p)))
+  offs.push(onWs('connect', () => { resyncAfterReconnect().catch(() => {}) }))
+}
+
+/** 卸载事件并释放资源（App 卸载 / 强制登出时调用，防麦克风摄像头残留在后台） */
+export function uninstallCallEvents() {
+  installed = false
+  while (offs.length) {
+    const off = offs.pop()
+    try { off() } catch (e) { /* 忽略 */ }
+  }
+  resetLocal()
+  callState.phase = 'idle'
+  callState.status = ''
+  callState.peer = { id: null, name: '' }
+  callState.endedReason = ''
+  callState.error = ''
+}
