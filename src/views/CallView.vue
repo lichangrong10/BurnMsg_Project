@@ -10,7 +10,7 @@
       autoplay
       playsinline
       @click="onSurfaceClick('remote')"
-      @dblclick.prevent="onDblTap"
+      @dblclick.prevent="onDblTap('remote')"
     ></video>
 
     <div class="call-head">
@@ -37,7 +37,7 @@
       playsinline
       muted
       @click="onSurfaceClick('local')"
-      @dblclick.prevent="onDblTap"
+      @dblclick.prevent="onDblTap('local')"
     ></video>
 
     <div class="call-actions">
@@ -214,8 +214,9 @@ export default {
       })
     },
     /** 双击主画面：1x ↔ 2x 数字放大（CSS 裁切，不改变发给对方的画面） */
-    onDblTap() {
+    onDblTap(which) {
       if (!this.isVideoCall) return
+      if (which && which !== this.focus) return // 只对当前主画面生效，避免点小窗时同时触发互换
       this.zoom = this.zoom > 1 ? 1 : 2
     }
   }
