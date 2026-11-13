@@ -125,6 +125,14 @@
             </template>
             <template v-else-if="isBlurredBurn(m) && !isMediaBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
             <template v-else-if="isMediaBurn(m) && !m.file_url"><span class="media-burn-loading">播完即焚 · 加载中</span></template>
+            <!-- 通话记录：服务端结束时落的一条 type='call' 摘要消息（视频通话 · 01:23 / 未接听 / 已拒接） -->
+            <template v-else-if="m.type === 'call'">
+              <div class="call-record">
+                <svg v-if="callRecordIsVideo(m)" class="call-record-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg>
+                <svg v-else class="call-record-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5C3 7 9 4 12 4s9 3 9 6.5c0 1.2-.6 2-1.6 2.2l-2.7.6c-.9.2-1.7-.3-2-1.2l-.4-1.2c-1.5.5-3 .5-4.6 0l-.4 1.2c-.3.9-1.1 1.4-2 1.2l-2.7-.6C3.6 12.5 3 11.7 3 10.5Z"/></svg>
+                <span class="call-record-text">{{ m.content || '通话记录' }}</span>
+              </div>
+            </template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <div class="msg-image-wrap">
                 <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
@@ -1460,6 +1468,7 @@ export default {
       if (t.type === 'file') return '[文件] ' + (t.file_name || '')
       if (t.type === 'voice') return '[语音]' + (/^\d+$/.test(t.content || '') ? ` ${t.content}″` : '')
       if (t.type === 'video') return '[视频]'
+      if (t.type === 'call') return t.content || '[通话记录]'
       return (t.content || '').replace(/\n/g, ' ').slice(0, 60)
     },
     /** 回复者显示名（引用条/气泡引用块的标题）：先读快照，再回退当前列表 */
@@ -2108,6 +2117,10 @@ export default {
     isImgMsg(m) {
       return !!(m && m.type === 'image' && m.file_url && !m.is_recalled && !this.isBurned(m) && !this.isBlurredBurn(m))
     },
+    /** 通话记录里是不是视频通话（服务端 content 形如「视频通话 · 01:23」） */
+    callRecordIsVideo(m) {
+      return !!(m && /^视频通话/.test(m.content || ''))
+    },
     /** 是否视频消息：file/video 类型 + 视频扩展名 + 未撤回/未焚毁/非模糊占位（裸媒体直出样式用，不依赖后端 type 细化）——lichangrong b81ab71 原版实现 */
     isVideoMsg(m) {
       if (!m || !m.file_url || m.is_recalled || this.isBurned(m) || this.isBlurredBurn(m)) return false
@@ -2453,4 +2466,9 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 /* 待处理状态：整项用主题色描边提示 */
 .chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
 .chat-menu-item.mi-urgent .mi-label { color: var(--tg-blue-dark); font-weight: 600; }
+
+/* ── 通话记录气泡：一行摘要（视频通话 · 01:23 / 未接听 / 已拒接），不含通话内容 ── */
+.call-record { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--tg-text-secondary); }
+.call-record-ico { flex-shrink: 0; opacity: .85; }
+.call-record-text { white-space: nowrap; }
 </style>

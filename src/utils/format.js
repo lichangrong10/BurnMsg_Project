@@ -184,6 +184,8 @@ export function messagePreview(m) {
     case 'file': return '[文件]'
     case 'voice': return '[语音]' + (/^\d+$/.test(m.content || '') ? ` ${m.content}″` : '')
     case 'video': return '[视频]'
+    // 通话记录：服务端落的是摘要（视频通话 · 01:23 / 未接听 / 已拒接），不含通话内容
+    case 'call': return m.content || '[通话记录]'
     default: return m.content || '[消息]'
   }
 }
