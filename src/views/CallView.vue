@@ -167,3 +167,57 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+/* 通话页：铺满全屏、压在所有弹窗之上（App 的弹窗层级最高 210） */
+.call-page {
+  position: fixed; inset: 0; z-index: 400;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  background: radial-gradient(circle at 50% 0%, #1d2733 0%, #0d1116 72%);
+  color: #fff; overflow: hidden;
+  padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
+}
+
+/* 远端画面：视频通话铺满；语音通话压到 1px 只让音轨继续播（不渲染占画面） */
+.call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.call-remote.audio-only { width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.call-remote:not(.has-video) { opacity: 0; }
+
+.call-head { position: relative; z-index: 2; text-align: center; max-width: 78%; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
+.call-peer { font-size: 21px; font-weight: 600; letter-spacing: .2px; }
+.call-sub { margin-top: 7px; font-size: 14px; color: rgba(255,255,255,.74); font-variant-numeric: tabular-nums; }
+
+/* 头像：语音通话（或视频还没出画）时的视觉主体 */
+.call-avatar {
+  position: relative; z-index: 2; margin: auto;
+  width: 108px; height: 108px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 40px; font-weight: 600; color: #fff;
+  box-shadow: 0 0 0 10px rgba(255,255,255,.06);
+  animation: callPulse 2.4s ease-in-out infinite;
+}
+@keyframes callPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+
+/* 本地预览小窗（前置摄像头镜像，关摄像头时压暗） */
+.call-local {
+  position: absolute; right: 14px; top: calc(env(safe-area-inset-top, 0px) + 82px);
+  width: 104px; height: 148px; border-radius: 14px; object-fit: cover;
+  background: #111; box-shadow: 0 6px 20px rgba(0,0,0,.42); z-index: 3;
+}
+.call-local.mirrored { transform: scaleX(-1); }
+.call-local.off { opacity: .35; }
+
+.call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }
+.ca-btn {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 7px;
+  width: 74px; padding: 0; border: 0; background: transparent;
+  color: rgba(255,255,255,.88); font-size: 12px; line-height: 1; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ca-btn svg { box-sizing: content-box; padding: 15px; border-radius: 50%; background: rgba(255,255,255,.14); transition: transform .12s ease, background .15s ease; }
+.ca-btn.danger svg { background: #E5484D; }
+.ca-btn.ok svg { background: #30A46C; }
+.ca-btn.ghost.on svg { background: rgba(255,255,255,.92); color: #0d1116; }
+.ca-btn:active svg { transform: scale(.93); }
+.ca-btn span { opacity: .82; white-space: nowrap; }
+</style>
