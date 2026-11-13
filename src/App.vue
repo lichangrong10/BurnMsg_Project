@@ -17,6 +17,9 @@
   <GlobalSearch v-if="state.showGlobalSearch" />
   <NotifyGuide v-if="state.showNotifyGuide" />
 
+  <!-- 通话覆盖层（来电 / 通话中）：全屏，z-index 高于全部弹窗 -->
+  <CallView v-if="callState.phase !== 'idle'" />
+
   <!-- 全局 Toast -->
   <div v-if="state.toast" class="toast">{{ state.toast }}</div>
 
@@ -85,15 +88,18 @@ import AnnouncementsView from './views/Announcements.vue'
 import FeedbackView from './views/Feedback.vue'
 import NotifyGuide from './views/NotifyGuide.vue'
 import GlobalSearch from './views/GlobalSearch.vue'
+import CallView from './views/CallView.vue'
+import { callState, installCallEvents, uninstallCallEvents } from './utils/call'
 
 const DEVICE_TYPE_TEXT = { web: '网页版', mobile: '手机版', desktop: '桌面版' }
 
 export default {
   name: 'App',
-  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView, GlobalSearch, NotifyGuide },
+  components: { LoginView, ChangePwdView, HomeView, ChatRoom, CreateGroup, ChatInfo, AdminView, AnnouncementsView, FeedbackView, GlobalSearch, NotifyGuide, CallView },
   data() {
     return {
       state,
+      callState,
       updateInfo: null,
       updateDownloading: false,
       updateProgress: 0
@@ -113,6 +119,10 @@ export default {
   },
   mounted() {
     window.addEventListener('bm-logout', forceLogout)
+    // 通话事件全局挂一次：来电在任何页面都要能弹出（CallView 由 state 驱动）
+    installCallEvents()
+    // 登出/被踢：先收掉通话（关 PC、停轨道），否则麦克风摄像头会留在后台
+    window.addEventListener('bm-logout', uninstallCallEvents)
     startTimers()
     setupBackHandler()
     setupStatusBar()
@@ -151,6 +161,8 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener('bm-logout', forceLogout)
+    window.removeEventListener('bm-logout', uninstallCallEvents)
+    uninstallCallEvents()
     stopTimers()
   },
   methods: {

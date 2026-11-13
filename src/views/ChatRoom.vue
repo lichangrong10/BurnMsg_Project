@@ -30,6 +30,15 @@
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
       <span class="mi-label">搜索消息</span>
     </div>
+    <!-- 通话入口：仅 1:1 私聊；私密会话（e2e_state=2）才真正可打，其余给引导文案 -->
+    <div v-if="state.chat && state.chat.type === 'private'" class="chat-menu-item" @click="onMenuCall('audio')">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5C3 7 9 4 12 4s9 3 9 6.5c0 1.2-.6 2-1.6 2.2l-2.7.6c-.9.2-1.7-.3-2-1.2l-.4-1.2c-1.5.5-3 .5-4.6 0l-.4 1.2c-.3.9-1.1 1.4-2 1.2l-2.7-.6C3.6 12.5 3 11.7 3 10.5Z"/></svg></span>
+      <span class="mi-label">语音通话</span>
+    </div>
+    <div v-if="state.chat && state.chat.type === 'private'" class="chat-menu-item" @click="onMenuCall('video')">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg></span>
+      <span class="mi-label">视频通话</span>
+    </div>
     <div class="chat-menu-item" @click="onMenuInfo">
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
       <span class="mi-label">{{ state.chat && state.chat.type === 'private' ? '聊天信息' : '群组信息' }}</span>
@@ -514,6 +523,7 @@
 <script>
 import { nextTick, markRaw } from 'vue'
 import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
+import { startCall } from '../utils/call'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -917,6 +927,21 @@ export default {
       this.runAfterMenu(() => this.onSecretBtn())
     },
     onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
+    onMenuCall(kind) { this.runAfterMenu(() => this.beginCall(kind)) },
+    /**
+     * 发起通话。只放行私密会话：call_key 需要对方**设备级**公钥，
+     * 后端 GET /keys/device/:cid 仅对 e2e_mode=1 && e2e_state=2 的会话开放。
+     */
+    beginCall(kind) {
+      const c = state.chat
+      if (!c || c.type !== 'private') { showToast('目前仅支持 1:1 私聊通话'); return }
+      if (!(c.e2e_mode === 1 && c.e2e_state === 2)) {
+        showToast(c.e2e_mode === 1 ? '加密聊天尚未建立，暂时不能通话' : '需先开启加密聊天才能安全通话')
+        return
+      }
+      const other = c.other_user || {}
+      startCall({ conversationId: c.id, kind, peerName: convName(c), peerUserId: other.id })
+    },
     onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
     async onSecretBtn() {
