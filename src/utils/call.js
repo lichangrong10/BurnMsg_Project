@@ -62,6 +62,8 @@ export const callState = reactive({
   camOff: false,
   localStream: null,
   remoteStream: null,
+  /** 本轮通话是否拿到了 TURN/STUN 中继；false = 只有 host 候选（通常仅同网络可通） */
+  relay: true,
 })
 
 /* ─── 非 reactive 的会话资源（MediaStream 放进 reactive 会被 Proxy 包裹，必须 markRaw） ─── */
@@ -114,14 +116,32 @@ async function peerIKOf(conversationId) {
   return { userId: r.user_id, pub: r.identity_pubkey }
 }
 
-/** TURN 凭据 → RTCConfiguration.iceServers；未配置直接抛错，不做 STUN 降级 */
+/**
+ * ICE 服务器（可选增强，**绝不允许阻断通话**）。
+ *
+ * WebRTC 的连通顺序本来就与这里无关：`iceTransportPolicy:'all'` 下浏览器**先收集 host 候选**
+ * （本机网卡地址，含 Chrome 的 mDNS 混淆名），内部直连通了就完全不碰 STUN/TURN；
+ * STUN 只用来发现公网映射地址、TURN 只在直连失败时做中继。
+ * 所以没配 TURN 时正确做法是「照建连接、只收集 host 候选」，而不是中止。
+ *
+ * 返回 { list, relay }：
+ *  - list: RTCConfiguration.iceServers（未配置时为 []）
+ *  - relay: 是否拿到了中继凭据（用于 UI 提示「仅同网络可通」与失败文案）
+ */
 async function turnIceServers() {
-  return iceServersFrom(await api.getTurnCredentials())
+  try {
+    const turn = await api.getTurnCredentials()
+    return { list: [iceServersFrom(turn)], relay: true }
+  } catch (e) {
+    // 503 TURN_NOT_CONFIGURED（后端未配 TURN_SECRET）或凭据接口抖动：
+    // 退化成纯 host 候选，同网/可直连场景照常通话，跨 NAT 时再在失败文案里指向 TURN。
+    return { list: [], relay: false, warning: errText(e) }
+  }
 }
 
 /** 建 PeerConnection：1:1 一律 max-bundle，省候选也省 TURN 带宽 */
-function createPC(iceServers) {
-  const cfg = { iceServers: [iceServers], bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' }
+function createPC(iceServerList) {
+  const cfg = { iceServers: iceServerList || [], bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' }
   const conn = new RTCPeerConnection(cfg)
   // 本地候选：callId 未知或还没 setRemoteDescription 时先排队
   conn.onicecandidate = (ev) => {
@@ -216,6 +236,7 @@ function resetLocal() {
   callState.localStream = null
   callState.remoteStream = null
   callState.callId = null
+  callState.relay = true
 }
 
 /**
@@ -388,11 +409,19 @@ function releaseWakeLock() {
 function onPcStateChange(conn) {
   const st = conn.connectionState
   if (st === 'connected') markActive()
-  else if (st === 'failed') fail('网络连接中断，通话已结束')
-  else if (st === 'disconnected') {
+  else if (st === 'failed') {
+    // 无中继时的失败，几乎都是「跨网络直连不通」——把话说明白，别让人以为是 bug
+    fail(callState.relay
+      ? '网络连接中断，通话已结束'
+      : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
+  } else if (st === 'disconnected') {
     // 弱网瞬断很常见，给 5s 自愈窗口，仍未 connected 才收尾
     setTimeout(() => {
-      if (pc === conn && conn.connectionState !== 'connected') fail('连接中断，通话已结束')
+      if (pc === conn && conn.connectionState !== 'connected') {
+        fail(callState.relay
+          ? '连接中断，通话已结束'
+          : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
+      }
     }, 5000)
   }
 }
@@ -421,8 +450,10 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     // ① 对端设备公钥（私密会话唯一入口）——没有它算不出 call_key
     const peer = await peerIKOf(conversationId)
     peerIKPub = peer.pub
-    // ② TURN 凭据：未配置直接抛错（不降级 STUN）
+    // ② 中继凭据（可选增强）：拿不到就只收集 host 候选，不阻断通话
     const ice = await turnIceServers()
+    callState.relay = ice.relay
+    if (!ice.relay) showToast('未配置通话中继，仅同一网络内可通话')
     // ③ 临时密钥 + call_key：salt = 会话 + 主叫 eph_pub，POST 之前就能算
     ephPair = await genKeyPair()
     const ephPub = stripPad(b64(ephPair.pub))
@@ -431,7 +462,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     callState.status = 'media'
     localStream = markRaw(await getUserMediaFor(kind))
     callState.localStream = localStream
-    pc = createPC(ice)
+    pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
     await pc.setLocalDescription(await pc.createOffer())
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
@@ -587,11 +618,13 @@ export async function acceptCall() {
   callState.phase = 'connecting'
   callState.status = 'answering'
   try {
+    // 被叫同样：中继凭据拿不到就只走 host 候选（同网仍可接通）
     const ice = await turnIceServers()
+    callState.relay = ice.relay
     callKey = incomingCallKey
     localStream = markRaw(await getUserMediaFor(callState.kind))
     callState.localStream = localStream
-    pc = createPC(ice)
+    pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
     await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
     remoteDescSet = true
