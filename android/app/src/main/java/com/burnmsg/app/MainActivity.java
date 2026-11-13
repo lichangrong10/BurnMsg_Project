@@ -119,11 +119,21 @@ public class MainActivity extends BridgeActivity {
         });
 
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
-        // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+        // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行。
+        // 视频通话（V7.0）：CAMERA 同理（WebView 的 RESOURCE_VIDEO_CAPTURE 需要它），一并申请。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            java.util.ArrayList<String> needPerms = new java.util.ArrayList<>();
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{ android.Manifest.permission.RECORD_AUDIO }, 1001);
+                needPerms.add(android.Manifest.permission.RECORD_AUDIO);
+            }
+            if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                needPerms.add(android.Manifest.permission.CAMERA);
+            }
+            if (!needPerms.isEmpty()) {
+                requestPermissions(needPerms.toArray(new String[0]), 1001);
+            }
         }
     }
 
