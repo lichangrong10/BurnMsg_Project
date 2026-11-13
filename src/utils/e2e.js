@@ -329,3 +329,10 @@ export function migrateE2EStorage() {
     return false
   }
 }
+
+/* ══════════ 原语对外导出（V7.0 通话信令复用同一套实现） ══════════
+ * 通话（callCrypto.js）与消息共用 X25519 / AES-GCM / 双引擎判定，
+ * 保证「消息能解、通话也能解」且老 WebView（noble 兜底）行为一致。
+ * 这里只加导出，不改任何逻辑。
+ */
+export { genKeyPair, dh, loadIdentity, b64, unb64, stripPad, aesGcmEncrypt, aesGcmDecrypt }
