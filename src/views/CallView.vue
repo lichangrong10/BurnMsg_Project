@@ -12,6 +12,9 @@
     <div class="call-head">
       <div class="call-peer">{{ callState.peer.name || '对方' }}</div>
       <div class="call-sub">{{ subTitle }}</div>
+      <div v-if="!callState.relay && callState.phase !== 'incoming'" class="call-relay-tip">
+        无通话中继 · 仅同一网络可通
+      </div>
     </div>
 
     <div v-if="callState.kind !== 'video' || !hasRemote" class="call-avatar" :style="{ background: avatarBg }">
@@ -191,6 +194,11 @@ export default {
 .call-head { position: relative; z-index: 2; text-align: center; max-width: 78%; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
 .call-peer { font-size: 21px; font-weight: 600; letter-spacing: .2px; }
 .call-sub { margin-top: 7px; font-size: 14px; color: rgba(255,255,255,.74); font-variant-numeric: tabular-nums; }
+/* 没有 TURN 中继时给一条克制提示：直连（host 候选）能通的场景完全正常，跨网才会失败 */
+.call-relay-tip {
+  display: inline-block; margin-top: 9px; padding: 3px 10px; border-radius: 999px;
+  background: rgba(255,159,10,.16); color: #FFB84D; font-size: 12px; line-height: 1.5;
+}
 
 /* 头像：语音通话（或视频还没出画）时的视觉主体 */
 .call-avatar {
