@@ -1,12 +1,16 @@
 <template>
   <div class="call-page" :class="'kind-' + callState.kind">
-    <!-- 远端画面：视频通话铺满；语音通话只取音轨（元素压到 1px 保持播放） -->
+    <!-- 远端画面：默认主画面；和本地画面互换后变成小窗。
+         语音通话时压到 1px 只让音轨继续播（不渲染占画面）。 -->
     <video
       ref="remoteVideo"
-      class="call-remote"
-      :class="{ 'audio-only': callState.kind !== 'video', 'has-video': hasRemote }"
+      class="call-surface call-remote"
+      :class="{ 'as-main': focus === 'remote', 'as-pip': focus === 'local', 'audio-only': callState.kind !== 'video', 'has-video': hasRemote }"
+      :style="remoteStyle"
       autoplay
       playsinline
+      @click="onSurfaceClick('remote')"
+      @dblclick.prevent="onDblTap('remote')"
     ></video>
 
     <div class="call-head">
@@ -15,21 +19,25 @@
       <div v-if="!callState.relay && callState.phase !== 'incoming'" class="call-relay-tip">
         无通话中继 · 仅同一网络可通
       </div>
+      <div v-if="isVideoCall && hasLocal" class="call-hint">点小窗可互换画面 · 双击放大</div>
     </div>
 
-    <div v-if="callState.kind !== 'video' || !hasRemote" class="call-avatar" :style="{ background: avatarBg }">
+    <div v-if="callState.kind !== 'video' || (!hasRemote && focus === 'remote')" class="call-avatar" :style="{ background: avatarBg }">
       {{ initial }}
     </div>
 
-    <!-- 本地预览：视频通话右上角小窗 -->
+    <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面 -->
     <video
-      v-if="callState.kind === 'video' && hasLocal"
+      v-if="isVideoCall && hasLocal"
       ref="localVideo"
-      class="call-local"
-      :class="{ mirrored: !callState.camOff, off: callState.camOff }"
+      class="call-surface"
+      :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
+      :style="localStyle"
       autoplay
       playsinline
       muted
+      @click="onSurfaceClick('local')"
+      @dblclick.prevent="onDblTap('local')"
     ></video>
 
     <div class="call-actions">
@@ -103,16 +111,34 @@ function fmtDuration(sec) {
 export default {
   name: 'CallView',
   data() {
-    return { callState }
+    return {
+      callState,
+      /** 主画面是谁：remote=对方铺满（默认）| local=自己铺满（点小窗互换后的状态） */
+      focus: 'remote',
+      /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
+      zoom: 1
+    }
   },
   computed: {
     hasRemote() { return !!this.callState.remoteStream },
     hasLocal() { return !!this.callState.localStream },
+    isVideoCall() { return this.callState.kind === 'video' },
     initial() {
       const n = this.callState.peer.name || '对方'
       return n[0]
     },
     avatarBg() { return avatarColor(this.callState.peer.name || '?') },
+    /** 前置摄像头本地预览要镜像；后置不镜像（否则字是反的） */
+    remoteStyle() {
+      const z = this.focus === 'remote' ? this.zoom : 1
+      return z > 1 ? { transform: `scale(${z})` } : null
+    },
+    localStyle() {
+      const z = this.focus === 'local' ? this.zoom : 1
+      const parts = [this.callState.facing === 'user' ? 'scaleX(-1)' : null, z > 1 ? `scale(${z})` : null]
+      const t = parts.filter(Boolean).join(' ')
+      return t ? { transform: t } : null
+    },
     /** 顶部副标题：把 phase/status 翻成一句人话（结果态优先显示结果） */
     subTitle() {
       const s = this.callState
@@ -128,8 +154,10 @@ export default {
     }
   },
   watch: {
-    'callState.remoteStream'(v) { this.attachRemote(v) },
-    'callState.localStream'(v) { this.attachLocal(v) },
+    // 本地预览元素带 v-if（要有流才渲染），watcher 触发时 DOM 还没更新，
+    // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
+    'callState.remoteStream'(v) { this.$nextTick(() => this.attachRemote(v)) },
+    'callState.localStream'(v) { this.$nextTick(() => this.attachLocal(v)) },
     'callState.kind'() {
       this.$nextTick(() => {
         this.attachRemote(this.callState.remoteStream)
@@ -138,8 +166,10 @@ export default {
     }
   },
   mounted() {
-    this.attachRemote(this.callState.remoteStream)
-    this.attachLocal(this.callState.localStream)
+    this.$nextTick(() => {
+      this.attachRemote(this.callState.remoteStream)
+      this.attachLocal(this.callState.localStream)
+    })
   },
   beforeUnmount() {
     // 只解除元素绑定，真正的轨道释放在 call.js 的收尾里（这里停轨道会让通话断掉）
@@ -153,13 +183,25 @@ export default {
       const el = this.$refs.remoteVideo
       if (!el) return
       if (el.srcObject !== stream) el.srcObject = stream || null
-      if (stream) el.play().catch(() => { /* 等用户手势后自动恢复 */ })
+      if (stream) this.playSafely(el)
     },
     attachLocal(stream) {
       const el = this.$refs.localVideo
       if (!el) return
+      // 本地预览静音，否则会听到自己的回声；muted 属性在部分 WebView 上不生效，属性+property 都设
+      el.muted = true
+      el.setAttribute('muted', '')
       if (el.srcObject !== stream) el.srcObject = stream || null
-      if (stream) el.play().catch(() => {})
+      if (stream) this.playSafely(el)
+    },
+    /** autoplay 被策略拦时补一次：多数 WebView 静音视频可直接播，失败就等下一次挂载/点击重试 */
+    playSafely(el) {
+      const p = el.play()
+      if (p && p.catch) {
+        p.catch(() => {
+          setTimeout(() => { try { el.play().catch(() => {}) } catch (e) { /* 忽略 */ } }, 300)
+        })
+      }
     },
     onAccept() { acceptCall() },
     onReject() { rejectCurrent('decline') },
@@ -171,7 +213,28 @@ export default {
     },
     onMute() { toggleMute() },
     onCamera() { toggleCamera() },
-    onSwitch() { switchCamera() }
+    onSwitch() { switchCamera() },
+    /**
+     * 点画面：只有点「当前的小窗」才互换主/次（点大画面不打断观看）。
+     * 视频通话里把小窗放大是最高频诉求，这一步不需要碰 WebRTC。
+     */
+    onSurfaceClick(which) {
+      if (!this.isVideoCall || !this.hasLocal) return
+      const pip = this.focus === 'local' ? 'remote' : 'local'
+      if (which !== pip) return
+      this.focus = this.focus === 'local' ? 'remote' : 'local'
+      this.zoom = 1
+      this.$nextTick(() => {
+        this.attachRemote(this.callState.remoteStream)
+        this.attachLocal(this.callState.localStream)
+      })
+    },
+    /** 双击主画面：1x ↔ 2x 数字放大（CSS 裁切，不改变发给对方的画面） */
+    onDblTap(which) {
+      if (!this.isVideoCall) return
+      if (which && which !== this.focus) return // 只对当前主画面生效，避免点小窗时同时触发互换
+      this.zoom = this.zoom > 1 ? 1 : 2
+    }
   }
 }
 </script>
@@ -186,10 +249,23 @@ export default {
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
 }
 
-/* 远端画面：视频通话铺满；语音通话压到 1px 只让音轨继续播（不渲染占画面） */
-.call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
-.call-remote.audio-only { width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.call-remote:not(.has-video) { opacity: 0; }
+/* 画面层：同一个 .call-surface 在主画面/小窗之间切换（互换只需换 class，不重建元素） */
+.call-surface {
+  position: absolute; object-fit: cover; background: #000; z-index: 1;
+  transition: transform .18s ease, width .18s ease, height .18s ease, border-radius .18s ease, opacity .18s ease;
+  touch-action: manipulation; /* 让双击放大不被浏览器当成页面缩放 */
+}
+.call-surface.as-main { inset: 0; width: 100%; height: 100%; border-radius: 0; }
+.call-surface.as-pip {
+  right: 14px; top: calc(env(safe-area-inset-top, 0px) + 86px);
+  width: 104px; height: 148px; border-radius: 14px; z-index: 3;
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
+/* 语音通话：远端元素压到 1px，只让音轨继续播 */
+.call-surface.audio-only { width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+/* 只对**远端**元素做「还没出画就隐藏」；本地元素没有 has-video，不能一起被 rule 命中 */
+.call-surface.call-remote:not(.has-video) { opacity: 0; }
+.call-surface.off { opacity: .35; }
 
 .call-head { position: relative; z-index: 2; text-align: center; max-width: 78%; text-shadow: 0 2px 10px rgba(0,0,0,.55); }
 .call-peer { font-size: 21px; font-weight: 600; letter-spacing: .2px; }
@@ -211,14 +287,8 @@ export default {
 }
 @keyframes callPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
 
-/* 本地预览小窗（前置摄像头镜像，关摄像头时压暗） */
-.call-local {
-  position: absolute; right: 14px; top: calc(env(safe-area-inset-top, 0px) + 82px);
-  width: 104px; height: 148px; border-radius: 14px; object-fit: cover;
-  background: #111; box-shadow: 0 6px 20px rgba(0,0,0,.42); z-index: 3;
-}
-.call-local.mirrored { transform: scaleX(-1); }
-.call-local.off { opacity: .35; }
+/* 操作提示：只在视频通话且已有本地画面时出现 */
+.call-hint { margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.55); }
 
 .call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }
 .ca-btn {
