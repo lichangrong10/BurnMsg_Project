@@ -81,4 +81,10 @@ export default {
 .seg-item.on { background: var(--tg-bg); color: var(--tg-blue); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .check-circle { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--tg-border); margin-right: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .check-circle.on { background: var(--tg-blue); border-color: var(--tg-blue); }
+
+  /* 顶栏标题居中 */
+  .chat-topbar { position: relative; }
+  .chat-topbar .chat-title-wrap { position: absolute; left: 44px; right: 60px; top: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+  .chat-topbar .chat-title, .chat-topbar .chat-status { text-align: center; }
 </style>

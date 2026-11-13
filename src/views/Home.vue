@@ -22,13 +22,21 @@
     width: 7px;"></span>
         </div>
       </div>
+      <div style="display:flex;align-items:center;gap:2px" v-else-if="state.tab === 'contacts'">
+        <div class="topbar-icon" @click="state.showCreateGroup = true" title="发起群聊">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        </div>
+      </div>
     </div>
     <div class="content-scroll tab-anim">
       <transition :name="tabTransition">
+        <!-- keep-alive：切 Tab 不销毁重建页面，避免大列表重排导致卡顿 -->
+        <keep-alive :max="4">
       <Chats v-if="state.tab === 'chats'" />
       <Channels v-else-if="state.tab === 'channels'" class="pad-search" />
       <Contacts v-else-if="state.tab === 'contacts'" class="pad-search" />
       <Me v-else />
+        </keep-alive>
       </transition>
     </div>
 
@@ -175,4 +183,9 @@ export default {
 .ann-popup-btn.ack:active { background: #2E8BD6; }
 @keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ap-pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
+
+  /* 底部 Tab 切换：只让 transform/opacity 走合成层，避免整页重绘造成卡顿 */
+  .content-scroll.tab-anim { will-change: transform, opacity; backface-visibility: hidden; }
+  .tab-slide-left-enter-active, .tab-slide-left-leave-active,
+  .tab-slide-right-enter-active, .tab-slide-right-leave-active { will-change: transform, opacity; }
 </style>

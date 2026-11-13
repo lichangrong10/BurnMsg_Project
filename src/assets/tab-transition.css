@@ -24,17 +24,17 @@
 .tab-slide-left-leave-active,
 .tab-slide-right-enter-active,
 .tab-slide-right-leave-active {
-  transition: transform .22s cubic-bezier(.33, 1, .38, 1);
-  will-change: transform;
+  transition: transform .22s cubic-bezier(.33, 1, .38, 1), opacity .22s ease;
+  will-change: transform, opacity;
 }
 
 /* 切到右侧 tab：新页从右进，旧页向左出 */
-.tab-slide-left-enter-from { transform: translateX(45%); }
-.tab-slide-left-leave-to   { transform: translateX(-45%); }
+.tab-slide-left-enter-from { transform: translateX(45%); opacity: 0; }
+.tab-slide-left-leave-to   { transform: translateX(-45%); opacity: 0; }
 
 /* 切到左侧 tab：新页从左进，旧页向右出 */
-.tab-slide-right-enter-from { transform: translateX(-45%); }
-.tab-slide-right-leave-to   { transform: translateX(45%); }
+.tab-slide-right-enter-from { transform: translateX(-45%); opacity: 0; }
+.tab-slide-right-leave-to   { transform: translateX(45%); opacity: 0; }
 
 /* 新页在上层滑入 */
 .tab-slide-left-enter-active,

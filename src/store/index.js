@@ -83,6 +83,7 @@ export const state = reactive({
   createGroupAsChannel: false, // CreateGroup 打开时预设「频道」模式（openCreateGroup 设置，CreateGroup 挂载后消费复位）
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
+  groupThumbs: {},          // 群头像宫格缓存：groupId -> [{name, avatar}]
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
   groupMembersAt: 0,      // 群成员列表拉取时间（群已读进度据此判断是否要重拉）
   readWatermark: 0,       // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
@@ -881,6 +882,25 @@ export async function loadDevices(force) {
     state.devices = list
     return list
   } catch (e) { return state.devices }
+}
+
+/** 懒加载群成员缩略（群默认头像 2x2 宫格用），带缓存 */
+export async function ensureGroupThumbs(ids) {
+  const need = (ids || []).filter(id => id && !state.groupThumbs[id])
+  if (!need.length) return
+  for (const id of need.slice(0, 12)) {
+    try {
+      const arr = await api.getGroupMembers(id)
+      const members = Array.isArray(arr) ? arr : (arr && (arr.list || arr.items)) || []
+      state.groupThumbs[id] = members.map(m => {
+        const u = (m && (m.user || m.user_info || m.profile)) || m || {}
+        const name = u.display_name || u.user_display_name || u.name || u.username
+          || u.nickname || u.nick_name || u.phone || ''
+        const avatar = u.avatar_url || u.avatar || m.avatar_url || null
+        return { name: String(name || ''), avatar }
+      }).filter(m => m.name || m.avatar).slice(0, 4)
+    } catch (e) { state.groupThumbs[id] = [] }
+  }
 }
 
 export async function loadConvs(quiet) {

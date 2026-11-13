@@ -7,11 +7,14 @@
       <span>{{ pullText }}</span>
     </div>
     <div class="chat-tabs" style="margin-top: 10px;">
-      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="chatTab = 'private'"><span class="tab-label">私聊<span v-if="tabUnread.private" class="tab-dot"></span></span></div>
-      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'"><span class="tab-label">群组<span v-if="tabUnread.group" class="tab-dot"></span></span></div>
-      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'"><span class="tab-label">频道<span v-if="tabUnread.channel" class="tab-dot"></span></span></div>
+        <div class="tab-slider" :style="{ transform: 'translateX(calc(' + (tabIndex * 100) + '% + ' + (tabIndex * 14) + 'px))' }"></div>
+      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="switchTab('private')"><span class="tab-label">私聊<span v-if="tabUnread.private" class="tab-dot"></span></span></div>
+      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="switchTab('group')"><span class="tab-label">群组<span v-if="tabUnread.group" class="tab-dot"></span></span></div>
+      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="switchTab('channel')"><span class="tab-label">频道<span v-if="tabUnread.channel" class="tab-dot"></span></span></div>
     </div>
-    <div v-if="!filteredConvs.length" class="empty-state">
+    <transition :name="slideName" mode="out-in">
+      <div :key="chatTab" class="conv-list-wrap">
+        <div v-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
     </div>
@@ -24,7 +27,13 @@
       @touchcancel="cancelLongPress">
       <span v-if="c.unread" class="conv-badge-bottom">{{ c.unread > 99 ? '99+' : c.unread }}</span>
       <div class="avatar-wrap">
-        <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(c.type === 'private' ? String((c.other_user && c.other_user.id) || convName(c)) : convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
+        <div v-if="c.type === 'group' && !convAvatar(c) && quadMembers(c).length" class="avatar avatar-quad" style="width: 52px; height: 52px;">
+          <span v-for="(m, i) in quadMembers(c)" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
+            <img v-if="m.avatar" :src="m.avatar" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+          </span>
+          <span v-for="n in (4 - quadMembers(c).length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+        </div>
+        <div v-else class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(c.type === 'private' ? String((c.other_user && c.other_user.id) || convName(c)) : convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
         <!-- 私聊在线圆点：绿=在线，灰=离线；未取到在线态时不显示 -->
         <span v-if="peerOnline(c) !== null" class="online-dot" :class="{ on: peerOnline(c) }" :title="peerOnline(c) ? '在线' : '离线'"></span>
           <!-- 右上角：焚毁时间（加密聊天剩余有效期 / 会话焚毁时长） -->
@@ -48,6 +57,8 @@
         </div>
       </div>
     </div>
+      </div>
+    </transition>
 
     <!-- 长按 / 右键操作菜单 -->
     <div v-if="menu" class="conv-menu-overlay" @click="closeMenu" @contextmenu.prevent="closeMenu">
@@ -60,7 +71,7 @@
 </template>
 
 <script>
-import { state, openChat, togglePin, deleteConversation, loadConvs, isUserOnline } from '../store'
+import { state, openChat, togglePin, deleteConversation, loadConvs, isUserOnline, ensureGroupThumbs } from '../store'
 import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
 
 export default {
@@ -68,13 +79,19 @@ export default {
   data() {
     return {
       state,
-      chatTab: 'private', // private | group | channel
+      chatTab: 'private',
+    slideName: 'slide-left', // private | group | channel
       menu: null,        // 长按/右键浮层：{ conv, x, y }
       pullDist: 0,       // 下拉距离 px
       pullState: 'idle'  // idle | pulling | ready | refreshing
     }
   },
   computed: {
+    tabIndex() {
+      const order = ['private', 'group', 'channel']
+      const i = order.indexOf(this.chatTab)
+      return i < 0 ? 0 : i
+    },
     /** 三个分类标签是否有未读（用来在标签右上角显示小红点） */
     tabUnread() {
       const list = Array.isArray(state.convs) ? state.convs : []
@@ -128,13 +145,35 @@ export default {
       return this.pullDist > 0 ? 1 : 0
     }
   },
+  watch: {
+    filteredConvs() { this.syncGroupThumbs() }
+  },
   mounted() {
+    this.syncGroupThumbs()
     window.addEventListener('bm-back', this.onNativeBack)
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    /** 群默认头像宫格成员（有自定义头像时不显示宫格） */
+    quadMembers(c) {
+      if (!c || c.type !== 'group' || convAvatar(c)) return []
+      return (state.groupThumbs && state.groupThumbs[c.id]) || []
+    },
+    /** 为当前列表里没有头像的群补拉成员缩略（有缓存不重复请求） */
+    syncGroupThumbs() {
+      const ids = (this.filteredConvs || [])
+        .filter(c => c.type === 'group' && !convAvatar(c))
+        .map(c => c.id)
+      if (ids.length) ensureGroupThumbs(ids)
+    },
+    switchTab(tab) {
+      if (tab === this.chatTab) return
+      const order = ['private', 'group', 'channel']
+      this.slideName = order.indexOf(tab) > order.indexOf(this.chatTab) ? 'slide-left' : 'slide-right'
+      this.chatTab = tab
+    },
     /** 展示名：重名时追加部门/工号，没有则追加 ID 后 4 位，保证可区分 */
     displayName(c) {
       const base = convName(c)
@@ -337,7 +376,7 @@ export default {
 }
 .online-dot.on { background: #31C48D; }
   .conv-enc { font-size: 10px; color: var(--tg-blue); border: 1px solid rgba(51,144,236,.45); border-radius: 4px; padding: 0 3px; line-height: 1.5; margin-left: 4px; font-weight: 500; }
-  .conv-item { position: relative; }
+  .conv-item { position: relative; contain: layout paint style; }
 .conv-badge-bottom { position: absolute; bottom: 17px; right: 14px; min-width: 19px; height: 19px; padding: 0 6px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; background: #F04438; color: #fff; font-size: 11px; font-weight: 600; border-radius: 10px; line-height: 1; z-index: 2; }
   .conv-item.has-unread .conv-right { display: none; }
 .conv-time-bottom { font-size: 11.5px; color: #9AA0A6; margin-right: 6px; flex-shrink: 0; }
@@ -345,4 +384,31 @@ export default {
   /* 分类标签的未读小红点：跟着文字右上角 */
   .chat-tab .tab-label { position: relative; display: inline-block; }
   .tab-dot { position: absolute; top: -2px; right: -8px; width: 6px; height: 6px; border-radius: 50%; background: #F04438; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
+
+  /* 分类标签滑块（略小一号） */
+  .chat-tabs { position: relative; overflow: hidden; }
+  .tab-slider { position: absolute; top: 5px; bottom: 5px; left: 7px; width: calc(33.3333% - 14px); border-radius: 9px; background-color: var(--tg-bg, #fff); box-shadow: 0 1px 3px rgba(0,0,0,.10); transition: transform .24s cubic-bezier(.22,.9,.3,1); z-index: 0; }
+  .chat-tab { position: relative; z-index: 1; background: transparent !important; box-shadow: none !important; }
+  .chat-tab.active { background: transparent !important; box-shadow: none !important; font-weight: 600; }
+
+  /* 列表左右滑动 */
+  .conv-list-wrap { width: 100%; }
+  .slide-left-enter-active, .slide-left-leave-active,
+  .slide-right-enter-active, .slide-right-leave-active { transition: transform .2s ease, opacity .2s ease; }
+  .slide-left-enter-from { transform: translateX(28%); opacity: 0; }
+  .slide-left-leave-to { transform: translateX(-28%); opacity: 0; }
+  .slide-right-enter-from { transform: translateX(-28%); opacity: 0; }
+  .slide-right-leave-to { transform: translateX(28%); opacity: 0; }
+
+  /* 群默认头像：2x2 宫格（类似微信，正方形 + 极小间距） */
+  .avatar.avatar-quad { width: 52px !important; height: 52px !important;
+    display: flex !important; flex-wrap: wrap; align-content: space-between; justify-content: space-between;
+    gap: 1px; padding: 1px; box-sizing: border-box;
+    background: #E4E7EB; border-radius: 9px !important; overflow: hidden; flex-shrink: 0; }
+  .avatar.avatar-quad .quad-cell { flex: 0 0 calc(50% - 0.5px); aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; color: #fff; line-height: 1;
+    border-radius: 2px; overflow: hidden; }
+  .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
 </style>
