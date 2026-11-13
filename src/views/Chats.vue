@@ -7,9 +7,9 @@
       <span>{{ pullText }}</span>
     </div>
     <div class="chat-tabs" style="margin-top: 10px;">
-      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="chatTab = 'private'">私聊</div>
-      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'">群组</div>
-      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'">频道</div>
+      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="chatTab = 'private'"><span class="tab-label">私聊<span v-if="tabUnread.private" class="tab-dot"></span></span></div>
+      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'"><span class="tab-label">群组<span v-if="tabUnread.group" class="tab-dot"></span></span></div>
+      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'"><span class="tab-label">频道<span v-if="tabUnread.channel" class="tab-dot"></span></span></div>
     </div>
     <div v-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
@@ -22,7 +22,7 @@
       @touchmove="touchMove"
       @touchend="touchEnd"
       @touchcancel="cancelLongPress">
-      <span v-if="c.unread" class="conv-badge-top">{{ c.unread > 99 ? '99+' : c.unread }}</span>
+      <span v-if="c.unread" class="conv-badge-bottom">{{ c.unread > 99 ? '99+' : c.unread }}</span>
       <div class="avatar-wrap">
         <div class="avatar" :style="{ width: '52px', height: '52px', fontSize: '19px', background: avatarColor(c.type === 'private' ? String((c.other_user && c.other_user.id) || convName(c)) : convName(c)) }"><img v-if="convAvatar(c)" :src="convAvatar(c)" alt=""><template v-else>{{ convInitial(c) }}</template></div>
         <!-- 私聊在线圆点：绿=在线，灰=离线；未取到在线态时不显示 -->
@@ -75,6 +75,16 @@ export default {
     }
   },
   computed: {
+    /** 三个分类标签是否有未读（用来在标签右上角显示小红点） */
+    tabUnread() {
+      const list = Array.isArray(state.convs) ? state.convs : []
+      const has = (pred) => list.some(c => pred(c) && (c.unread || 0) > 0)
+      return {
+        private: has(c => c.type === 'private' && !c.is_channel),
+        group: has(c => c.type === 'group' && !c.is_channel),
+        channel: has(c => c.is_channel || c.type === 'channel')
+      }
+    },
     /** 当前列表里重名的私聊（同名不同人）→ 给名字加唯一后缀 */
     dupNameIds() {
       const list = Array.isArray(state.convs) ? state.convs : []
@@ -328,7 +338,11 @@ export default {
 .online-dot.on { background: #31C48D; }
   .conv-enc { font-size: 10px; color: var(--tg-blue); border: 1px solid rgba(51,144,236,.45); border-radius: 4px; padding: 0 3px; line-height: 1.5; margin-left: 4px; font-weight: 500; }
   .conv-item { position: relative; }
-.conv-badge-top { position: absolute; top: 7px; right: 12px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; background: #F04438; color: #fff; font-size: 11px; font-weight: 600; border-radius: 9px; line-height: 1; z-index: 2; }
+.conv-badge-bottom { position: absolute; bottom: 17px; right: 14px; min-width: 19px; height: 19px; padding: 0 6px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; background: #F04438; color: #fff; font-size: 11px; font-weight: 600; border-radius: 10px; line-height: 1; z-index: 2; }
+  .conv-item.has-unread .conv-right { display: none; }
 .conv-time-bottom { font-size: 11.5px; color: #9AA0A6; margin-right: 6px; flex-shrink: 0; }
 .conv-burn-badge { position: absolute; right: -7px; top: -7px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
+  /* 分类标签的未读小红点：跟着文字右上角 */
+  .chat-tab .tab-label { position: relative; display: inline-block; }
+  .tab-dot { position: absolute; top: -2px; right: -8px; width: 6px; height: 6px; border-radius: 50%; background: #F04438; box-shadow: 0 0 0 1.5px var(--tg-bg, #fff); }
 </style>
