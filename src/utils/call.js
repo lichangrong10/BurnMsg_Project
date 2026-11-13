@@ -396,3 +396,112 @@ function onPcStateChange(conn) {
     }, 5000)
   }
 }
+
+/* ══════════ 主叫：发起 ══════════ */
+
+/**
+ * 发起通话（仅私密会话：call_key 依赖对端设备级 IK 公钥）。
+ * @param {{conversationId:string, kind:'audio'|'video', peerName?:string, peerUserId?:string}} opts
+ */
+export async function startCall({ conversationId, kind = 'audio', peerName = '', peerUserId = '' }) {
+  if (callState.phase !== 'idle') { showToast('当前已有通话进行中'); return }
+  if (!callSupported()) { showToast('当前环境不支持通话（需 HTTPS 或 App 内使用）'); return }
+  resetLocal()
+  callState.phase = 'dialing'
+  callState.status = 'preparing'
+  callState.kind = kind
+  callState.conversationId = conversationId
+  callState.peer = { id: peerUserId, name: peerName || '对方' }
+  callState.duration = 0
+  callState.error = ''
+  callState.muted = false
+  callState.camOff = false
+
+  try {
+    // ① 对端设备公钥（私密会话唯一入口）——没有它算不出 call_key
+    const peer = await peerIKOf(conversationId)
+    peerIKPub = peer.pub
+    // ② TURN 凭据：未配置直接抛错（不降级 STUN）
+    const ice = await turnIceServers()
+    // ③ 临时密钥 + call_key：salt = 会话 + 主叫 eph_pub，POST 之前就能算
+    ephPair = await genKeyPair()
+    const ephPub = stripPad(b64(ephPair.pub))
+    callKey = await deriveCallKey(ephPair, peerIKPub, conversationId, ephPub)
+    // ④ 采集 → 建连 → offer
+    callState.status = 'media'
+    localStream = markRaw(await getUserMediaFor(kind))
+    callState.localStream = localStream
+    pc = createPC(ice)
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+    await pc.setLocalDescription(await pc.createOffer())
+    const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
+    const fp = dtlsFingerprintOf(sdp)
+    if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹，无法建立加密通话')
+    // ⑤ 发请求；此时 callId 未知，本地候选在队列里等，拿到后补发
+    callState.status = 'ringing'
+    const res = await api.createCall({
+      conversation_id: conversationId,
+      kind,
+      eph_pub: ephPub,
+      fp_mac: await fingerprintMac(callKey, fp),
+      payload: await seal(callKey, sdp),
+    })
+    currentCallId = res && res.call_id
+    callState.callId = currentCallId
+    if (!currentCallId) throw new Error('服务端未返回 call_id')
+    flushIce().catch(() => {})
+    startDialTimeout()
+    startDialPoll()
+    acquireWakeLock()
+  } catch (e) {
+    fail(e)
+  }
+}
+
+/* ══════════ 通话内操作 ══════════ */
+
+/** 挂断（振铃中挂断 = 取消；服务端幂等，重复调用也不会报错） */
+export async function endCall() {
+  const id = currentCallId
+  const wasDialing = callState.phase === 'dialing'
+  if (!id) { finish('ended', 'hangup', ''); return }
+  try { await api.hangupCall(id, 'hangup') } catch (e) { /* 已结束也无所谓 */ }
+  finish('ended', wasDialing ? 'cancel' : 'hangup', '')
+}
+
+/** 拒接来电（busy 用于本机已有通话时自动忙线） */
+export async function rejectCurrent(reason = 'decline') {
+  const invite = incomingInvite
+  const id = (invite && invite.call_id) || currentCallId
+  currentCallId = id
+  if (id) { try { await api.rejectCall(id, reason) } catch (e) { /* 已处理 */ } }
+  finish('ended', reason, reason === 'busy' ? '对方忙线中' : '已拒接')
+}
+
+/** 静音 / 取消静音（只切音轨 enabled，不动采集，避免反复开关设备） */
+export function toggleMute() {
+  if (!localStream) return
+  callState.muted = !callState.muted
+  localStream.getAudioTracks().forEach(t => { t.enabled = !callState.muted })
+}
+
+/** 关闭 / 打开本地摄像头（视频通话；只切 enabled 保留轨道） */
+export function toggleCamera() {
+  if (!localStream) return
+  const tracks = localStream.getVideoTracks()
+  if (!tracks.length) return
+  callState.camOff = !callState.camOff
+  tracks.forEach(t => { t.enabled = !callState.camOff })
+}
+
+/** 前后摄像头切换（失败静默：部分 WebView 不支持 applyConstraints 的 facingMode） */
+export async function switchCamera() {
+  if (!localStream) return
+  const track = localStream.getVideoTracks()[0]
+  if (!track) return
+  const cur = (track.getSettings && track.getSettings().facingMode) || 'user'
+  const next = cur === 'environment' ? 'user' : 'environment'
+  try { await track.applyConstraints({ facingMode: { exact: next } }) } catch (e) {
+    try { await track.applyConstraints({ facingMode: next }) } catch (e2) { /* 该设备不支持切换 */ }
+  }
+}
