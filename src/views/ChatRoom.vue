@@ -30,12 +30,12 @@
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
       <span class="mi-label">搜索消息</span>
     </div>
-    <!-- 通话入口：仅 1:1 私聊；私密会话（e2e_state=2）才真正可打，其余给引导文案 -->
-    <div v-if="state.chat && state.chat.type === 'private'" class="chat-menu-item" @click="onMenuCall('audio')">
+    <!-- 通话入口：仅**已建立的私密会话**显示（普通私聊没有对方设备公钥，打不了） -->
+    <div v-if="canCallHere" class="chat-menu-item" @click="onMenuCall('audio')">
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5C3 7 9 4 12 4s9 3 9 6.5c0 1.2-.6 2-1.6 2.2l-2.7.6c-.9.2-1.7-.3-2-1.2l-.4-1.2c-1.5.5-3 .5-4.6 0l-.4 1.2c-.3.9-1.1 1.4-2 1.2l-2.7-.6C3.6 12.5 3 11.7 3 10.5Z"/></svg></span>
       <span class="mi-label">语音通话</span>
     </div>
-    <div v-if="state.chat && state.chat.type === 'private'" class="chat-menu-item" @click="onMenuCall('video')">
+    <div v-if="canCallHere" class="chat-menu-item" @click="onMenuCall('video')">
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg></span>
       <span class="mi-label">视频通话</span>
     </div>
@@ -653,6 +653,15 @@ export default {
     isSecretCh() { return !!(state.chat && state.chat.e2e_mode === 1) },
     isSecretPendingCh() { return this.isSecretCh && state.chat.e2e_state === 1 },
     isSecretActiveCh() { return this.isSecretCh && state.chat.e2e_state === 2 },
+    /**
+     * 是否露出通话入口：只有**已建立的私密会话**。
+     * 普通私聊拿不到对方设备级公钥（GET /keys/device/:cid 仅对 e2e 会话开放），
+     * 后端也会以 CALL_STATE_INVALID 拒绝，所以不露出入口，避免点了才发现打不了。
+     */
+    canCallHere() {
+      const c = state.chat
+      return !!(c && c.type === 'private' && c.e2e_mode === 1 && c.e2e_state === 2)
+    },
     /** 本机是否为请求发起设备 */
     isSecretInitiatorHere() {
       if (!this.isSecretCh) return false
