@@ -505,3 +505,91 @@ export async function switchCamera() {
     try { await track.applyConstraints({ facingMode: next }) } catch (e2) { /* 该设备不支持切换 */ }
   }
 }
+
+/* ══════════ 被叫：来电与接听 ══════════ */
+
+/**
+ * 处理 call:incoming。
+ *
+ * 关键：**接听前**就派生 call_key 并校验主叫的 DTLS 指纹 MAC，校验不过直接挂断，
+ * 绝不让被中间人替换的 SDP 进到 PeerConnection。被叫侧必须用 deriveCallKeyAsCallee。
+ * 派生好的 call_key / SDP 缓存起来，接听时复用（否则要重新协商，指纹也对不上）。
+ */
+async function onIncoming(p) {
+  if (!p || !p.call_id) return
+  // 本机已有通话 → 直接回忙线（服务端也拦，但前端先拦省一次状态机冲突与提示）
+  if (callState.phase !== 'idle' || !callSupported()) {
+    api.rejectCall(p.call_id, 'busy').catch(() => {})
+    return
+  }
+  try {
+    const peer = await peerIKOf(p.conversation_id)
+    peerIKPub = peer.pub
+    ephPair = await genKeyPair()
+    incomingCallKey = await deriveCallKeyAsCallee(p.eph_pub, peerIKPub, p.conversation_id, p.eph_pub)
+    incomingSdp = await open(incomingCallKey, p.payload)
+    const fp = dtlsFingerprintOf(incomingSdp)
+    if (!fp || !(await verifyFingerprintMac(incomingCallKey, fp, p.fp_mac))) {
+      api.hangupCall(p.call_id, 'hangup').catch(() => {})
+      showToast('通话密钥校验失败，已拒绝（可能存在中间人）')
+      return
+    }
+    incomingInvite = p
+    currentCallId = p.call_id
+    callState.phase = 'incoming'
+    callState.status = ''
+    callState.kind = p.kind === 'video' ? 'video' : 'audio'
+    callState.conversationId = p.conversation_id
+    callState.callId = p.call_id
+    callState.peer = {
+      id: (p.from_user && p.from_user.id) || null,
+      name: (p.from_user && p.from_user.display_name) || '对方',
+    }
+    callState.duration = 0
+    callState.error = ''
+    startRing()
+    startRingTimeout()
+  } catch (e) {
+    // 解密失败 / 公钥缺失 / payload 损坏：直接拒绝，不留半死界面
+    api.rejectCall(p.call_id, 'decline').catch(() => {})
+    showToast('来电解析失败，已拒绝')
+  }
+}
+
+/**
+ * 接听：复用来电时已校验的 call_key 与 offer SDP，采集后回 answer。
+ * 必须在用户手势里调用（否则 getUserMedia 与音频播放都会被拦）。
+ */
+export async function acceptCall() {
+  if (callState.phase !== 'incoming' || !incomingInvite || !incomingCallKey || !incomingSdp) return
+  stopRing()
+  clearRingTimeout()
+  callState.phase = 'connecting'
+  callState.status = 'answering'
+  try {
+    const ice = await turnIceServers()
+    callKey = incomingCallKey
+    localStream = markRaw(await getUserMediaFor(callState.kind))
+    callState.localStream = localStream
+    pc = createPC(ice)
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+    await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
+    remoteDescSet = true
+    flushRemoteIce()
+    await pc.setLocalDescription(await pc.createAnswer())
+    const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
+    const fp = dtlsFingerprintOf(sdp)
+    if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹')
+    await api.acceptCall(currentCallId, {
+      eph_pub: stripPad(b64(ephPair.pub)), // 被叫临时公钥（服务端仅存，不参与 salt）
+      fp_mac: await fingerprintMac(callKey, fp),
+      payload: await seal(callKey, sdp),
+    })
+    flushIce().catch(() => {})
+    acquireWakeLock()
+  } catch (e) {
+    // 接听失败要通知对端，否则主叫一直停在「正在连接」
+    if (currentCallId) api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail(e)
+  }
+}
