@@ -1,85 +1,139 @@
 <template>
   <div>
-    <div class="profile-card">
-      <div class="avatar-editable" @click="pickAvatar" title="更换头像">
-        <div class="avatar" :style="{ width: '64px', height: '64px', fontSize: '24px', background: avatarColor(state.me.display_name) }"><img v-if="avatarSrc(state.me)" :src="avatarSrc(state.me)" alt=""><template v-else>{{ (state.me.display_name || '?')[0] }}</template></div>
-        <div class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+    <!-- ═══════════ 页：我的（头像卡 + 4 个一级入口） ═══════════ -->
+    <template v-if="!state.meSubPage">
+      <div class="profile-card">
+        <div class="avatar-editable" @click="pickAvatar" title="更换头像">
+          <el-avatar :size="82" shape="square" :src="avatarSrc(state.me) || undefined" :style="{ background: avatarColor(state.me.display_name), fontSize: '30px' }">
+            <template v-if="!avatarSrc(state.me)">{{ (state.me.display_name || '?')[0] }}</template>
+          </el-avatar>
+          <div class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+        </div>
+        <input ref="avatarFile" type="file" accept="image/*" style="display:none" @change="onAvatarPick">
+        <div style="flex:1;min-width:0">
+          <div class="profile-name">{{ state.me.display_name }}</div>
+          <div class="profile-sub">手机号：{{ state.me.phone }}<template v-if="state.me.department"> · {{ state.me.department }}</template></div>
+          <div class="profile-sub" v-if="state.me.signature">{{ state.me.signature }}</div>
+        </div>
       </div>
-      <input ref="avatarFile" type="file" accept="image/*" style="display:none" @change="onAvatarPick">
-      <div>
-        <div class="profile-name">{{ state.me.display_name }}</div>
-        <div class="profile-sub">{{ state.me.phone }}<template v-if="state.me.department"> · {{ state.me.department }}</template></div>
-        <div class="profile-sub" v-if="state.me.signature">{{ state.me.signature }}</div>
+      <div class="group-gap"></div>
+      <div class="cell-group">
+        <div class="cell" @click="state.meSubPage = 'notify'">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="cell-label">消息通知</span>
+          <span class="cell-value">
+            <el-tag v-if="!notifyGranted" type="danger" size="small" effect="light" style="margin-right:6px">未开启</el-tag>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </span>
+        </div>
+        <div class="cell" @click="state.meSubPage = 'general'">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+          <span class="cell-label">通用</span>
+          <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+        <div class="cell" @click="state.meSubPage = 'account'">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span class="cell-label">账号与安全</span>
+          <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
       </div>
-    </div>
-    <div class="group-gap"></div>
-    <div class="cell-group">
-      <div class="cell" @click="openEditProfile">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <span class="cell-label">编辑资料</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+    </template>
+
+    <!-- ═══════════ 页：账号与安全 ═══════════ -->
+    <template v-else-if="state.meSubPage === 'account'">
+      <div class="me-page-pad"></div>
+      <div class="cell-group">
+        <div class="cell" @click="openEditProfile">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span class="cell-label">编辑资料</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+        <div class="cell" @click="openDevices">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+          <span class="cell-label">已登录设备</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+        <div class="cell" @click="showPwd = true">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span class="cell-label">修改密码</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+        <div class="cell" v-if="state.me.role === 'admin'" @click="state.showAdmin = true">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 8 2 2 4-4"/></svg>
+          <span class="cell-label">账号管理</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
       </div>
-      <div class="cell" @click="openDevices">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
-        <span class="cell-label">已登录设备</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+      <div class="group-gap"></div>
+      <div class="cell-group">
+        <div class="cell danger" @click="showLogout = true">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#E53935" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+          <span class="cell-label">退出登录</span>
+        </div>
       </div>
-      <div class="cell" @click="openPermissionSetting">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        <span class="cell-label">通知权限</span>
-        <span class="cell-value" :style="{ color: notifyGranted ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ notifyGranted ? '已开启' : '未开启 · 点击开启' }}</span>
+      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+    </template>
+
+    <!-- ═══════════ 页：消息通知 ═══════════ -->
+    <template v-else-if="state.meSubPage === 'notify'">
+      <div class="me-page-pad"></div>
+      <div class="cell-group">
+        <div class="cell" @click="openPermissionSetting">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="cell-label">通知权限</span>
+          <span class="cell-value" :style="{ color: notifyGranted ? 'var(--tg-text-secondary)' : 'var(--tg-danger)' }">{{ notifyGranted ? '已开启' : '未开启 · 点击开启' }}</span>
+        </div>
+        <div class="cell" v-if="sysNotifyAvailable" @click="toggleSysNotify">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="cell-label">桌面消息通知</span>
+          <span class="cell-value"><el-switch :model-value="sysNotifyEnabled" @click.stop @change="toggleSysNotify" /></span>
+        </div>
+        <div class="cell" :class="{ 'cell-self': !isNativeApp }" @click="toggleKeepAlive">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="isNativeApp ? 'var(--tg-blue)' : '#A8AFB6'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><circle cx="12" cy="12" r="4"/></svg>
+          <span class="cell-label" :style="{ color: isNativeApp ? '' : '#A8AFB6' }">后台保活
+            <br><small style="color:#707579">{{ isNativeApp ? '关闭后 App 在后台容易被系统冻结，收不到提醒' : '仅手机 App 有效，网页端无需开启' }}</small>
+          </span>
+          <span class="cell-value">
+            <el-switch v-if="isNativeApp" :model-value="keepAliveOn" @click.stop @change="toggleKeepAlive" />
+            <span v-else style="color:#A8AFB6">不可用</span>
+          </span>
+        </div>
+        <div class="cell" @click="openNotifyGuide">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v.01M12 8a2.5 2.5 0 0 1 0 5"/></svg>
+          <span class="cell-label">通知设置指引</span>
+          <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
       </div>
-      <!-- 后台保活：仅 Android App 有效。PC/网页端直接置灰不可点（保活是原生前台服务，网页没有这东西） -->
-      <div class="cell" :class="{ 'cell-self': !isNativeApp }" @click="toggleKeepAlive">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" :stroke="isNativeApp ? 'var(--tg-blue)' : '#A8AFB6'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><circle cx="12" cy="12" r="4"/></svg>
-        <span class="cell-label" :style="{ color: isNativeApp ? '' : '#A8AFB6' }">后台保活
-          <br><small style="color:#707579">{{ isNativeApp ? '关闭后 App 在后台容易被系统冻结，收不到提醒' : '仅手机 App 有效，网页端无需开启' }}</small>
-        </span>
-        <span class="cell-value" :style="{ color: !isNativeApp ? '#A8AFB6' : (keepAliveOn ? 'var(--tg-text-secondary)' : 'var(--tg-danger)') }">{{ isNativeApp ? (keepAliveOn ? '已开启' : '已关闭') : '不可用' }}</span>
+      <div class="me-tip">未开启系统通知时，新消息只在应用内提示；手机端还需在系统设置里允许「焚信」发送通知。</div>
+    </template>
+
+    <!-- ═══════════ 页：通用 ═══════════ -->
+    <template v-else>
+      <div class="me-page-pad"></div>
+      <div class="cell-group">
+        <div class="cell" @click="showTheme = true">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+          <span class="cell-label">主题颜色</span>
+          <span class="cell-value"><span class="theme-dot" :style="{ background: themeColor }"></span>{{ themeColor }}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+        <div class="cell" @click="manualCheckUpdate">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="cell-label">检查更新</span>
+          <span class="cell-value">
+            <span v-if="updateStatus === 'checking'" style="color:var(--tg-text-secondary)">检查中…</span>
+            <span v-else-if="updateStatus === 'latest'" style="color:var(--tg-green-check)">已是最新 v{{ appVersionName }}</span>
+            <span v-else-if="updateStatus === 'available'" style="color:var(--tg-blue);font-weight:600" @click.stop="showUpdateDialog = true">v{{ updateInfo.version_name }} 可更新</span>
+            <span v-else>v{{ appVersionName }}</span>
+          </span>
+        </div>
       </div>
-      <div class="cell" @click="openNotifyGuide">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        <span class="cell-label">通知设置指引</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+      <div class="group-gap"></div>
+      <div class="cell-group">
+        <div class="cell" @click="openFeedback">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          <span class="cell-label">意见反馈</span>
+          <span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
       </div>
-      <div class="cell" @click="showPwd = true">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <span class="cell-label">修改密码</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
-      </div>
-      <div class="cell" @click="openFeedback">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-        <span class="cell-label">意见反馈</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
-      </div>
-      <div class="cell" @click="manualCheckUpdate">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span class="cell-label">检查更新</span>
-        <span class="cell-value">
-          <span v-if="updateStatus === 'checking'" style="color:var(--tg-text-secondary)">检查中…</span>
-          <span v-else-if="updateStatus === 'latest'" style="color:var(--tg-green-check)">已是最新 v{{ appVersionName }}</span>
-          <span v-else-if="updateStatus === 'available'" style="color:var(--tg-blue);font-weight:600" @click.stop="showUpdateDialog = true">v{{ updateInfo.version_name }} 可更新</span>
-          <span v-else>v{{ appVersionName }}</span>
-        </span>
-      </div>
-      <div class="cell" @click="showTheme = true">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
-        <span class="cell-label">主题颜色</span>
-        <span class="cell-value"><span class="theme-dot" :style="{ background: themeColor }"></span>{{ themeColor }}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px"><path d="m9 18 6-6-6-6"/></svg></span>
-      </div>
-      <div class="cell" v-if="sysNotifyAvailable" @click="toggleSysNotify">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        <span class="cell-label">桌面消息通知</span>
-        <span class="cell-value"><span class="notify-switch" :class="{ on: sysNotifyEnabled }"><i></i></span></span>
-      </div>
-      <div class="cell" v-if="state.me.role === 'admin'" @click="state.showAdmin = true">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 8 2 2 4-4"/></svg>
-        <span class="cell-label">账号管理</span><span class="cell-value"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
-      </div>
-    </div>
-    <div class="group-gap"></div>
-    <div class="cell-group">
-      <div class="cell danger" @click="showLogout = true">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#E53935" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
-        <span class="cell-label">退出登录</span>
-      </div>
-    </div>
-    <div style="text-align:center;color:#707579;font-size:12px;padding:18px 0">焚信 BurnMsg · v{{ appVersionName }}</div>
+      <div class="me-version">焚信 BurnMsg · v{{ appVersionName }}</div>
+    </template>
 
     <!-- ═══════ 设备管理 ═══════ -->
     <div v-if="showDevices" class="overlay" @click.self="showDevices = false">
@@ -218,12 +272,18 @@ import { sysNotifySupported, sysNotifyOn, setSysNotifyOn, requestSysNotifyPermis
 import { getCurrentVersionCode, checkAppUpdate, downloadAndInstallApk } from '../utils/update'
 import { initPush, getPushRegistrationId, getPushAlias, pushDiag, isPushActive, ensureNotificationPermission, checkNotificationPermission, openNotificationSettings } from '../utils/push'
 import { enableKeepAlive, setKeepAlive, isKeepAliveOn } from '../utils/keepalive'
+/* 菜单/设置页用到的 Element Plus 组件（按需引入，避免整包） */
+import { ElAvatar, ElSwitch, ElTag } from 'element-plus'
+import 'element-plus/theme-chalk/el-avatar.css'
+import 'element-plus/theme-chalk/el-switch.css'
+import 'element-plus/theme-chalk/el-tag.css'
 
 /** 在线判定窗口：心跳间隔 60s，容忍丢一拍 → 90 秒内有活跃才算在线 */
 const ONLINE_WINDOW_MS = 90 * 1000
 
 export default {
   name: 'MeView',
+  components: { ElAvatar, ElSwitch, ElTag },
   data() {
     return {
       state,
@@ -588,6 +648,10 @@ export default {
 }
 </script>
 <style scoped>
+/* 「我的」二级页：顶部留白 + 版本号 + 说明文字 */
+.me-page-pad { height: 10px; background: transparent; }
+.me-version { text-align: center; color: #707579; font-size: 12px; padding: 18px 0 6px; }
+.me-tip { margin: 12px 14px 0; padding: 10px 12px; border-radius: 10px; background: #FFF8E6; border: 1px solid #F5E3B3; color: #7A5C13; font-size: 12px; line-height: 1.55; }
 .avatar-editable { position: relative; cursor: pointer; display: inline-block; }
 /* ── 设备在线状态 ── */
 .dev-dot { width: 9px; height: 9px; border-radius: 50%; background: #C4C9CE; margin-right: 9px; flex-shrink: 0; }

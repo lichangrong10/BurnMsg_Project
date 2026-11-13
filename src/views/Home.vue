@@ -1,7 +1,11 @@
 <template>
   <div class="main-page">
     <div class="topbar">
-      <div class="topbar-title">{{ state.tab === 'chats' ? '焚信' : state.tab === 'channels' ? '频道' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
+      <!-- 「我的」二级页：顶栏变返回箭头 + 页面标题 -->
+      <div class="topbar-title" :class="{ 'with-back': state.tab === 'me' && state.meSubPage }" @click="state.tab === 'me' && state.meSubPage && (state.meSubPage = '')">
+        <svg v-if="state.tab === 'me' && state.meSubPage" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px"><path d="m15 18-6-6 6-6"/></svg>
+        {{ meTitle }}
+      </div>
       <div style="display:flex;align-items:center;gap:2px" v-if="state.tab === 'chats'">
         <div class="topbar-icon" @click="state.showGlobalSearch = true" title="搜索消息">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -35,8 +39,8 @@
     <!-- <div style="height: 10%;background: #E8EBEE;">
 
     </div> -->
-    <!-- 底部 Tab -->
-    <div class="tabbar">
+    <!-- 底部 Tab（移动端的「我的」二级页里隐藏，整页呈现；桌面端是左侧导航栏，必须保留） -->
+    <div class="tabbar" v-if="!(state.tab === 'me' && state.meSubPage && state.layout === 'mobile')">
       <div class="nav-avatar" :style="{ background: avatarColor(state.me.display_name) }">
         <img v-if="avatarSrc(state.me)" :src="avatarSrc(state.me)" alt="">
         <template v-else>{{ (state.me.display_name || '?')[0] }}</template>
@@ -93,6 +97,13 @@ export default {
   computed: {
     totalUnread() {
       return state.convs.reduce((s, c) => s + (c.unread || 0), 0)
+    },
+    /** 顶栏标题：普通 Tab 用固定文案；「我的」二级页显示对应页面名 */
+    meTitle() {
+      if (state.tab === 'me' && state.meSubPage) {
+        return { account: '账号与安全', notify: '消息通知', general: '通用' }[state.meSubPage] || '我的'
+      }
+      return state.tab === 'chats' ? '焚信' : state.tab === 'channels' ? '频道' : state.tab === 'contacts' ? '通讯录' : '我的'
     }
   },
   watch: {
@@ -100,6 +111,8 @@ export default {
     'state.tab'(to, from) {
       const order = ['chats', 'channels', 'contacts', 'me']
       this.tabTransition = order.indexOf(to) >= order.indexOf(from) ? 'tab-slide-left' : 'tab-slide-right'
+      // 切走「我的」时收起二级页，避免下次回来还停在上次那一页
+      if (to !== 'me') state.meSubPage = ''
     }
   },
   methods: {
@@ -113,6 +126,8 @@ export default {
 }
 </script>
 <style scoped>
+/* 「我的」二级页顶栏：标题左侧带返回箭头，整块可点返回 */
+.topbar-title.with-back { display: flex; align-items: center; cursor: pointer; }
 /* ── 公告弹窗：最新未读公告自动弹出 ── */
 .ann-popup-mask {
   position: fixed; inset: 0; z-index: 999;

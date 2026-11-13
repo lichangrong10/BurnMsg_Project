@@ -37,6 +37,7 @@ import { Capacitor } from '@capacitor/core'
 export const state = reactive({
   view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
   tab: 'chats',                           // chats | channels | contacts | me
+  meSubPage: '',                          // 「我的」二级页：'' | account | notify | general
   keyword: '',
   me: storage.user || {},
   baseURL: storage.baseURL,
