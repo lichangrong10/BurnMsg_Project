@@ -14,7 +14,16 @@
     </div>
     <transition :name="slideName" mode="out-in">
       <div :key="chatTab" class="conv-list-wrap">
-        <div v-if="!filteredConvs.length" class="empty-state">
+        <div v-if="!state.convsLoaded && !filteredConvs.length" class="conv-skeleton">
+        <div v-for="n in 6" :key="n" class="skel-row">
+          <div class="skel-avatar"></div>
+          <div class="skel-main">
+            <div class="skel-line skel-line-1"></div>
+            <div class="skel-line skel-line-2"></div>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="!filteredConvs.length" class="empty-state">
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
     </div>
@@ -411,4 +420,15 @@ export default {
     border-radius: 2px; overflow: hidden; }
   .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
   .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
+
+  /* 首载骨架屏 */
+  .conv-skeleton { padding: 6px 0; }
+  .skel-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+  .skel-avatar { width: 52px; height: 52px; border-radius: 50%; background: #E7EAEE; flex-shrink: 0; }
+  .skel-main { flex: 1; min-width: 0; }
+  .skel-line { height: 12px; border-radius: 6px; background: #E7EAEE; }
+  .skel-line-1 { width: 38%; }
+  .skel-line-2 { width: 66%; margin-top: 9px; }
+  .skel-avatar, .skel-line { animation: skelPulse 1.1s ease-in-out infinite; }
+  @keyframes skelPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 </style>

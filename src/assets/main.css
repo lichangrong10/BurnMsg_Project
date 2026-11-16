@@ -606,3 +606,43 @@ html.bm-desktop .dialog { max-width: 440px; }
   position: relative; z-index: 6; flex-shrink: 0; margin-left: 0 !important;
 }
 .chat-topbar .chat-title-wrap { position: relative; z-index: 1; }
+
+/* ═══════════ 第三批：交互微反馈（按压/悬停） ═══════════ */
+
+/* 统一过渡：只动 transform 与背景色，避免布局抖动 */
+button, .btn, .cell, .conv-item, .topbar-icon, .tab-item, .sheet-item,
+.chat-menu-item, .chat-tab, .gs-result-item {
+  transition: transform var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) ease,
+              color var(--dur-fast) ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 按压反馈：轻微缩小（输入框、文本域不参与） */
+button:active,
+.btn:active,
+.cell:active,
+.conv-item:active,
+.sheet-item:active,
+.chat-menu-item:active,
+.chat-tab:active,
+.gs-result-item:active {
+  transform: scale(.98);
+}
+
+/* 顶栏图标按压缩得更明显一点 */
+.topbar-icon:active { transform: scale(.9); }
+
+/* 底部 Tab 按压缩放（图标本身不位移） */
+.tab-item:active { transform: scale(.96); }
+
+/* 消息气泡入场（新消息才有，历史消息不播） */
+@keyframes bmBubbleIn {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+.bubble { animation: bmBubbleIn 160ms var(--ease-out); }
+
+/* ═══════════ 第 4 批：图片淡入 ═══════════ */
+@keyframes bmImgIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
+.bubble img, .avatar img, .msg-img, .gs-result-avatar img { animation: bmImgIn 180ms var(--ease-out); }

@@ -71,6 +71,7 @@ export const state = reactive({
   e2eReady: false,       // 本机 E2E 密钥已就绪（旧用户级，兼容保留）
   e2eSecretReady: false, // 本机「设备级」公钥已上传，可发起/接受加密聊天
   e2eSecretBusy: false,  // 加密聊天请求进行中（防重复点击）
+  convsLoaded: false,     // 会话列表是否已完成首次加载（骨架屏用）
   devices: [],           // 已登录设备（/auth/devices：含 browser / os / 在线态）
   secretPlain: {},       // 加密聊天本机发送的明文兜底（msgId -> text）
   pwdForm: { old: '', n1: '', n2: '' },
@@ -911,6 +912,7 @@ export async function loadConvs(quiet) {
     const hidden = hiddenConvIds().map(String)
     DEMO.convs.forEach(c => { c.pinned = ids.includes(c.id) })
     state.convs = DEMO.convs.filter(c => !hidden.includes(String(c.id)))
+    state.convsLoaded = true
     return
   }
   try {
@@ -960,6 +962,7 @@ export async function loadConvs(quiet) {
       const bp = (b.e2e_mode === 1 && (b.e2e_state === 1 || b.e2e_state === 2)) ? 1 : 0
       return bp - ap
     })
+    state.convsLoaded = true
     // 缺本地未读记录的会话（清缓存/新登录）：按服务端「我读到哪条」重算，不把历史消息算成未读
     fillLocalUnread(state.convs)
     if (!quiet) await fillMissingPreviews()
