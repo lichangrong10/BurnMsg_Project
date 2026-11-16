@@ -53,6 +53,11 @@ function logCall(tag, extra) {
   const item = Object.assign({ t: new Date().toISOString().slice(11, 23), tag }, extra || {})
   callLogBuf.push(item)
   if (callLogBuf.length > 200) callLogBuf.shift()
+  // 同时打到 console：Capacitor 会把 WebView 的 console 转进 Logcat，
+  // 这样即使页面假死、DevTools 用不了，也能从 `adb logcat` 看到卡住前的最后一步。
+  try {
+    console.log('[call] ' + tag + ' ' + JSON.stringify(extra || {}))
+  } catch (e) { /* 忽略 */ }
   return item
 }
 export function callLog() { return callLogBuf.slice() }
@@ -622,6 +627,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     localStream = markRaw(await acquireMedia(kind))
     logCall('start:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
     callState.localStream = localStream
+    logCall('start:local-stream-published', {})   // 本地预览从这一刻开始渲染
     pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
     logCall('start:pc-ready', { senders: pc.getSenders().length })
