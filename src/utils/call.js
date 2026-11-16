@@ -133,7 +133,7 @@ export function callSupported() {
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
 }
 
-/** 是否跑在 Capacitor 原生壳的 WebView 里（该环境对带视频 m-line 的 SDP 有兼容问题） */
+/** 是否跑在 Capacitor 原生壳的 WebView 里（仅用于调试/统计，不再用于关视频） */
 export function isNativeShell() {
   try {
     if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
@@ -146,20 +146,16 @@ export function isNativeShell() {
 /**
  * 本地预览是否开启。
  *
- * 背景（回归根因）：原生壳里把相机帧渲染进可见的 <video> 会让这台机器的合成器挂死；
- * 之前之所以“视频能通但看不到自己”，恰恰是因为预览元素被 CSS 整块透明（opacity:0），
- * 帧根本没进合成器。所以原生壳默认**不渲染**本地预览：视频照常发给对方，只是自己看不到自己。
+ * 结论（2026-11-16 实测）：原生壳**也可以**正常渲染相机预览，双方都能看到自己。
+ * 早前那个「相机帧上屏让 WebView 合成器挂死」的判断是误诊——真正的元凶是两个 bug：
+ *   1) CallView 里函数式 ref 改响应式数据 → Vue 渲染死循环（报 Maximum recursive updates）；
+ *   2) 采集拆成「先音频再视频再拼流」→ 视频轨不发帧。
+ * 两者修掉之后，本地预览在 App 里工作正常。
  *
- * 调试开关：
- *   localStorage.setItem('bm_call_preview','1')  → 原生壳也渲染本地预览（可能挂死）
- *   localStorage.setItem('bm_call_nopreview','1') → 所有环境都不渲染
+ * 保留开关：`localStorage.setItem('bm_call_nopreview','1')` 可临时关闭（低端机排障用）。
  */
 export function localPreviewEnabled() {
-  try {
-    if (localStorage.getItem('bm_call_nopreview') === '1') return false
-    if (localStorage.getItem('bm_call_preview') === '1') return true
-    return !isNativeShell()
-  } catch (e) { return true }
+  try { return localStorage.getItem('bm_call_nopreview') !== '1' } catch (e) { return true }
 }
 
 /** 是否强制只打语音（调试用：localStorage bm_call_forceaudio=1） */

@@ -138,7 +138,7 @@ export default {
       zoom: 1,
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
       logOpen: false,       // 日志面板
-      /** 本地预览开关：某些机型把相机帧渲染进 <video> 会卡死渲染进程，可用它做 A/B 验证 */
+      /** 本地预览开关：默认开启；`bm_call_nopreview=1` 可临时关闭（低端机排障） */
       previewEnabled: true,
       logText: ''
     }
