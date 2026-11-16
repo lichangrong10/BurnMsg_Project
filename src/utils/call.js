@@ -108,7 +108,7 @@ export function errText(e) {
   if (name === 'NotReadableError') return '麦克风 / 摄像头被其他应用占用'
   if (name === 'SecurityError') return '当前页面不是安全上下文，请在 HTTPS 或 App 内通话'
   if (/TURN_NOT_CONFIGURED|中继未配置/.test(raw)) return '通话中继（TURN）未配置，暂时无法通话'
-  if (/CALL_NOT_BOUND_DEVICE|绑定设备/.test(raw)) return '当前设备不是该私密会话的绑定设备，请在当初接受请求的那台设备上拨打，或结束加密聊天后重新建立'
+  if (/CALL_NOT_BOUND_DEVICE|绑定设备/.test(raw)) return '本设备不是该私密会话的绑定设备，无法通话'
   if (/CALL_PEER_OFFLINE|不在线/.test(raw)) return '对方当前不在线'
   if (/CALL_STATE_INVALID|已结束|已被处理/.test(raw)) return '该通话已结束或被处理'
   if (/CALL_NOT_FOUND/.test(raw)) return '通话不存在'
