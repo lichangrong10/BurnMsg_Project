@@ -132,6 +132,16 @@ export function callSupported() {
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
 }
 
+/** 是否跑在 Capacitor 原生壳的 WebView 里（该环境对带视频 m-line 的 SDP 有兼容问题） */
+export function isNativeShell() {
+  try {
+    if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
+      return window.Capacitor.isNativePlatform()
+    }
+    return /; wv\)/.test(navigator.userAgent || '')
+  } catch (e) { return false }
+}
+
 /** 本地预览是否开启（控制台 `localStorage.setItem('bm_call_nopreview','1')` 后重载即可关闭）。
  *  用来在部分机型上验证「把相机帧渲染进 <video>」是否会把 WebView 渲染进程卡死。 */
 export function localPreviewEnabled() {
@@ -604,6 +614,13 @@ function onPcStateChange(conn) {
 export async function startCall({ conversationId, kind = 'audio', peerName = '', peerUserId = '' }) {
   if (callState.phase !== 'idle') { showToast('当前已有通话进行中'); return }
   if (!callSupported()) { showToast('当前环境不支持通话（需 HTTPS 或 App 内使用）'); return }
+  // 原生壳（Capacitor WebView）对带视频 m-line 的 SDP 有兼容问题，会挂死渲染进程，
+  // 这里先降级成语音，保证能打通；真正的视频通话需走原生 WebRTC（见文档）。
+  if (kind === 'video' && isNativeShell()) {
+    kind = 'audio'
+    showToast('当前 App 版本暂不支持视频通话，已改用语音')
+    logCall('start:video-downgraded', { reason: 'native-webview' })
+  }
   resetLocal()
   callState.phase = 'dialing'
   callState.status = 'preparing'
@@ -817,6 +834,18 @@ async function onIncoming(p) {
     }
     incomingInvite = p
     currentCallId = p.call_id
+    // 原生壳收到含视频轨的 offer 会自动拒接：setRemoteDescription 解析视频 m-line 会挂死 WebView，
+    // 与其假死不如明确告诉主叫改用语音。
+    if (p.kind === 'video' && isNativeShell() && /m=video/.test(incomingSdp)) {
+      logCall('incoming:video-unsupported', { call_id: p.call_id })
+      await api.rejectCall(p.call_id, 'decline').catch(() => {})
+      currentCallId = null
+      incomingCallKey = null
+      incomingSdp = null
+      ephPair = null
+      showToast('当前 App 版本暂不支持视频通话，已自动拒接；请对方改用语音')
+      return
+    }
     callState.phase = 'incoming'
     logCall('incoming:verified', { call_id: p.call_id })
     callState.status = ''

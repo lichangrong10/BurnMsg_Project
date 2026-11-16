@@ -531,7 +531,7 @@
 <script>
 import { nextTick, markRaw } from 'vue'
 import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
-import { startCall } from '../utils/call'
+import { startCall, isNativeShell } from '../utils/call'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -955,6 +955,11 @@ export default {
       if (!(c.e2e_mode === 1 && c.e2e_state === 2)) {
         showToast(c.e2e_mode === 1 ? '加密聊天尚未建立，暂时不能通话' : '需先开启加密聊天才能安全通话')
         return
+      }
+      // 原生壳（App）目前只支持语音：视频 m-line 会让 WebView 卡死（见 utils/call.js 说明）
+      if (kind === 'video' && isNativeShell()) {
+        showToast('当前 App 版本暂不支持视频通话，已改用语音')
+        kind = 'audio'
       }
       const other = c.other_user || {}
       startCall({ conversationId: c.id, kind, peerName: convName(c), peerUserId: other.id })
