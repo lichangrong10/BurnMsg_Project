@@ -108,18 +108,21 @@ export function errText(e) {
   if (name === 'NotReadableError') return '麦克风 / 摄像头被其他应用占用'
   if (name === 'SecurityError') return '当前页面不是安全上下文，请在 HTTPS 或 App 内通话'
   if (/TURN_NOT_CONFIGURED|中继未配置/.test(raw)) return '通话中继（TURN）未配置，暂时无法通话'
-  if (/CALL_NOT_BOUND_DEVICE|绑定设备/.test(raw)) return '本设备不是该私密会话的绑定设备，无法通话'
-  if (/CALL_PEER_OFFLINE|不在线/.test(raw)) return '对方当前不在线'
+  // 顺序很重要：CALL_PEER_OFFLINE 的原文里有「绑定设备已下线」，不能先被上面的模糊匹配吃掉
+  if (/CALL_PEER_OFFLINE|不在线|绑定设备已下线/.test(raw)) return '对方当前不在线'
+  if (/CALL_NOT_BOUND_DEVICE/.test(raw)) return '本设备不是该私密会话的绑定设备，无法通话'
   if (/CALL_STATE_INVALID|已结束|已被处理/.test(raw)) return '该通话已结束或被处理'
   if (/CALL_NOT_FOUND/.test(raw)) return '通话不存在'
   return raw || '通话失败'
 }
 
-/** 取对端设备级 identity 公钥（私密会话里唯一入口，服务端反查对方绑定设备） */
+/** 取对端设备级 identity 公钥（私密会话唯一入口，服务端反查对方绑定设备）。
+ *  同时带出对端 device_id，作为 to_device_id 显式指定被叫设备：
+ *  私密会话只有两台绑定设备，显式指定可避免任何一侧的被叫推断出错。 */
 async function peerIKOf(conversationId) {
   const r = await api.getPeerDeviceKey(conversationId)
   if (!r || !r.identity_pubkey) throw new Error('对方尚未上传设备公钥，无法加密通话')
-  return { userId: r.user_id, pub: r.identity_pubkey }
+  return { userId: r.user_id, pub: r.identity_pubkey, deviceId: r.device_id || '' }
 }
 
 /**
@@ -596,6 +599,9 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
       eph_pub: ephPub,
       fp_mac: await fingerprintMac(callKey, fp),
       payload: await seal(callKey, sdp),
+      // 显式指定被叫设备（私密会话只有两台绑定设备），与后端 pickCalleeDevice 的
+      // 「排除主叫反推另一台」互为兜底，任一版本客户端都不会选错设备。
+      ...(peer.deviceId ? { to_device_id: peer.deviceId } : {}),
     })
     currentCallId = res && res.call_id
     callState.callId = currentCallId
