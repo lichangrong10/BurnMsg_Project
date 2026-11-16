@@ -21,7 +21,7 @@
       </div>
       <div v-if="isVideoCall && hasLocalVideo" class="call-hint">点小窗可互换画面 · 双击放大</div>
       <div v-if="callState.mediaWarning && callState.phase !== 'incoming'" class="call-hint warn">{{ callState.mediaWarning }}</div>
-      <div v-if="localDead" class="call-hint warn">本地预览未出画（画面仍会发给对方）</div>
+      <div v-if="debugUi && localDead" class="call-hint warn">本地预览未出画（画面仍会发给对方）</div>
     </div>
 
     <div v-if="callState.kind !== 'video' || (!hasRemote && focus === 'remote')" class="call-avatar" :style="{ background: avatarBg }">
@@ -97,8 +97,9 @@
 
     <!-- 排查用：页面内日志面板（**不用 window.alert**，alert 会阻塞 WebView 主线程，
          一旦弹窗不可见整页就会像死掉一样：点挂断、点日志都没反应） -->
-    <div class="call-log-btn" @click="showLog">日志</div>
-    <div v-if="logOpen" class="call-log-panel">
+    <!-- 排查入口：只在调试开关打开时出现（localStorage bm_call_debug=1） -->
+    <div v-if="debugUi" class="call-log-btn" @click="showLog">日志</div>
+    <div v-if="debugUi && logOpen" class="call-log-panel">
       <div class="clp-head">
         <span>通话日志 · {{ buildTag }}</span>
         <button class="clp-close" @click="logOpen = false">关闭</button>
@@ -137,6 +138,8 @@ export default {
       /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
       zoom: 1,
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
+      /** 调试 UI（日志按钮/面板/未出画提示）开关：localStorage bm_call_debug=1 */
+      debugUi: false,
       logOpen: false,       // 日志面板
       /** 本地预览开关：默认开启；`bm_call_nopreview=1` 可临时关闭（低端机排障） */
       previewEnabled: true,
@@ -198,7 +201,7 @@ export default {
     'callState.localStream'(v) { this.$nextTick(() => this.attachLocal(v)) },
     // 出错时自动把日志摊开，省得用户还要去点（也避免现场抓不到现场）
     'callState.phase'(v) {
-      if (v === 'failed') this.$nextTick(() => this.showLog())
+      if (v === 'failed' && this.debugUi) this.$nextTick(() => this.showLog())
     },
     'callState.kind'() {
       this.$nextTick(() => {
@@ -209,6 +212,7 @@ export default {
   },
   mounted() {
     try { this.previewEnabled = localPreviewEnabled() } catch (e) { /* 忽略 */ }
+    try { this.debugUi = localStorage.getItem('bm_call_debug') === '1' } catch (e) { /* 忽略 */ }
     this.$nextTick(() => {
       this.attachRemote(this.callState.remoteStream)
       this.attachLocal(this.callState.localStream)

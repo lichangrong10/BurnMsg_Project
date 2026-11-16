@@ -30,9 +30,11 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
-        // 内部排查用：让 release 包也能被 edge://inspect / chrome://inspect 调试。
-        // 必须在 WebView 创建（super.onCreate）之前调用。上线对外发版时可改成只在 BuildConfig.DEBUG 下开启。
-        WebView.setWebContentsDebuggingEnabled(true);
+        // 只对 debug 构建开启 WebView 远程调试；release 包不开（否则任何拿到 adb 的人都能看页面内容）。
+        // 需要调试 release 行为时，请改用 debug 包验证。
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         // super.onCreate(savedInstanceState);
         // registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(DownloadApkPlugin.class);

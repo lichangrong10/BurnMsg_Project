@@ -45,30 +45,35 @@ const DIAL_POLL_MS = 5000
 const ICE_BATCH_MS = 120
 const ICE_BATCH_MAX = 8
 
-/* ══════════ 排查日志（环形，最多 200 条，不落盘） ══════════
- * 目的是把「事件有没有到、状态机怎么决策的」变成可回放的证据。
- * 控制台调用 __callLog() 即可拿到最近记录。
+/* ══════════ 通话日志（排查用，默认静默） ══════════
+ * 环形缓冲最多 200 条、不落盘；**默认不往控制台/Logcat 打印**，避免日常使用刷屏。
+ * 需要排查时执行：localStorage.setItem('bm_call_debug','1') 后重载，
+ * 之后每次通话的分段日志会写进控制台（Capacitor 会转进 Logcat），
+ * 也可以直接调 __callLog() 取全文。关掉：localStorage.removeItem('bm_call_debug')。
  */
+function debugEnabled() {
+  try { return localStorage.getItem('bm_call_debug') === '1' } catch (e) { return false }
+}
+
 const callLogBuf = []
 function logCall(tag, extra) {
   const item = Object.assign({ t: new Date().toISOString().slice(11, 23), tag }, extra || {})
   callLogBuf.push(item)
   if (callLogBuf.length > 200) callLogBuf.shift()
-  // 同时打到 console：Capacitor 会把 WebView 的 console 转进 Logcat，
-  // 这样即使页面假死、DevTools 用不了，也能从 `adb logcat` 看到卡住前的最后一步。
-  try {
-    console.log('[call] ' + tag + ' ' + JSON.stringify(extra || {}))
-  } catch (e) { /* 忽略 */ }
+  if (debugEnabled()) {
+    try { console.log('[call] ' + tag + ' ' + JSON.stringify(extra || {})) } catch (e) { /* 忽略 */ }
+  }
   return item
 }
 export function callLog() { return callLogBuf.slice() }
 if (typeof window !== 'undefined') window.__callLog = callLog
 
 /**
- * 把环形日志整体打到控制台。Capacitor 会把 WebView 的 console.* 转进 Logcat，
- * 所以 release 包没有 DevTools 时也能用 `adb logcat -s Capacitor` 拿到这份证据。
+ * 把环形日志整体打到控制台（仅调试开关打开时）。
+ * 页面假死时 DevTools 用不了，但已经打印的行会留在 Logcat 里。
  */
 function dumpCallLog(reason) {
+  if (!debugEnabled()) return
   try {
     const body = callLogBuf.map(x => `${x.t} ${x.tag} ${JSON.stringify(x)}`).join('\n')
     console.warn('[call-log] ' + (reason || '') + '\n' + body)
@@ -242,8 +247,8 @@ function createPC(iceServerList) {
     if (remoteStream) callState.remoteStream = markRaw(remoteStream)
   }
   conn.onconnectionstatechange = () => onPcStateChange(conn)
-  // 调试出口：控制台可用 __pc.getStats() 看收发帧数（排查「对方看不到我/我看不到对方」）
-  try { if (typeof window !== 'undefined') window.__pc = conn } catch (e) { /* 忽略 */ }
+  // 调试出口：开启 bm_call_debug 后可在控制台用 __pc.getStats() 看收发帧数
+  try { if (typeof window !== 'undefined' && debugEnabled()) window.__pc = conn } catch (e) { /* 忽略 */ }
   // 部分 WebView 上 connectionState 会滞后，ICE 已 connected 就说明媒体通道打通了
   conn.oniceconnectionstatechange = () => {
     const st = conn.iceConnectionState
