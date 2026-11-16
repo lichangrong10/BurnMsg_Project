@@ -890,6 +890,9 @@ export function refreshTitle() {
 // 未读数变化即刷新：新消息 +1、打开会话清零、会话列表从服务端重拉
 watch(convUnreadTotal, refreshTitle)
 
+// 切 Tab 时收起所有页面级覆盖层（否则桌面端右侧仍是上一个覆盖层，看起来"点了没反应"）
+watch(() => state.tab, () => { closePageOverlays() })
+
 /** 加载已登录设备列表（含浏览器/系统识别信息，用于加密聊天"绑定设备"展示） */
 export async function loadDevices(force) {
   if (state.demoMode) return state.devices
@@ -1142,7 +1145,34 @@ export async function openChatById(cid) {
   return true
 }
 
+/* 页面级覆盖层统一关闭（搜索 / 公告 / 反馈 / 账号管理 / 建群 / 会话详情 / 通知指引）。
+   它们和聊天页同为 .chat-page（桌面端都占右栏、层级相同），不关掉的话
+   「在搜索页点会话」或「覆盖层开着时切 Tab」都会看到旧页面压在上面，右侧像没反应。 */
+/* 页面级覆盖层的 key（搜索 / 公告 / 反馈 / 账号管理 / 建群 / 会话详情 / 通知指引）。
+   它们同级、都占桌面端右栏，同时打开必然互相遮挡，所以做成「互斥」：任一打开就关掉其它的。 */
+const PAGE_OVERLAY_KEYS = ['showGlobalSearch', 'showAnnouncements', 'showFeedback', 'showAdmin', 'showNotifyGuide', 'showCreateGroup', 'showChatInfo']
+
+export function closePageOverlays() {
+  for (const k of PAGE_OVERLAY_KEYS) state[k] = false
+}
+
+/** 打开某个页面级覆盖层（自动关掉其它覆盖层，避免"点了搜索再点公告右侧没变化"这类叠加问题） */
+export function openPageOverlay(key) {
+  if (!PAGE_OVERLAY_KEYS.includes(key)) return false
+  for (const k of PAGE_OVERLAY_KEYS) state[k] = (k === key)
+  return true
+}
+
+// 兜底：任何地方直接改 flag 置 true（老代码里的 state.showXxx = true），也会把其它覆盖层收掉
+for (const key of PAGE_OVERLAY_KEYS) {
+  watch(() => state[key], v => {
+    if (!v) return
+    for (const other of PAGE_OVERLAY_KEYS) if (other !== key && state[other]) state[other] = false
+  })
+}
+
 export async function openChat(c) {
+  closePageOverlays() // 从搜索/公告等覆盖层点会话时，先把旧页面收掉，聊天页才能露出来
   state.chat = c
   c.unread = 0
   c.mentionFlag = 0

@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-page" style="background: var(--tg-gray-bg)">
+  <div class="chat-page ad-page" style="background: var(--tg-gray-bg)">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="state.showAdmin = false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>

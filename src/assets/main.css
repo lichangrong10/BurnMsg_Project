@@ -182,6 +182,15 @@ body {
 
 /* ============ 聊天页 ============ */
 .chat-page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--tg-chat-bg); z-index: 10; }
+/* 页面级覆盖层层级（桌面端都落在右栏、默认同为 z-index:10，靠 DOM 顺序不稳定）：
+   建群 < 会话详情 < 账号管理 < 公告 < 反馈 < 全局搜索 < 通知指引，保证"后打开的在上" */
+.chat-page.cg-page { z-index: 12; }
+.chat-page.ci-page { z-index: 14; }
+.chat-page.ad-page { z-index: 20; }
+.chat-page.ann-page { z-index: 22; }
+.chat-page.fb-page { z-index: 24; }
+.chat-page.gs-page { z-index: 26; }
+.chat-page.ng-page { z-index: 28; }
 .chat-topbar { background: var(--tg-blue); color: #fff; padding: calc(8px + var(--safe-top)) 8px 8px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; box-shadow: 0 2px 10px rgba(var(--tg-blue-rgb),.25); position: relative; z-index: 3; }
 .chat-title-wrap { flex: 1; min-width: 0; cursor: pointer; }
 .chat-title { font-size: 16.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
