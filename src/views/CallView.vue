@@ -136,14 +136,18 @@ export default {
       focus: 'remote',
       /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
       zoom: 1,
-      localEl: null,        // 本地 <video> DOM（不走 $refs，避免 v-if 时序坑）
-      localWatchdog: null,  // 1.5s 未出画的自检定时器
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
       logOpen: false,       // 日志面板
       /** 本地预览开关：某些机型把相机帧渲染进 <video> 会卡死渲染进程，可用它做 A/B 验证 */
       previewEnabled: true,
       logText: ''
     }
+  },
+  created() {
+    // ⚠️ 这两个必须**非响应式**：函数式 ref 在每次 patch 都会回调，
+    // 若写进 data() 就会「渲染 → 改响应式 → 再渲染」无限循环（Vue 报 Maximum recursive updates）。
+    this.localEl = null
+    this.localWatchdog = null
   },
   computed: {
     hasRemote() { return !!this.callState.remoteStream },
@@ -219,14 +223,15 @@ export default {
   },
   methods: {
     /**
-     * 本地 video 的 ref 回调：挂载/卸载时都会调一次。
-     * 比 watcher + nextTick 更硬：不管 v-if 什么时候渲染出元素，只要挂上就绑流。
+     * 本地 video 的 ref 回调。注意：Vue 3 每次 patch 都会调用函数式 ref，
+     * 所以这里只做「绑流」这种幂等操作，绝不写响应式数据（否则渲染死循环）。
      */
     bindLocalEl(el) {
       this.localEl = el || null
       if (!el) return
+      if (el.srcObject === this.callState.localStream) return // 已经绑好了，别重复 play
       this.attachLocal(this.callState.localStream)
-      // 1.5s 后还没有画面（videoWidth=0）就重绑一次；仍不行就关掉镜像再试，最后才标记异常
+      // 1.5s 后还没有画面（videoWidth=0）就重绑一次，仍不行才标记异常
       clearTimeout(this.localWatchdog)
       this.localWatchdog = setTimeout(() => {
         const v = this.localEl
