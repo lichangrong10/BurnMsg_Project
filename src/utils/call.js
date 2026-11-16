@@ -36,49 +36,11 @@ import { showToast } from '../store'
 const RING_TIMEOUT_MS = 45000
 /** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */
 const DIAL_TIMEOUT_MS = 60000
-/** 「正在连接」兜底：进入 connecting 后这么久还没 active，就报 ICE 未连通。
- *  30s：无 TURN 时 host 候选穿透 + 首帧协商在弱网下常见要 10~20s，20s 太容易误杀。 */
-const CONNECT_TIMEOUT_MS = 30000
 /** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐（5s 足够早发现丢事件） */
 const DIAL_POLL_MS = 5000
 /** ICE 批量：每 120ms 或攒满 8 条发一次，避免撞 200/min 限流 */
 const ICE_BATCH_MS = 120
 const ICE_BATCH_MAX = 8
-
-/* ══════════ 通话日志（排查用，默认静默） ══════════
- * 环形缓冲最多 200 条、不落盘；**默认不往控制台/Logcat 打印**，避免日常使用刷屏。
- * 需要排查时执行：localStorage.setItem('bm_call_debug','1') 后重载，
- * 之后每次通话的分段日志会写进控制台（Capacitor 会转进 Logcat），
- * 也可以直接调 __callLog() 取全文。关掉：localStorage.removeItem('bm_call_debug')。
- */
-function debugEnabled() {
-  try { return localStorage.getItem('bm_call_debug') === '1' } catch (e) { return false }
-}
-
-const callLogBuf = []
-function logCall(tag, extra) {
-  const item = Object.assign({ t: new Date().toISOString().slice(11, 23), tag }, extra || {})
-  callLogBuf.push(item)
-  if (callLogBuf.length > 200) callLogBuf.shift()
-  if (debugEnabled()) {
-    try { console.log('[call] ' + tag + ' ' + JSON.stringify(extra || {})) } catch (e) { /* 忽略 */ }
-  }
-  return item
-}
-export function callLog() { return callLogBuf.slice() }
-if (typeof window !== 'undefined') window.__callLog = callLog
-
-/**
- * 把环形日志整体打到控制台（仅调试开关打开时）。
- * 页面假死时 DevTools 用不了，但已经打印的行会留在 Logcat 里。
- */
-function dumpCallLog(reason) {
-  if (!debugEnabled()) return
-  try {
-    const body = callLogBuf.map(x => `${x.t} ${x.tag} ${JSON.stringify(x)}`).join('\n')
-    console.warn('[call-log] ' + (reason || '') + '\n' + body)
-  } catch (e) { /* 忽略 */ }
-}
 
 /**
  * 通话 UI 状态（CallView 直接绑定）。
@@ -127,7 +89,6 @@ let ringTimer = null
 let dialTimer = null
 let pollTimer = null
 let tickTimer = null
-let connectTimer = null
 let wakeLock = null
 /** 拨号期第一次在服务端看到 state=active 的时刻（用于识别「已接听但 answer 丢失」） */
 let activeSeenAt = 0
@@ -136,36 +97,6 @@ let activeSeenAt = 0
 export function callSupported() {
   return typeof RTCPeerConnection === 'function'
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-}
-
-/** 是否跑在 Capacitor 原生壳的 WebView 里（仅用于调试/统计，不再用于关视频） */
-export function isNativeShell() {
-  try {
-    if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
-      return window.Capacitor.isNativePlatform()
-    }
-    return /; wv\)/.test(navigator.userAgent || '')
-  } catch (e) { return false }
-}
-
-/**
- * 本地预览是否开启。
- *
- * 结论（2026-11-16 实测）：原生壳**也可以**正常渲染相机预览，双方都能看到自己。
- * 早前那个「相机帧上屏让 WebView 合成器挂死」的判断是误诊——真正的元凶是两个 bug：
- *   1) CallView 里函数式 ref 改响应式数据 → Vue 渲染死循环（报 Maximum recursive updates）；
- *   2) 采集拆成「先音频再视频再拼流」→ 视频轨不发帧。
- * 两者修掉之后，本地预览在 App 里工作正常。
- *
- * 保留开关：`localStorage.setItem('bm_call_nopreview','1')` 可临时关闭（低端机排障用）。
- */
-export function localPreviewEnabled() {
-  try { return localStorage.getItem('bm_call_nopreview') !== '1' } catch (e) { return true }
-}
-
-/** 是否强制只打语音（调试用：localStorage bm_call_forceaudio=1） */
-export function forceAudioOnly() {
-  try { return localStorage.getItem('bm_call_forceaudio') === '1' } catch (e) { return false }
 }
 
 /** 把各种异常翻成能直接给用户看的中文；尽量保留后端 message（已是中文） */
@@ -239,20 +170,14 @@ function createPC(iceServerList) {
   // 远端媒体：audio 只有音轨、video 有音视频轨，都从同一个 stream 取
   conn.ontrack = (ev) => {
     remoteStream = ev.streams && ev.streams[0] ? ev.streams[0] : null
-    logCall('pc:ontrack', {
-      kind: ev.track && ev.track.kind,
-      streams: !!(ev.streams && ev.streams.length),
-      tracks: remoteStream ? remoteStream.getTracks().map(t => t.kind) : [],
-    })
+
     if (remoteStream) callState.remoteStream = markRaw(remoteStream)
   }
   conn.onconnectionstatechange = () => onPcStateChange(conn)
-  // 调试出口：开启 bm_call_debug 后可在控制台用 __pc.getStats() 看收发帧数
-  try { if (typeof window !== 'undefined' && debugEnabled()) window.__pc = conn } catch (e) { /* 忽略 */ }
   // 部分 WebView 上 connectionState 会滞后，ICE 已 connected 就说明媒体通道打通了
   conn.oniceconnectionstatechange = () => {
     const st = conn.iceConnectionState
-    logCall('pc:ice-state', { ice: st, conn: conn.connectionState })
+
     if (st === 'connected' || st === 'completed') markActive()
   }
   return conn
@@ -306,10 +231,10 @@ async function acquireMedia(kind) {
         }),
         '获取摄像头/麦克风超时',
       )
-      logCall('media:combined-ok', { tracks: stream.getTracks().map(t => t.kind) })
+
       return stream
     } catch (e) {
-      logCall('media:combined-failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
+
       callState.mediaWarning = '摄像头不可用，已按语音通话继续'
       showToast(callState.mediaWarning)
     }
@@ -318,7 +243,7 @@ async function acquireMedia(kind) {
     navigator.mediaDevices.getUserMedia({ audio: true }),
     '获取麦克风超时（请确认权限询问已点允许）',
   )
-  logCall('media:audio-only', { tracks: audio.getTracks().map(t => t.kind) })
+
   return new MediaStream(audio.getAudioTracks())
 }
 
@@ -362,7 +287,7 @@ function resetLocal() {
   stopTick()
   stopPoll()
   clearDialTimeout()
-  clearConnectGuard()
+
   stopRing()
   releaseWakeLock()
   if (pc) {
@@ -424,8 +349,8 @@ function fail(e) {
   callState.muted = false
   callState.camOff = false
   const text = typeof e === 'string' ? e : errText(e)
-  logCall('fail', { msg: text, name: (e && e.name) || null, raw: String((e && e.message) || e) })
-  dumpCallLog('fail')
+
+
   showToast(text) // 结果态只有 1.8s，关键错误额外弹一次，免得看不到
   finish('failed', 'error', text)
 }
@@ -435,7 +360,7 @@ function markActive() {
   if (callState.phase === 'active') return
   clearRingTimeout()
   clearDialTimeout()
-  clearConnectGuard()
+
   // 注意：这里**不停**状态轮询——call:ended 可能丢，active 期间仍要靠 REST 兜底发现对方挂断
   stopRing()
   callState.phase = 'active'
@@ -458,34 +383,6 @@ function startTick() {
 
 function stopTick() {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
-}
-
-/**
- * 「正在连接」兜底：进入 connecting 后 20s 仍没变成 active（媒体通道没打通），
- * 给出明确结论而不是无限转圈。ICE 卡在 checking 时 connectionState 会一直是 connecting，
- * 不会触发 failed，所以必须有这个看门狗。
- */
-function startConnectGuard() {
-  clearConnectGuard()
-  connectTimer = setTimeout(() => {
-    if (callState.phase !== 'connecting') return
-    logCall('connect-timeout', {
-      ice: pc && pc.iceConnectionState,
-      conn: pc && pc.connectionState,
-      signaling: pc && pc.signalingState,
-      localQueue: localIceQueue.length,
-      pendingRemote: pendingRemoteIce.length,
-      relay: callState.relay,
-    })
-    dumpCallLog('connect-timeout')
-    fail(callState.relay
-      ? '媒体连接未建立（ICE 未连通），请重试'
-      : '媒体连接未建立：未配置中继且双方无法直连，请在同一网络下重试')
-  }, CONNECT_TIMEOUT_MS)
-}
-
-function clearConnectGuard() {
-  if (connectTimer) { clearTimeout(connectTimer); connectTimer = null }
 }
 
 /**
@@ -512,8 +409,8 @@ function startDialTimeout() {
   dialTimer = setTimeout(() => {
     if (callState.phase !== 'dialing') return
     const id = currentCallId
-    logCall('dial-timeout', { call_id: id })
-    dumpCallLog('dial-timeout')
+
+
     if (id) api.hangupCall(id, 'hangup').catch(() => {})
     finish('ended', 'timeout', '无人接听')
   }, DIAL_TIMEOUT_MS)
@@ -540,9 +437,9 @@ function startDialPoll() {
       if (!view) return
       if (phase === 'dialing' && view.state === 'active') {
         if (!activeSeenAt) activeSeenAt = Date.now()
-        logCall('poll:active-without-answer', { waited_ms: Date.now() - activeSeenAt })
+
         if (Date.now() - activeSeenAt > 6000) {
-          dumpCallLog('active-without-answer')
+
           api.hangupCall(currentCallId, 'hangup').catch(() => {})
           fail('对方已接听，但应答未送达（信令丢失），请重拨')
         }
@@ -550,8 +447,8 @@ function startDialPoll() {
       }
       activeSeenAt = 0
       if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
-        logCall('poll:remote-ended', { state: view.state, end_reason: view.end_reason, phase })
-        dumpCallLog('remote-ended')
+
+
         finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
       }
     } catch (e) { /* 网络抖动忽略，下一轮再试 */ }
@@ -653,13 +550,6 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
   const busyPhases = ['dialing', 'incoming', 'connecting', 'active']
   if (busyPhases.indexOf(callState.phase) >= 0) { showToast('当前已有通话进行中'); return }
   if (!callSupported()) { showToast('当前环境不支持通话（需 HTTPS 或 App 内使用）'); return }
-  if (callState.phase !== 'idle') { logCall('start:cleanup-stale-phase', { phase: callState.phase }) }
-  // 只做兜底：默认允许视频（本地预览已在原生壳关闭）。需要纯语音时用调试开关。
-  if (kind === 'video' && forceAudioOnly()) {
-    kind = 'audio'
-    showToast('已按调试开关使用语音通话')
-    logCall('start:video-downgraded', { reason: 'force-audio-flag' })
-  }
   resetLocal()
   callState.phase = 'dialing'
   callState.status = 'preparing'
@@ -685,16 +575,16 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     callKey = await deriveCallKey(ephPair, peerIKPub, conversationId, ephPub)
     // ④ 采集 → 建连 → offer
     callState.status = 'media'
-    logCall('start:media-begin', { kind })
+
     localStream = markRaw(await acquireMedia(kind))
-    logCall('start:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
+
     callState.localStream = localStream
-    logCall('start:local-stream-published', {})   // 本地预览从这一刻开始渲染
+   // 本地预览从这一刻开始渲染
     pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
-    logCall('start:pc-ready', { senders: pc.getSenders().length })
+
     await pc.setLocalDescription(await pc.createOffer())
-    logCall('start:offer-set', { signaling: pc.signalingState })
+
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
     const fp = dtlsFingerprintOf(sdp)
     if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹，无法建立加密通话')
@@ -710,7 +600,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     currentCallId = res && res.call_id
     callState.callId = currentCallId
     if (!currentCallId) throw new Error('服务端未返回 call_id')
-    logCall('call:created', { call_id: currentCallId, kind, relay: ice.relay })
+
     flushIce().catch(() => {})
     startDialTimeout()
     startDialPoll()
@@ -728,7 +618,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
 export async function endCall() {
   const id = currentCallId
   const wasDialing = callState.phase === 'dialing'
-  logCall('endCall', { call_id: id, phase: callState.phase })
+
   finish('ended', wasDialing ? 'cancel' : 'hangup', '')
   if (id) api.hangupCall(id, 'hangup').catch(() => {})
 }
@@ -738,7 +628,7 @@ export async function rejectCurrent(reason = 'decline') {
   const invite = incomingInvite
   const id = (invite && invite.call_id) || currentCallId
   currentCallId = id
-  logCall('rejectCurrent', { call_id: id, reason })
+
   finish('ended', reason, reason === 'busy' ? '对方忙线中' : '已拒接')
   if (id) api.rejectCall(id, reason).catch(() => { /* 已处理 */ })
 }
@@ -813,7 +703,7 @@ export async function switchCamera() {
     const curId = (oldTrack.getSettings && oldTrack.getSettings().deviceId) || ''
     const idx = cams.findIndex(c => c.deviceId === curId)
     const next = cams[idx >= 0 ? (idx + 1) % cams.length : 0]
-    logCall('switch:begin', { from: curId.slice(0, 8), to: next.deviceId.slice(0, 8) })
+
 
     // 与首次采集保持同样的分辨率，避免对方解码器因分辨率跳变重建
     const ns = await navigator.mediaDevices.getUserMedia({
@@ -834,10 +724,10 @@ export async function switchCamera() {
     callState.localStream = localStream
     callState.facing = /back|rear|environment|后置/i.test(next.label || '') ? 'environment' : 'user'
     lastSwitchAt = Date.now()
-    logCall('switch:ok', { facing: callState.facing })
+
     return true
   } catch (e) {
-    logCall('switch:failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
+
     showToast('切换摄像头失败：' + errText(e))
     return false
   } finally {
@@ -866,10 +756,10 @@ export async function listCameras() {
  */
 async function onIncoming(p) {
   if (!p || !p.call_id) return
-  logCall('incoming:recv', { call_id: p.call_id, kind: p.kind, phase: callState.phase })
+
   // 本机已有通话 → 直接回忙线（服务端也拦，但前端先拦省一次状态机冲突与提示）
   if (callState.phase !== 'idle' || !callSupported()) {
-    logCall('incoming:busy', { phase: callState.phase, supported: callSupported() })
+
     api.rejectCall(p.call_id, 'busy').catch(() => {})
     return
   }
@@ -892,7 +782,7 @@ async function onIncoming(p) {
     incomingInvite = p
     currentCallId = p.call_id
     callState.phase = 'incoming'
-    logCall('incoming:verified', { call_id: p.call_id })
+
     callState.status = ''
     callState.kind = p.kind === 'video' ? 'video' : 'audio'
     callState.conversationId = p.conversation_id
@@ -927,29 +817,29 @@ export async function acceptCall() {
   clearRingTimeout()
   callState.phase = 'connecting'
   callState.status = 'answering'
-  logCall('accept:begin', { call_id: currentCallId, kind: callState.kind })
+
   try {
     // 被叫同样：中继凭据拿不到就只走 host 候选（同网仍可接通）
     const ice = await turnIceServers()
     callState.relay = ice.relay
     callKey = incomingCallKey
     localStream = markRaw(await acquireMedia(callState.kind))
-    logCall('accept:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
+
     callState.localStream = localStream
-    logCall('accept:local-published', { preview: localPreviewEnabled() }) // 本地预览从这一刻开始渲染
+ // 本地预览从这一刻开始渲染
     pc = createPC(ice.list)
-    logCall('accept:pc-created', { senders: pc.getSenders().length })
+
     // 顺序很重要：先 SRD 建立 transceiver（按对端 offer 的 m-line），再加轨、再 createAnswer。
     // 反过来（先 addTrack 再 SRD）时，个别实现会把 answer 里的视频方向算成 recvonly，
     // 表现就是「我能看到对方，对方看不到我」。
     await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
-    logCall('accept:remote-desc-ok', { signaling: pc.signalingState, tr: trInfo(pc) })
+
     remoteDescSet = true
     flushRemoteIce()
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
-    logCall('accept:tracks-added', { senders: pc.getSenders().length, tr: trInfo(pc) })
+
     await pc.setLocalDescription(await pc.createAnswer())
-    logCall('accept:answer-ok', { signaling: pc.signalingState, tr: trInfo(pc) })
+
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
     const fp = dtlsFingerprintOf(sdp)
     if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹')
@@ -958,14 +848,13 @@ export async function acceptCall() {
       fp_mac: await fingerprintMac(callKey, fp),
       payload: await seal(callKey, sdp),
     })
-    logCall('accept:posted', { call_id: currentCallId })
+
     flushIce().catch(() => {})
     startDialPoll()      // connecting 期间也用 REST 兜底（对方挂断/超时都能发现）
-    startConnectGuard()  // 20s 媒体通道看门狗
     acquireWakeLock()
   } catch (e) {
     // 接听失败要通知对端，否则主叫一直停在「正在连接」
-    logCall('accept:failed', { msg: String((e && e.message) || e) })
+
     if (currentCallId) api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail(e)
   }
@@ -981,24 +870,24 @@ let installed = false
  * 顺序不能反，否则信令服务器可以替换指纹做 MITM。
  */
 async function onAccepted(p) {
-  if (!p) { logCall('accepted:empty-payload'); return }
+  if (!p) return
   if (!callKey || !pc) {
     // 走到这里是真异常：说明本机通话状态被清掉了（例如中途 reload / 被 logout）
-    logCall('accepted:state-lost', { has_callKey: !!callKey, has_pc: !!pc, phase: callState.phase })
+
     return
   }
   if (p.call_id && currentCallId && p.call_id !== currentCallId) {
-    logCall('accepted:call-mismatch', { got: p.call_id, mine: currentCallId })
+
     return
   }
   clearDialTimeout()
   stopPoll()
-  logCall('accepted:start', { call_id: p.call_id, signaling: pc.signalingState })
+
   let sdp
   try {
     sdp = await open(callKey, p.payload)
   } catch (e) {
-    logCall('accepted:open-failed', { msg: String((e && e.message) || e) })
+
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('通话密钥协商失败，已挂断')
     return
@@ -1006,14 +895,14 @@ async function onAccepted(p) {
   const fp = dtlsFingerprintOf(sdp)
   const macOk = !!(fp && await verifyFingerprintMac(callKey, fp, p.fp_mac))
   if (!macOk) {
-    logCall('accepted:fp-mac-failed', { fp: fp || null })
+
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('对方应答指纹校验失败，已挂断（可能存在中间人）')
     return
   }
   if (pc.signalingState !== 'have-local-offer') {
     // 重复事件或状态机已前进：如果媒体其实已经连上，直接按 active 处理
-    logCall('accepted:bad-signaling', { signaling: pc.signalingState, conn: pc.connectionState })
+
     if (pc.connectionState === 'connected') markActive()
     return
   }
@@ -1021,14 +910,13 @@ async function onAccepted(p) {
     await pc.setRemoteDescription({ type: 'answer', sdp })
     remoteDescSet = true
     flushRemoteIce()
-    logCall('accepted:remote-desc-ok', { signaling: pc.signalingState })
+
     if (callState.phase === 'dialing') {
       callState.phase = 'connecting'
       callState.status = ''
     }
-    startConnectGuard()  // 20s 媒体通道看门狗（ICE 卡在 checking 时不会自己 failed）
   } catch (e) {
-    logCall('accepted:set-remote-failed', { msg: String((e && e.message) || e) })
+
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('通话连接建立失败，已挂断')
   }
@@ -1076,7 +964,7 @@ async function resyncAfterReconnect() {
   try {
     const view = await api.getCall(currentCallId)
     if (!view) return
-    logCall('resync', { state: view.state, phase: callState.phase })
+
     if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
       finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
     }
@@ -1092,11 +980,11 @@ export function installCallEvents() {
   installed = true
   /** 统一包一层：先记日志再执行，异常也不再被静默吞掉 */
   const wrap = (name, fn) => (p) => {
-    logCall('ws:' + name, { call_id: (p && p.call_id) || null, phase: callState.phase })
+
     try {
-      Promise.resolve(fn(p)).catch(e => logCall('ws:' + name + ':error', { msg: String((e && e.message) || e) }))
+      Promise.resolve(fn(p)).catch(() => {})
     } catch (e) {
-      logCall('ws:' + name + ':throw', { msg: String((e && e.message) || e) })
+
     }
   }
   offs.push(onWs(WS_EVENTS.CALL_INCOMING, wrap('incoming', onIncoming)))
@@ -1105,7 +993,7 @@ export function installCallEvents() {
   offs.push(onWs(WS_EVENTS.CALL_ICE, wrap('ice', onRemoteIce)))
   offs.push(onWs(WS_EVENTS.CALL_ENDED, wrap('ended', onEnded)))
   offs.push(onWs('connect', () => {
-    logCall('ws:connect', { phase: callState.phase })
+
     resyncAfterReconnect().catch(() => {})
   }))
 }

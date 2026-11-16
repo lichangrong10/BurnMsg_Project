@@ -21,7 +21,6 @@
       </div>
       <div v-if="isVideoCall && hasLocalVideo" class="call-hint">点小窗可互换画面 · 双击放大</div>
       <div v-if="callState.mediaWarning && callState.phase !== 'incoming'" class="call-hint warn">{{ callState.mediaWarning }}</div>
-      <div v-if="debugUi && localDead" class="call-hint warn">本地预览未出画（画面仍会发给对方）</div>
     </div>
 
     <div v-if="callState.kind !== 'video' || (!hasRemote && focus === 'remote')" class="call-avatar" :style="{ background: avatarBg }">
@@ -32,7 +31,7 @@
          ⚠️ 外层 div 承担尺寸/圆角/裁切，<video> 上**不加** transform / border-radius / box-shadow / transition：
          这些会让 WebView 把相机流送进合成层，实测在部分机型上会卡死渲染进程（整页假死）。 -->
     <div
-      v-if="previewEnabled && isVideoCall && hasLocalVideo"
+      v-if="isVideoCall && hasLocalVideo"
       class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
       @click="onSurfaceClick('local')"
@@ -44,7 +43,6 @@
         autoplay
         playsinline
         muted
-        @loadedmetadata="onLocalMeta"
       ></video>
     </div>
 
@@ -94,18 +92,6 @@
         <button class="ca-btn ghost" @click="onHangup"><span>关闭</span></button>
       </template>
     </div>
-
-    <!-- 排查用：页面内日志面板（**不用 window.alert**，alert 会阻塞 WebView 主线程，
-         一旦弹窗不可见整页就会像死掉一样：点挂断、点日志都没反应） -->
-    <!-- 排查入口：只在调试开关打开时出现（localStorage bm_call_debug=1） -->
-    <div v-if="debugUi" class="call-log-btn" @click="showLog">日志</div>
-    <div v-if="debugUi && logOpen" class="call-log-panel">
-      <div class="clp-head">
-        <span>通话日志 · {{ buildTag }}</span>
-        <button class="clp-close" @click="logOpen = false">关闭</button>
-      </div>
-      <pre class="clp-body">{{ logText }}</pre>
-    </div>
   </div>
 </template>
 
@@ -114,7 +100,7 @@
  * 全屏通话界面（来电 / 拨号 / 通话中 / 结果态）。
  * 只做渲染与用户手势，所有信令与密钥都在 utils/call.js。
  */
-import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera, callLog, localPreviewEnabled } from '../utils/call'
+import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera } from '../utils/call'
 import { avatarColor } from '../utils/format'
 
 /** 秒 → m:ss / h:mm:ss */
@@ -137,20 +123,12 @@ export default {
       focus: 'remote',
       /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
       zoom: 1,
-      localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
-      /** 调试 UI（日志按钮/面板/未出画提示）开关：localStorage bm_call_debug=1 */
-      debugUi: false,
-      logOpen: false,       // 日志面板
-      /** 本地预览开关：默认开启；`bm_call_nopreview=1` 可临时关闭（低端机排障） */
-      previewEnabled: true,
-      logText: ''
     }
   },
   created() {
     // ⚠️ 这两个必须**非响应式**：函数式 ref 在每次 patch 都会回调，
     // 若写进 data() 就会「渲染 → 改响应式 → 再渲染」无限循环（Vue 报 Maximum recursive updates）。
     this.localEl = null
-    this.localWatchdog = null
   },
   computed: {
     hasRemote() { return !!this.callState.remoteStream },
@@ -161,10 +139,6 @@ export default {
       return !!(s && s.getVideoTracks && s.getVideoTracks().length)
     },
     isVideoCall() { return this.callState.kind === 'video' },
-    /** 构建戳：一眼看出手机上跑的是哪次打包（排查旧包/新包混淆） */
-    buildTag() {
-      try { return (typeof window !== 'undefined' && window.__appBuild) || 'unknown' } catch (e) { return 'unknown' }
-    },
     initial() {
       const n = this.callState.peer.name || '对方'
       return n[0]
@@ -199,10 +173,6 @@ export default {
     // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
     'callState.remoteStream'(v) { this.$nextTick(() => this.attachRemote(v)) },
     'callState.localStream'(v) { this.$nextTick(() => this.attachLocal(v)) },
-    // 出错时自动把日志摊开，省得用户还要去点（也避免现场抓不到现场）
-    'callState.phase'(v) {
-      if (v === 'failed' && this.debugUi) this.$nextTick(() => this.showLog())
-    },
     'callState.kind'() {
       this.$nextTick(() => {
         this.attachRemote(this.callState.remoteStream)
@@ -211,15 +181,12 @@ export default {
     }
   },
   mounted() {
-    try { this.previewEnabled = localPreviewEnabled() } catch (e) { /* 忽略 */ }
-    try { this.debugUi = localStorage.getItem('bm_call_debug') === '1' } catch (e) { /* 忽略 */ }
     this.$nextTick(() => {
       this.attachRemote(this.callState.remoteStream)
       this.attachLocal(this.callState.localStream)
     })
   },
   beforeUnmount() {
-    clearTimeout(this.localWatchdog)
     // 只解除元素绑定，真正的轨道释放在 call.js 的收尾里（这里停轨道会让通话断掉）
     const r = this.$refs.remoteVideo
     if (r) r.srcObject = null
@@ -235,23 +202,6 @@ export default {
       if (!el) return
       if (el.srcObject === this.callState.localStream) return // 已经绑好了，别重复 play
       this.attachLocal(this.callState.localStream)
-      // 1.5s 后还没有画面（videoWidth=0）就重绑一次，仍不行才标记异常
-      clearTimeout(this.localWatchdog)
-      this.localWatchdog = setTimeout(() => {
-        const v = this.localEl
-        if (!v || v.videoWidth > 0) return
-        const s = this.callState.localStream
-        if (!s) return
-        v.srcObject = null
-        v.srcObject = s
-        this.playSafely(v)
-        setTimeout(() => {
-          if (this.localEl && this.localEl.videoWidth === 0) this.localDead = true
-        }, 900)
-      }, 1500)
-    },
-    onLocalMeta() {
-      this.localDead = false
     },
     attachRemote(stream) {
       const el = this.$refs.remoteVideo
@@ -308,20 +258,6 @@ export default {
       if (!this.isVideoCall) return
       if (which && which !== this.focus) return // 只对当前主画面生效，避免点小窗时同时触发互换
       this.zoom = this.zoom > 1 ? 1 : 2
-    },
-    /** 打开日志面板（纯 DOM，不阻塞主线程） */
-    showLog() {
-      let text = ''
-      try {
-        const list = callLog()
-        text = list.length
-          ? list.map(x => `${x.t} ${x.tag} ${JSON.stringify(x)}`).join('\n')
-          : '暂无通话日志（本次 WebView 还没有产生通话事件）'
-      } catch (e) {
-        text = '读取日志失败：' + (e && e.message)
-      }
-      this.logText = `phase=${this.callState.phase} relay=${this.callState.relay}\n\n` + text
-      this.logOpen = true
     }
   }
 }
@@ -381,40 +317,8 @@ export default {
 .call-hint { margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.55); }
 .call-hint.warn { color: #FF9095; }
 
-/* 排查入口：右下角很小的「日志」，点开是弹窗，不干扰正常通话界面 */
-.call-log-btn {
-  position: absolute; right: 10px; bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
-  z-index: 5; padding: 2px 8px; border-radius: 8px;
-  font-size: 11px; color: rgba(255,255,255,.38);
-  background: rgba(255,255,255,.07);
-}
-.call-log-btn:active { background: rgba(255,255,255,.16); color: #fff; }
-
-/* 日志面板：页面内滚动层，关掉只靠自己的按钮，绝不阻塞 JS */
-.call-log-panel {
-  position: fixed; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); z-index: 460;
-  display: flex; flex-direction: column;
-  background: rgba(12,15,18,.96); border: 1px solid rgba(255,255,255,.14);
-  border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
-}
-.clp-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.12);
-  font-size: 13px; color: rgba(255,255,255,.8);
-}
-.clp-close {
-  padding: 4px 12px; border-radius: 8px; border: 0; cursor: pointer;
-  background: rgba(255,255,255,.14); color: #fff; font-size: 12.5px;
-}
-.clp-body {
-  flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
-  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.5;
-  color: rgba(255,255,255,.82); white-space: pre-wrap; word-break: break-all;
-  -webkit-overflow-scrolling: touch; user-select: text;
-}
-
-.call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }.ca-btn {
+.call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }
+.ca-btn {
   display: inline-flex; flex-direction: column; align-items: center; gap: 7px;
   width: 74px; padding: 0; border: 0; background: transparent;
   color: rgba(255,255,255,.88); font-size: 12px; line-height: 1; cursor: pointer;
