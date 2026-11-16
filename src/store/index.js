@@ -7,7 +7,7 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview, memberAvatar } from '../utils/format'
 import { notifyNewMessage, notifySystem } from '../utils/notify'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS, isWsConnected } from '../utils/ws'
 import { bindPushAlias, unbindPushAlias, isPushActive } from '../utils/push'
@@ -910,13 +910,11 @@ export async function ensureGroupThumbs(ids) {
     try {
       const arr = await api.getGroupMembers(id)
       const members = Array.isArray(arr) ? arr : (arr && (arr.list || arr.items)) || []
-      state.groupThumbs[id] = members.map(m => {
-        const u = (m && (m.user || m.user_info || m.profile)) || m || {}
-        const name = u.display_name || u.user_display_name || u.name || u.username
-          || u.nickname || u.nick_name || u.phone || ''
-        const avatar = u.avatar_url || u.avatar || m.avatar_url || null
-        return { name: String(name || ''), avatar }
-      }).filter(m => m.name || m.avatar).slice(0, 4)
+        // 用项目帮助函数解析：后端成员行把姓名/头像放在顶层 user_display_name / user_avatar_url
+        state.groupThumbs[id] = members.map(x => ({
+          name: memberName(x),
+          avatar: memberAvatar(x)
+        })).slice(0, 4)
     } catch (e) { state.groupThumbs[id] = [] }
   }
 }

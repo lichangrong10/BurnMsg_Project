@@ -15,7 +15,7 @@
         <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved ? '更换群头像' : ''">
           <div v-if="cardQuad.length" class="avatar avatar-quad" style="width: 72px; height: 72px;">
             <span v-for="(m, i) in cardQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
-              <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+              <img v-if="m.avatar" :src="m.avatar" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
             </span>
             <span v-for="n in (4 - cardQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
           </div>

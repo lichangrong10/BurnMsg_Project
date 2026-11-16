@@ -8,7 +8,7 @@
         <div class="avatar-wrap chat-avatar-wrap">
           <div v-if="chatQuad.length" class="avatar avatar-quad" style="width: 38px; height: 38px;">
             <span v-for="(m, i) in chatQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
-              <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+              <img v-if="m.avatar" :src="m.avatar" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
             </span>
             <span v-for="n in (4 - chatQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
           </div>

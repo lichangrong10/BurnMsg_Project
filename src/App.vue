@@ -6,7 +6,7 @@
   <HomeView v-else />
 
   <!-- 聊天页覆盖层 -->
-  <transition name="bm-page"><ChatRoom v-if="state.chat" /></transition>
+  <ChatRoom v-if="state.chat" />
 
   <!-- 功能覆盖层（顺序即层级，后渲染的在上） -->
   <transition name="bm-page"><CreateGroup v-if="state.showCreateGroup" /></transition>

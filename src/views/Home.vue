@@ -185,7 +185,9 @@ export default {
 @keyframes ap-pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
 
   /* 底部 Tab 切换：只让 transform/opacity 走合成层，避免整页重绘造成卡顿 */
-  .content-scroll.tab-anim { will-change: transform, opacity; backface-visibility: hidden; }
+  /* 注意：不要在页面容器上常驻 will-change/backface-visibility，
+     否则浏览器会长期把内容栅格化成低分辨率图层，照片/头像会逐渐变模糊。
+     只在过渡进行时由 Vue 过渡类临时提升图层。 */
   .tab-slide-left-enter-active, .tab-slide-left-leave-active,
   .tab-slide-right-enter-active, .tab-slide-right-leave-active { will-change: transform, opacity; }
 
