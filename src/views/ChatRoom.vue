@@ -1,4 +1,4 @@
-﻿<template>
+<template>
 <div v-if="state.chat" class="chat-page">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="closeChat">
@@ -246,6 +246,10 @@
     <div v-if="isSecretCh && state.chat.e2e_state === 2" class="secret-banner">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       加密聊天 · 仅本设备与对方设备可解密<template v-if="secretDaysLeft"> · {{ secretDaysLeft }} 后自动删除</template>
+    </div>
+    <!-- 换过设备/重装：本机已不是该私密会话的绑定设备 -->
+    <div v-if="isSecretUnbound" class="secret-banner warn">
+      当前设备不是该私密会话的绑定设备，无法收发与通话；请用当初接受请求的那台设备，或结束加密聊天后重新建立
     </div>
 
     <div v-if="!isDissolved && !channelReadonly && !isSecretPendingCh" class="input-bar">
@@ -654,13 +658,20 @@ export default {
     isSecretPendingCh() { return this.isSecretCh && state.chat.e2e_state === 1 },
     isSecretActiveCh() { return this.isSecretCh && state.chat.e2e_state === 2 },
     /**
-     * 是否露出通话入口：只有**已建立的私密会话**。
-     * 普通私聊拿不到对方设备级公钥（GET /keys/device/:cid 仅对 e2e 会话开放），
-     * 后端也会以 CALL_STATE_INVALID 拒绝，所以不露出入口，避免点了才发现打不了。
+     * 是否露出通话入口：只有**已建立的私密会话**、且**本设备是绑定设备**时才显示。
+     * 私密会话是设备级绑定：e2e_device_a = 发起请求那台，e2e_device_b = 点接受那台；
+     * 换设备/重装后当前 deviceId 不在其中，后端会以 CALL_NOT_BOUND_DEVICE 拒绝。
+     * 会话列表接口已返回 is_bound_device，这里直接用它隐藏入口，避免点了才报错。
      */
     canCallHere() {
       const c = state.chat
-      return !!(c && c.type === 'private' && c.e2e_mode === 1 && c.e2e_state === 2)
+      if (!c || c.type !== 'private' || c.e2e_mode !== 1 || c.e2e_state !== 2) return false
+      return c.is_bound_device !== false
+    },
+    /** 私密会话已激活，但本机不是绑定设备（换过设备/重装） */
+    isSecretUnbound() {
+      const c = state.chat
+      return !!(c && c.e2e_mode === 1 && c.e2e_state === 2 && c.is_bound_device === false)
     },
     /** 本机是否为请求发起设备 */
     isSecretInitiatorHere() {
@@ -2428,6 +2439,8 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .chat-avatar-wrap { position: relative; display: inline-flex; flex-shrink: 0; cursor: pointer; }
 .conv-burn-badge { position: absolute; right: -6px; top: -6px; display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 8px; background: #E07000; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 1; box-shadow: 0 0 0 1.5px #fff; }
 .secret-banner { display: flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; color: #1F6FB2; background: #EEF5FF; border-bottom: 1px solid #DDE9F7; flex: 0 0 auto; }
+/* 本机未绑定该私密会话（换设备/重装）时的提示 */
+.secret-banner.warn { color: #B23B00; background: #FFF4EC; border-bottom-color: #F6DECB; line-height: 1.5; }
 .secret-request { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px 22px; text-align: center; }
 .secret-request .sr-ico { font-size: 34px; }
 .secret-request .sr-title { font-size: 17px; font-weight: 600; }
