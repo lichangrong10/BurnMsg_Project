@@ -132,6 +132,12 @@ export function callSupported() {
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
 }
 
+/** 本地预览是否开启（控制台 `localStorage.setItem('bm_call_nopreview','1')` 后重载即可关闭）。
+ *  用来在部分机型上验证「把相机帧渲染进 <video>」是否会把 WebView 渲染进程卡死。 */
+export function localPreviewEnabled() {
+  try { return localStorage.getItem('bm_call_nopreview') !== '1' } catch (e) { return true }
+}
+
 /** 把各种异常翻成能直接给用户看的中文；尽量保留后端 message（已是中文） */
 export function errText(e) {
   const raw = String((e && e.message) || e || '')
@@ -856,8 +862,11 @@ export async function acceptCall() {
     localStream = markRaw(await acquireMedia(callState.kind))
     logCall('accept:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
     callState.localStream = localStream
+    logCall('accept:local-published', { preview: localPreviewEnabled() }) // 本地预览从这一刻开始渲染
     pc = createPC(ice.list)
+    logCall('accept:pc-created', { senders: pc.getSenders().length })
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+    logCall('accept:tracks-added', { senders: pc.getSenders().length })
     await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
     logCall('accept:remote-desc-ok', { signaling: pc.signalingState })
     remoteDescSet = true

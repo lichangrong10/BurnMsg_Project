@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="call-page" :class="'kind-' + callState.kind">
     <!-- 远端画面：默认主画面；和本地画面互换后变成小窗。
          语音通话时压到 1px 只让音轨继续播（不渲染占画面）。 -->
@@ -32,7 +32,7 @@
          ⚠️ 外层 div 承担尺寸/圆角/裁切，<video> 上**不加** transform / border-radius / box-shadow / transition：
          这些会让 WebView 把相机流送进合成层，实测在部分机型上会卡死渲染进程（整页假死）。 -->
     <div
-      v-if="isVideoCall && hasLocalVideo"
+      v-if="previewEnabled && isVideoCall && hasLocalVideo"
       class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
       @click="onSurfaceClick('local')"
@@ -113,7 +113,7 @@
  * 全屏通话界面（来电 / 拨号 / 通话中 / 结果态）。
  * 只做渲染与用户手势，所有信令与密钥都在 utils/call.js。
  */
-import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera, callLog } from '../utils/call'
+import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera, callLog, localPreviewEnabled } from '../utils/call'
 import { avatarColor } from '../utils/format'
 
 /** 秒 → m:ss / h:mm:ss */
@@ -140,6 +140,8 @@ export default {
       localWatchdog: null,  // 1.5s 未出画的自检定时器
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
       logOpen: false,       // 日志面板
+      /** 本地预览开关：某些机型把相机帧渲染进 <video> 会卡死渲染进程，可用它做 A/B 验证 */
+      previewEnabled: true,
       logText: ''
     }
   },
@@ -202,6 +204,7 @@ export default {
     }
   },
   mounted() {
+    try { this.previewEnabled = localPreviewEnabled() } catch (e) { /* 忽略 */ }
     this.$nextTick(() => {
       this.attachRemote(this.callState.remoteStream)
       this.attachLocal(this.callState.localStream)
