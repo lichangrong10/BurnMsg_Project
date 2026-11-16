@@ -257,33 +257,8 @@ function withTimeout(promise, msg, ms = MEDIA_TIMEOUT_MS) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
-/**
- * 视频约束按「保守 → 宽松」逐个尝试：某些 Android WebView / ROM 对 720p + facingMode
- * 这组约束会卡住（相机已 CONNECT 但 Promise 不返回），换成 480p 或最简约束常能过。
- */
-const VIDEO_CONSTRAINTS = [
-  { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-  { width: { ideal: 640 }, height: { ideal: 480 } },
-  true,
-]
-
-async function acquireVideoTrack() {
-  const errors = []
-  for (const c of VIDEO_CONSTRAINTS) {
-    try {
-      const vs = await withTimeout(navigator.mediaDevices.getUserMedia({ video: c }), '获取摄像头超时', 8000)
-      const track = vs.getVideoTracks()[0]
-      if (track) {
-        logCall('media:video-ok', { constraint: JSON.stringify(c) })
-        return track
-      }
-    } catch (e) {
-      errors.push(`${JSON.stringify(c)} → ${(e && e.name) || ''} ${(e && e.message) || ''}`)
-      logCall('media:video-attempt-failed', { constraint: JSON.stringify(c), name: (e && e.name) || null })
-    }
-  }
-  throw new Error('摄像头不可用：' + errors.join(' | '))
-}
+/* 说明：视频采集只走 acquireMedia 里的单次 getUserMedia（见那里的注释），
+ * 不再单独取视频轨——拆开会导致这台机器上视频轨道不发帧。 */
 
 /**
  * 采集媒体：**麦克风优先、摄像头可选**。
@@ -292,23 +267,39 @@ async function acquireVideoTrack() {
  * 在初始化摄像头时会卡住渲染进程的主线程，整页像死掉。先拿麦克风能把通话先建立起来，
  * 摄像头失败就降级成语音通话并明确提示，不至于整通电话打不了。
  */
+/**
+ * 采集媒体。
+ *
+ * ⚠️ 视频必须**一次 getUserMedia 同时拿音视频**：拆成「先音频、再视频、拼新 MediaStream」
+ * 在这台机器的 WebView 上视频轨发不出帧（远端全黑）。这是回归验证过的结论，
+ * 除非有明确收益，不要再拆。
+ *
+ * 失败兜底：视频/音频一起拿失败时，退回只拿麦克风，按语音继续（不阻断通话）。
+ */
 async function acquireMedia(kind) {
-  const audio = await withTimeout(
-    navigator.mediaDevices.getUserMedia({ audio: true }),
-    '获取麦克风超时（请确认权限询问已点允许）',
-  ).catch(e => { throw e })
-  logCall('media:audio-ok', { tracks: audio.getAudioTracks().length })
-  const tracks = [...audio.getAudioTracks()]
   if (kind === 'video') {
     try {
-      tracks.push(await acquireVideoTrack())
+      const stream = await withTimeout(
+        navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        }),
+        '获取摄像头/麦克风超时',
+      )
+      logCall('media:combined-ok', { tracks: stream.getTracks().map(t => t.kind) })
+      return stream
     } catch (e) {
-      logCall('media:video-failed', { msg: String((e && e.message) || e) })
+      logCall('media:combined-failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
       callState.mediaWarning = '摄像头不可用，已按语音通话继续'
       showToast(callState.mediaWarning)
     }
   }
-  return new MediaStream(tracks)
+  const audio = await withTimeout(
+    navigator.mediaDevices.getUserMedia({ audio: true }),
+    '获取麦克风超时（请确认权限询问已点允许）',
+  )
+  logCall('media:audio-only', { tracks: audio.getTracks().map(t => t.kind) })
+  return new MediaStream(audio.getAudioTracks())
 }
 
 /* ══════════ ICE 收发管线 ══════════ */
