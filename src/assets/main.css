@@ -677,3 +677,23 @@ button:active,
 .bm-toast-leave-active { animation: bmToastOut 160ms var(--ease-out) forwards; }
 @keyframes bmToastIn  { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
 @keyframes bmToastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
+
+/* 全屏页面进场时的不透明底板：页面淡入过程中透出的是底板颜色，不是下层的白色页面 */
+.page-plate {
+  position: absolute; inset: 0; z-index: 40;
+  background: var(--tg-gray-bg, #F0F2F5);
+  overflow: hidden;
+}
+
+/* ═══ 全局搜索页进场（恢复到你确认好的那一版） ═══
+   整体（不透明灰底 + 页面内容）一起从右滑入，260ms，长减速缓动 */
+.gs-slide-wrap {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--tg-gray-bg, #F0F2F5);
+  overflow: hidden;
+}
+.gs-slide-enter-from, .gs-slide-appear-from { transform: translateX(100%); }
+.gs-slide-enter-active, .gs-slide-appear-active {
+  transition: transform 260ms cubic-bezier(.22, .9, .3, 1);
+  will-change: transform;
+}

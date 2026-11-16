@@ -1,5 +1,6 @@
 <template>
   <div class="chat-page gs-page">
+  <div class="gs-inner">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="state.showGlobalSearch = false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
@@ -91,7 +92,7 @@
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b0b5bc" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
           <div>没有找到相关消息</div>
           <div class="gs-empty-hint">换个关键词试试</div>
-        </div>
+  </div>
       </template>
 
       <div v-if="!keyword" class="gs-empty">
@@ -99,6 +100,7 @@
         <div>输入关键词搜索联系人、会话或消息</div>
       </div>
     </div>
+  </div>
   </div>
 </template>
 
@@ -409,4 +411,8 @@ function escHtml(s) {
 .gs-page .chat-topbar .chat-title-wrap { position: absolute; left: 44px; right: 44px; top: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
 .gs-page .chat-topbar .chat-title { text-align: center; }
 .gs-page .chat-topbar .chat-status { text-align: center; }
+
+
+
+  .gs-page { animation: none !important; }
 </style>

@@ -14,7 +14,9 @@
   <AdminView v-if="state.showAdmin" />
   <AnnouncementsView v-if="state.showAnnouncements" />
   <FeedbackView v-if="state.showFeedback" />
-  <GlobalSearch v-if="state.showGlobalSearch" />
+  <transition name="gs-slide" appear>
+      <div v-if="state.showGlobalSearch" class="gs-slide-wrap"><GlobalSearch /></div>
+    </transition>
   <NotifyGuide v-if="state.showNotifyGuide" />
 
   <!-- 全局 Toast -->
