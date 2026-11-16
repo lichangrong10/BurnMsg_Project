@@ -108,20 +108,18 @@ export function errText(e) {
   if (name === 'NotReadableError') return '麦克风 / 摄像头被其他应用占用'
   if (name === 'SecurityError') return '当前页面不是安全上下文，请在 HTTPS 或 App 内通话'
   if (/TURN_NOT_CONFIGURED|中继未配置/.test(raw)) return '通话中继（TURN）未配置，暂时无法通话'
-  if (/CALL_NOT_BOUND_DEVICE/.test(raw)) return '当前设备不是该私密会话的绑定设备，请在当初接受请求的那台设备上拨打'
-  if (/CALL_PEER_OFFLINE|不在线|绑定设备已下线/.test(raw)) return '对方通话设备不在线或不是绑定设备，请对方重新登录后再试'
+  if (/CALL_NOT_BOUND_DEVICE|绑定设备/.test(raw)) return '本设备不是该私密会话的绑定设备，无法通话'
+  if (/CALL_PEER_OFFLINE|不在线/.test(raw)) return '对方当前不在线'
   if (/CALL_STATE_INVALID|已结束|已被处理/.test(raw)) return '该通话已结束或被处理'
   if (/CALL_NOT_FOUND/.test(raw)) return '通话不存在'
   return raw || '通话失败'
 }
 
-/** 取对端设备级 identity 公钥（私密会话里唯一入口，服务端反查对方绑定设备）。
- *  顺带拿到对端**设备 ID**：私密会话反向呼叫时后端会误选 e2e_device_b 当被叫，
- *  把它作为 to_device_id 显式传过去可绕开该缺陷。 */
+/** 取对端设备级 identity 公钥（私密会话里唯一入口，服务端反查对方绑定设备） */
 async function peerIKOf(conversationId) {
   const r = await api.getPeerDeviceKey(conversationId)
   if (!r || !r.identity_pubkey) throw new Error('对方尚未上传设备公钥，无法加密通话')
-  return { userId: r.user_id, pub: r.identity_pubkey, deviceId: r.device_id || '' }
+  return { userId: r.user_id, pub: r.identity_pubkey }
 }
 
 /**
@@ -598,10 +596,6 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
       eph_pub: ephPub,
       fp_mac: await fingerprintMac(callKey, fp),
       payload: await seal(callKey, sdp),
-      // 显式指定被叫设备：私密会话只有两台绑定设备，后端在 e2e 分支里默认取
-      // e2e_device_b 当被叫，绑定在 b 的一方反向呼叫时会被当成「自己」，从而误报
-      // 「对方绑定设备已下线」。传 to_device_id 后走后端显式指定分支，方向就对了。
-      ...(peer.deviceId ? { to_device_id: peer.deviceId } : {}),
     })
     currentCallId = res && res.call_id
     callState.callId = currentCallId
