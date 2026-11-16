@@ -8,7 +8,7 @@
         <div class="chat-title">新建群组</div>
         <div class="chat-status">已选 {{ selected.length }} 位成员</div>
       </div>
-      <button class="btn-text" style="color:#fff;font-weight:600;font-size:15px" :style="{ opacity: canCreate ? 1 : .5 }" @click="create">创建</button>
+      <button class="btn-text" style="color:#fff;font-weight:600;font-size:15px" :style="{ opacity: canCreate ? 1 : .5 }" @click="create">创建群聊</button>
     </div>
 
     <div style="padding:14px 16px 6px">
@@ -87,4 +87,13 @@ export default {
   .chat-topbar .chat-title-wrap { position: absolute; left: 44px; right: 60px; top: 0; bottom: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
   .chat-topbar .chat-title, .chat-topbar .chat-status { text-align: center; }
+
+  /* 顶部「创建群聊」按钮固定最右 */
+  .chat-topbar > button {
+    margin-left: auto; position: relative; z-index: 7; flex-shrink: 0;
+    padding: 0 10px; font-size: 15px; font-weight: 600;
+  }
+  /* 标题区右边界给按钮留足空间，避免重叠 */
+  /* 标题相对整条顶栏居中：左右边界对称，用对称内边距给两侧按钮留空间 */
+  .chat-topbar .chat-title-wrap { left: 0; right: 0; padding: 0 92px; }
 </style>

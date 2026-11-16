@@ -919,6 +919,33 @@ export async function ensureGroupThumbs(ids) {
   }
 }
 
+/** 预览滞后补拉：后端 last_message 比 last_message_at 旧时，拉最新几条取最后一条 */
+async function fillStalePreviews() {
+  const need = state.convs.filter(c => {
+    const lm = c.last_message || c.lastMessage || c.last_msg || null
+    const lmAt = lm && typeof lm === 'object' ? (Date.parse(lm.created_at || lm.createdAt || '') || 0) : 0
+    const convAt = Date.parse(c.last_message_at || '') || 0
+    return convAt > 0 && (!lmAt || lmAt < convAt - 1000)
+  }).slice(0, 6)
+  if (!need.length) return
+  for (let k = 0; k < need.length; k += 3) {
+    await Promise.allSettled(need.slice(k, k + 3).map(async c => {
+      try {
+        const list = asArray(await api.getMessages(c.id, { limit: 20 }))
+        const sorted = sortByTimeAsc(list)
+        const last = sorted[sorted.length - 1]
+        if (!last) return
+        const p = messagePreview(last)
+        if (!p) return
+        setLastMsg(c.id, p)
+        const cv = state.convs.find(x => String(x.id) === String(c.id))
+        if (cv) cv.lastMsg = p
+      } catch (e) { /* 静默 */ }
+    }))
+  }
+}
+
+
 export async function loadConvs(quiet) {
   // 记录加载前的私密会话，加载后对比：服务端不再返回 = 已结束/被踢 → 清理本地痕迹
   const prevSecretIds = state.convs.filter(isSecretConv).map(c => String(c.id))
@@ -949,9 +976,24 @@ export async function loadConvs(quiet) {
         // 未读数一律用本机计数：后端 unread_count 是累计值（读完不减）；
         // 本地没有记录（清缓存/新登录）时先显示 0，随后由 fillLocalUnread 按服务端「我读到哪条」补算
         const local = getLocalUnread(c.id)
-        const unread = locallyRead ? 0 : (local != null ? local : 0)
+      let unread = locallyRead ? 0 : (local != null ? local : 0)
+      // 轮询补偿：服务端最后消息时间变新、且不是当前会话 → 本地未读 +1（WS 掉线也不丢红点）
+      const oldAt = old ? (Date.parse(old.last_message_at || '') || 0) : 0
+      const isCurrentConv = state.chat && String(state.chat.id) === String(c.id)
+      if (!isCurrentConv && oldAt > 0 && lastAt > oldAt && !locallyRead) {
+        unread = unread + 1
+        setLocalUnread(c.id, unread)
+      }
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
-        const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
+        // 预览优先取「最新」：后端 last_message 可能滞后（不等于 last_message_at），
+      // 此时用本机缓存的最新一条（打开会话/收发消息时会写入）
+      const serverPreview = extractConvoPreview(c)
+      const cachedPreview = getLastMsg(c.id) || (old && old.lastMsg) || ''
+      const lm = c.last_message || c.lastMessage || c.last_msg || null
+      const lmAt = lm && typeof lm === 'object' ? (Date.parse(lm.created_at || lm.createdAt || '') || 0) : 0
+      const convAt = Date.parse(c.last_message_at || '') || 0
+      const previewStale = lmAt > 0 && convAt > 0 && lmAt < convAt - 1000
+      const preview = previewStale ? (cachedPreview || serverPreview) : (serverPreview || cachedPreview)
         let mentionFlag = (old && old.mentionFlag) ? 1 : 0
         if (!mentionFlag && unread > 0) {
           const mentioned = (lastMsgObj && typeof lastMsgObj === 'object')
@@ -981,6 +1023,7 @@ export async function loadConvs(quiet) {
     // 缺本地未读记录的会话（清缓存/新登录）：按服务端「我读到哪条」重算，不把历史消息算成未读
     fillLocalUnread(state.convs)
     if (!quiet) await fillMissingPreviews()
+    fillStalePreviews()
     refreshVisiblePresence() // 会话列表的在线圆点：拉一遍所有私聊对方的在线态（静默、异步）
   } catch (e) { if (!quiet) showToast(e.message) }
 }
@@ -2819,7 +2862,16 @@ export function startTimers() {
     if (!wasPending && cur.e2e_state !== 2) handleSecretGone(cid, '对方已结束加密聊天')
   } catch (e) { /* 网络抖动忽略，下轮再试 */ }
 }, 4000))
-timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
+// 会话列表兜底轮询：WS 正常时 15s 一次；WS 掉线时 5s 一次（避免"收不到消息，进会话才看到"）
+let convPollTick = 0
+timers.push(setInterval(() => {
+  if (state.view !== 'main' || state.chat) return
+  convPollTick++
+  const wsOk = isWsConnected()
+  if (wsOk && convPollTick % 3 !== 0) return   // 在线：每 3 拍（15s）拉一次
+  loadConvs(true)
+  refreshAnnUnread()
+}, 5000))
   // 消息轮询：后台不轮询 + 在途不叠加
   timers.push(setInterval(async () => {
     if (msgPolling) return

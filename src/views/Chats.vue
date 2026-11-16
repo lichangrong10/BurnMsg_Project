@@ -34,7 +34,7 @@
       @touchmove="touchMove"
       @touchend="touchEnd"
       @touchcancel="cancelLongPress">
-      <span v-if="c.unread" class="conv-badge-bottom">{{ c.unread > 99 ? '99+' : c.unread }}</span>
+      <span v-if="c.unread" :key="c.unread" class="conv-badge-bottom">{{ c.unread > 99 ? '99+' : c.unread }}</span>
       <div class="avatar-wrap">
         <div v-if="c.type === 'group' && !convAvatar(c) && quadMembers(c).length" class="avatar avatar-quad" style="width: 52px; height: 52px;">
           <span v-for="(m, i) in quadMembers(c)" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
