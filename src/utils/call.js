@@ -246,6 +246,8 @@ function createPC(iceServerList) {
     if (remoteStream) callState.remoteStream = markRaw(remoteStream)
   }
   conn.onconnectionstatechange = () => onPcStateChange(conn)
+  // 调试出口：控制台可用 __pc.getStats() 看收发帧数（排查「对方看不到我/我看不到对方」）
+  try { if (typeof window !== 'undefined') window.__pc = conn } catch (e) { /* 忽略 */ }
   // 部分 WebView 上 connectionState 会滞后，ICE 已 connected 就说明媒体通道打通了
   conn.oniceconnectionstatechange = () => {
     const st = conn.iceConnectionState
