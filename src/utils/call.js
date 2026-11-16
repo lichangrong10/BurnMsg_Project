@@ -36,6 +36,8 @@ import { showToast } from '../store'
 const RING_TIMEOUT_MS = 45000
 /** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */
 const DIAL_TIMEOUT_MS = 60000
+/** 「正在连接」兜底：进入 connecting 后这么久还没 active，就报 ICE 未连通 */
+const CONNECT_TIMEOUT_MS = 20000
 /** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐（5s 足够早发现丢事件） */
 const DIAL_POLL_MS = 5000
 /** ICE 批量：每 120ms 或攒满 8 条发一次，避免撞 200/min 限流 */
@@ -112,6 +114,7 @@ let ringTimer = null
 let dialTimer = null
 let pollTimer = null
 let tickTimer = null
+let connectTimer = null
 let wakeLock = null
 /** 拨号期第一次在服务端看到 state=active 的时刻（用于识别「已接听但 answer 丢失」） */
 let activeSeenAt = 0
@@ -235,6 +238,7 @@ function resetLocal() {
   stopTick()
   stopPoll()
   clearDialTimeout()
+  clearConnectGuard()
   stopRing()
   releaseWakeLock()
   if (pc) {
@@ -304,7 +308,8 @@ function markActive() {
   if (callState.phase === 'active') return
   clearRingTimeout()
   clearDialTimeout()
-  stopPoll()
+  clearConnectGuard()
+  // 注意：这里**不停**状态轮询——call:ended 可能丢，active 期间仍要靠 REST 兜底发现对方挂断
   stopRing()
   callState.phase = 'active'
   callState.status = ''
@@ -326,6 +331,34 @@ function startTick() {
 
 function stopTick() {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+}
+
+/**
+ * 「正在连接」兜底：进入 connecting 后 20s 仍没变成 active（媒体通道没打通），
+ * 给出明确结论而不是无限转圈。ICE 卡在 checking 时 connectionState 会一直是 connecting，
+ * 不会触发 failed，所以必须有这个看门狗。
+ */
+function startConnectGuard() {
+  clearConnectGuard()
+  connectTimer = setTimeout(() => {
+    if (callState.phase !== 'connecting') return
+    logCall('connect-timeout', {
+      ice: pc && pc.iceConnectionState,
+      conn: pc && pc.connectionState,
+      signaling: pc && pc.signalingState,
+      localQueue: localIceQueue.length,
+      pendingRemote: pendingRemoteIce.length,
+      relay: callState.relay,
+    })
+    dumpCallLog('connect-timeout')
+    fail(callState.relay
+      ? '媒体连接未建立（ICE 未连通），请重试'
+      : '媒体连接未建立：未配置中继且双方无法直连，请在同一网络下重试')
+  }, CONNECT_TIMEOUT_MS)
+}
+
+function clearConnectGuard() {
+  if (connectTimer) { clearTimeout(connectTimer); connectTimer = null }
 }
 
 /**
@@ -363,17 +396,21 @@ function clearDialTimeout() {
   if (dialTimer) { clearTimeout(dialTimer); dialTimer = null }
 }
 
-/** 拨号期状态轮询：WS 重连窗口期可能丢 call:accepted，用 REST 对齐。
- *  关键：若库里的 state 已经是 active，说明**对方已经接听**，只是 answer 没送到本机，
- *  这时不能继续假装「正在呼叫」，也不能等到 60s 兜底，直接给明确结论。 */
+/** 通话状态轮询：dialing / connecting / active 全程有效。
+ *  作用有两个：
+ *   1) dialing 时发现服务端已 active → 说明「对方已接听但 answer 没送到」；
+ *   2) connecting / active 时发现服务端已结束（对方挂断、设备下线、会话关闭）→ 立刻收尾，
+ *      不再依赖 call:ended 这条可能丢的 WS 事件。 */
 function startDialPoll() {
   stopPoll()
   pollTimer = setInterval(async () => {
-    if (callState.phase !== 'dialing' || !currentCallId) return
+    const phase = callState.phase
+    if (!currentCallId) return
+    if (phase !== 'dialing' && phase !== 'connecting' && phase !== 'active') return
     try {
       const view = await api.getCall(currentCallId)
       if (!view) return
-      if (view.state === 'active') {
+      if (phase === 'dialing' && view.state === 'active') {
         if (!activeSeenAt) activeSeenAt = Date.now()
         logCall('poll:active-without-answer', { waited_ms: Date.now() - activeSeenAt })
         if (Date.now() - activeSeenAt > 6000) {
@@ -385,6 +422,8 @@ function startDialPoll() {
       }
       activeSeenAt = 0
       if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
+        logCall('poll:remote-ended', { state: view.state, end_reason: view.end_reason, phase })
+        dumpCallLog('remote-ended')
         finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
       }
     } catch (e) { /* 网络抖动忽略，下一轮再试 */ }
@@ -540,13 +579,15 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
 
 /* ══════════ 通话内操作 ══════════ */
 
-/** 挂断（振铃中挂断 = 取消；服务端幂等，重复调用也不会报错） */
+/** 挂断（振铃中挂断 = 取消；服务端幂等，重复调用也不会报错）。
+ *  **本地先收尾、信令 fire-and-forget**：网络/后端异常时挂断按钮也必须立刻有反应，
+ *  否则会像「对方已挂断，本机还卡在正在连接且点不动」那样僵住。 */
 export async function endCall() {
   const id = currentCallId
   const wasDialing = callState.phase === 'dialing'
-  if (!id) { finish('ended', 'hangup', ''); return }
-  try { await api.hangupCall(id, 'hangup') } catch (e) { /* 已结束也无所谓 */ }
+  logCall('endCall', { call_id: id, phase: callState.phase })
   finish('ended', wasDialing ? 'cancel' : 'hangup', '')
+  if (id) api.hangupCall(id, 'hangup').catch(() => {})
 }
 
 /** 拒接来电（busy 用于本机已有通话时自动忙线） */
@@ -554,8 +595,9 @@ export async function rejectCurrent(reason = 'decline') {
   const invite = incomingInvite
   const id = (invite && invite.call_id) || currentCallId
   currentCallId = id
-  if (id) { try { await api.rejectCall(id, reason) } catch (e) { /* 已处理 */ } }
+  logCall('rejectCurrent', { call_id: id, reason })
   finish('ended', reason, reason === 'busy' ? '对方忙线中' : '已拒接')
+  if (id) api.rejectCall(id, reason).catch(() => { /* 已处理 */ })
 }
 
 /** 结果态手动关闭（纯本地，不发任何信令） */
@@ -746,6 +788,8 @@ export async function acceptCall() {
     })
     logCall('accept:posted', { call_id: currentCallId })
     flushIce().catch(() => {})
+    startDialPoll()      // connecting 期间也用 REST 兜底（对方挂断/超时都能发现）
+    startConnectGuard()  // 20s 媒体通道看门狗
     acquireWakeLock()
   } catch (e) {
     // 接听失败要通知对端，否则主叫一直停在「正在连接」
@@ -810,6 +854,7 @@ async function onAccepted(p) {
       callState.phase = 'connecting'
       callState.status = ''
     }
+    startConnectGuard()  // 20s 媒体通道看门狗（ICE 卡在 checking 时不会自己 failed）
   } catch (e) {
     logCall('accepted:set-remote-failed', { msg: String((e && e.message) || e) })
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
