@@ -783,46 +783,64 @@ export function toggleCamera() {
  *
  * @returns {Promise<boolean>} 是否真的切成功（失败会弹提示，不再静默）
  */
+/* 摄像头切换的串行化：连点「翻转」会并发发起多次 getUserMedia + replaceTrack，
+ * 相机被反复抢占 → 本机 NotReadableError、对方解码器反复重建（表现为画面卡住）。 */
+let switchingCamera = false
+let lastSwitchAt = 0
+
+/**
+ * 前后摄像头切换（**串行 + 限频**）。
+ *
+ * 统一走一条路径：`enumerateDevices` 找下一颗 videoinput → `getUserMedia({deviceId})`
+ * → `RTCRtpSender.replaceTrack()` 热替换（不重协商，SSRC 不变，对方无需重新协商）。
+ * 不再混用 `applyConstraints({facingMode})`：两条路径交替会让轨道状态不一致，
+ * 且 Android WebView 大多不支持轨道级 facingMode。
+ *
+ * @returns {Promise<boolean>} 是否切换成功（失败有明确提示）
+ */
 export async function switchCamera() {
+  if (switchingCamera) return false
   if (!localStream) return false
+  if (Date.now() - lastSwitchAt < 1000) return false // 1s 内重复点击直接忽略
   const oldTrack = localStream.getVideoTracks()[0]
   if (!oldTrack) return false
 
-  // ① 轨道级约束
-  const cur = (oldTrack.getSettings && oldTrack.getSettings().facingMode) || ''
-  const nextFacing = cur === 'environment' ? 'user' : 'environment'
-  try {
-    await oldTrack.applyConstraints({ facingMode: { exact: nextFacing } })
-    callState.facing = nextFacing
-    return true
-  } catch (e) { /* 走 ② */ }
-
-  // ② 换采集设备 + replaceTrack
+  switchingCamera = true
   try {
     const cams = await listCameras()
     if (cams.length < 2) { showToast('这台设备只有一颗摄像头'); return false }
     const curId = (oldTrack.getSettings && oldTrack.getSettings().deviceId) || ''
     const idx = cams.findIndex(c => c.deviceId === curId)
-    const next = cams[(idx + 1 + cams.length) % cams.length]
+    const next = cams[idx >= 0 ? (idx + 1) % cams.length : 0]
+    logCall('switch:begin', { from: curId.slice(0, 8), to: next.deviceId.slice(0, 8) })
+
+    // 与首次采集保持同样的分辨率，避免对方解码器因分辨率跳变重建
     const ns = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { deviceId: { exact: next.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
     })
     const newTrack = ns.getVideoTracks()[0]
     if (!newTrack) { showToast('切换摄像头失败'); return false }
+    newTrack.enabled = !callState.camOff
+
     const sender = pc && pc.getSenders().find(s => s.track && s.track.kind === 'video')
     if (sender) await sender.replaceTrack(newTrack)
     else if (pc) pc.addTrack(newTrack, localStream)
-    // 保持静音/关闭摄像头的当前状态
-    newTrack.enabled = !callState.camOff
-    oldTrack.stop()
+
+    // 新轨确认挂上之后才停旧轨，失败时保留旧轨
+    try { oldTrack.stop() } catch (e) { /* 忽略 */ }
     localStream = markRaw(new MediaStream([...localStream.getAudioTracks(), newTrack]))
     callState.localStream = localStream
     callState.facing = /back|rear|environment|后置/i.test(next.label || '') ? 'environment' : 'user'
+    lastSwitchAt = Date.now()
+    logCall('switch:ok', { facing: callState.facing })
     return true
   } catch (e) {
+    logCall('switch:failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
     showToast('切换摄像头失败：' + errText(e))
     return false
+  } finally {
+    switchingCamera = false
   }
 }
 
