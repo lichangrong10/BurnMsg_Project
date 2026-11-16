@@ -4,20 +4,22 @@
       <div class="topbar-icon" @click="closeChat">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
-      <div class="avatar-wrap chat-avatar-wrap">
-        <div v-if="chatQuad.length" class="avatar avatar-quad" style="width: 38px; height: 38px;">
-          <span v-for="(m, i) in chatQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
-            <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
-          </span>
-          <span v-for="n in (4 - chatQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+        <div class="chat-head-center">
+        <div class="avatar-wrap chat-avatar-wrap">
+          <div v-if="chatQuad.length" class="avatar avatar-quad" style="width: 38px; height: 38px;">
+            <span v-for="(m, i) in chatQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
+              <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+            </span>
+            <span v-for="n in (4 - chatQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+          </div>
+          <div v-else class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
+          <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
         </div>
-        <div v-else class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
-        <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
-      </div>
-      <div class="chat-title-wrap" @click="openInfo">
-        <div class="chat-title">{{ convName(state.chat) }}</div>
-        <div class="chat-status">{{ chatStatus }}</div>
-      </div>
+        <div class="chat-title-wrap" @click="openInfo">
+          <div class="chat-title">{{ convName(state.chat) }}</div>
+          <div class="chat-status">{{ chatStatus }}</div>
+        </div>
+        </div>
       <div class="topbar-icon more-btn" @click.stop="chatMenu = !chatMenu" title="更多">
         <span v-if="secretPendingMine" class="secret-dot"></span>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
@@ -2452,4 +2454,18 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
     color: #fff; line-height: 1; border-radius: 3px; overflow: hidden; }
   .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
   .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
+
+  /* 顶栏中间区：头像 + 名称整体居中，两侧按钮不动 */
+  .chat-topbar { position: relative; }
+  .chat-head-center { position: absolute; left: 60px; right: 60px; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none; z-index: 2; }
+  .chat-head-center .chat-avatar-wrap { pointer-events: auto; }
+  .chat-head-center .chat-title-wrap { flex: 0 1 auto; min-width: 0; max-width: 60%;
+    text-align: center; display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
+  .chat-head-center .chat-title, .chat-head-center .chat-status { text-align: center; max-width: 100%; }
+
+  /* ⋯ 菜单固定靠右 */
+  .chat-topbar > .topbar-icon.more-btn {
+    margin-left: auto; position: relative; z-index: 7; flex-shrink: 0;
+  }
 </style>

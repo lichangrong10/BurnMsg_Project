@@ -570,3 +570,39 @@ html.bm-desktop .dialog { max-width: 440px; }
 /* 底部面板改用统一缓动（原有 sheetUp 保留，仅对齐时长） */
 .sheet { animation-duration: var(--dur-base); animation-timing-function: var(--ease-out); }
 .dialog { animation-duration: var(--dur-base); animation-timing-function: var(--ease-spring); }
+
+/* ═══════════ 第二批：列表与状态动效 ═══════════ */
+
+/* 会话行进场：前 8 条错峰淡入上移（长列表不做，避免卡顿） */
+@keyframes bmItemIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.conv-item { animation: bmItemIn 180ms var(--ease-out) both; }
+.conv-item:nth-child(1) { animation-delay: 0ms; }
+.conv-item:nth-child(2) { animation-delay: 24ms; }
+.conv-item:nth-child(3) { animation-delay: 48ms; }
+.conv-item:nth-child(4) { animation-delay: 72ms; }
+.conv-item:nth-child(5) { animation-delay: 96ms; }
+.conv-item:nth-child(6) { animation-delay: 120ms; }
+.conv-item:nth-child(7) { animation-delay: 144ms; }
+.conv-item:nth-child(8) { animation-delay: 168ms; }
+.conv-item:nth-child(n+9) { animation: none; }   /* 第 9 条起不再动画 */
+
+/* 未读徽标出现时弹一下 */
+@keyframes bmBadgePop {
+  0%   { transform: scale(.5); opacity: 0; }
+  60%  { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.conv-badge-bottom { animation: bmBadgePop 220ms var(--ease-spring); }
+
+/* 群宫格头像加载完成淡入 */
+@keyframes bmQuadIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.avatar-quad { animation: bmQuadIn 200ms var(--ease-out); }
+
+/* 返回按钮永远在最左、且可点击（防被居中的标题层盖住） */
+.chat-topbar > .topbar-icon:first-child {
+  position: relative; z-index: 6; flex-shrink: 0; margin-left: 0 !important;
+}
+.chat-topbar .chat-title-wrap { position: relative; z-index: 1; }

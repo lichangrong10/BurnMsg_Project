@@ -195,4 +195,16 @@ export default {
     display: flex; align-items: center; justify-content: center;
     text-align: center; pointer-events: none; z-index: 1; }
   .topbar > div:not(.topbar-title) { position: relative; z-index: 2; margin-left: auto; }
+
+  /* 「我的」二级页：返回箭头靠左、标题居中（箭头绝对定位，不占标题位置） */
+  .topbar .topbar-title.with-back {
+    left: 0; right: 0; width: auto;
+    justify-content: center;   /* 标题居中 */
+    text-align: center;
+    pointer-events: auto;
+    position: absolute;
+  }
+  .topbar .topbar-title.with-back > svg {
+    position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  }
 </style>

@@ -344,6 +344,16 @@ export default {
     color: #fff; line-height: 1; border-radius: 5px; overflow: hidden; }
   .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
   .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
+
+  /* 顶部「聊天信息」标题居中（返回键仍靠左可点） */
+  .chat-topbar { position: relative; }
+  .chat-topbar .chat-title-wrap {
+    position: absolute; left: 60px; right: 60px; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; pointer-events: none; z-index: 2;
+  }
+  .chat-topbar .chat-title { text-align: center; }
+  .chat-topbar > .topbar-icon:first-child { position: relative; z-index: 6; }
 </style>
 <style scoped>
 .avatar-editable { position: relative; cursor: pointer; display: inline-block; }
