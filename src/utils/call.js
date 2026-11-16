@@ -36,11 +36,25 @@ import { showToast } from '../store'
 const RING_TIMEOUT_MS = 45000
 /** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */
 const DIAL_TIMEOUT_MS = 60000
-/** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐 */
-const DIAL_POLL_MS = 15000
+/** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐（5s 足够早发现丢事件） */
+const DIAL_POLL_MS = 5000
 /** ICE 批量：每 120ms 或攒满 8 条发一次，避免撞 200/min 限流 */
 const ICE_BATCH_MS = 120
 const ICE_BATCH_MAX = 8
+
+/* ══════════ 排查日志（环形，最多 200 条，不落盘） ══════════
+ * 目的是把「事件有没有到、状态机怎么决策的」变成可回放的证据。
+ * 控制台调用 __callLog() 即可拿到最近记录。
+ */
+const callLogBuf = []
+function logCall(tag, extra) {
+  const item = Object.assign({ t: new Date().toISOString().slice(11, 23), tag }, extra || {})
+  callLogBuf.push(item)
+  if (callLogBuf.length > 200) callLogBuf.shift()
+  return item
+}
+export function callLog() { return callLogBuf.slice() }
+if (typeof window !== 'undefined') window.__callLog = callLog
 
 /**
  * 通话 UI 状态（CallView 直接绑定）。
@@ -88,6 +102,8 @@ let dialTimer = null
 let pollTimer = null
 let tickTimer = null
 let wakeLock = null
+/** 拨号期第一次在服务端看到 state=active 的时刻（用于识别「已接听但 answer 丢失」） */
+let activeSeenAt = 0
 
 /** 当前环境能否发起/接听通话（WebRTC + getUserMedia 都在） */
 export function callSupported() {
@@ -234,6 +250,7 @@ function resetLocal() {
   remoteDescSet = false
   localIceQueue = []
   pendingRemoteIce = []
+  activeSeenAt = 0
   if (iceTimer) { clearTimeout(iceTimer); iceTimer = null }
   callState.localStream = null
   callState.remoteStream = null
@@ -331,7 +348,9 @@ function clearDialTimeout() {
   if (dialTimer) { clearTimeout(dialTimer); dialTimer = null }
 }
 
-/** 拨号期状态轮询：WS 重连窗口期可能丢 call:accepted，用 REST 对齐 */
+/** 拨号期状态轮询：WS 重连窗口期可能丢 call:accepted，用 REST 对齐。
+ *  关键：若库里的 state 已经是 active，说明**对方已经接听**，只是 answer 没送到本机，
+ *  这时不能继续假装「正在呼叫」，也不能等到 60s 兜底，直接给明确结论。 */
 function startDialPoll() {
   stopPoll()
   pollTimer = setInterval(async () => {
@@ -339,6 +358,16 @@ function startDialPoll() {
     try {
       const view = await api.getCall(currentCallId)
       if (!view) return
+      if (view.state === 'active') {
+        if (!activeSeenAt) activeSeenAt = Date.now()
+        logCall('poll:active-without-answer', { waited_ms: Date.now() - activeSeenAt })
+        if (Date.now() - activeSeenAt > 6000) {
+          api.hangupCall(currentCallId, 'hangup').catch(() => {})
+          fail('对方已接听，但应答未送达（信令丢失），请重拨')
+        }
+        return
+      }
+      activeSeenAt = 0
       if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
         finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
       }
@@ -483,6 +512,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     currentCallId = res && res.call_id
     callState.callId = currentCallId
     if (!currentCallId) throw new Error('服务端未返回 call_id')
+    logCall('call:created', { call_id: currentCallId, kind, relay: ice.relay })
     flushIce().catch(() => {})
     startDialTimeout()
     startDialPoll()
@@ -617,8 +647,10 @@ export async function listCameras() {
  */
 async function onIncoming(p) {
   if (!p || !p.call_id) return
+  logCall('incoming:recv', { call_id: p.call_id, kind: p.kind, phase: callState.phase })
   // 本机已有通话 → 直接回忙线（服务端也拦，但前端先拦省一次状态机冲突与提示）
   if (callState.phase !== 'idle' || !callSupported()) {
+    logCall('incoming:busy', { phase: callState.phase, supported: callSupported() })
     api.rejectCall(p.call_id, 'busy').catch(() => {})
     return
   }
@@ -641,6 +673,7 @@ async function onIncoming(p) {
     incomingInvite = p
     currentCallId = p.call_id
     callState.phase = 'incoming'
+    logCall('incoming:verified', { call_id: p.call_id })
     callState.status = ''
     callState.kind = p.kind === 'video' ? 'video' : 'audio'
     callState.conversationId = p.conversation_id
@@ -695,10 +728,12 @@ export async function acceptCall() {
       fp_mac: await fingerprintMac(callKey, fp),
       payload: await seal(callKey, sdp),
     })
+    logCall('accept:posted', { call_id: currentCallId })
     flushIce().catch(() => {})
     acquireWakeLock()
   } catch (e) {
     // 接听失败要通知对端，否则主叫一直停在「正在连接」
+    logCall('accept:failed', { msg: String((e && e.message) || e) })
     if (currentCallId) api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail(e)
   }
@@ -714,34 +749,53 @@ let installed = false
  * 顺序不能反，否则信令服务器可以替换指纹做 MITM。
  */
 async function onAccepted(p) {
-  if (!p || !callKey || !pc) return
-  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  if (!p) { logCall('accepted:empty-payload'); return }
+  if (!callKey || !pc) {
+    // 走到这里是真异常：说明本机通话状态被清掉了（例如中途 reload / 被 logout）
+    logCall('accepted:state-lost', { has_callKey: !!callKey, has_pc: !!pc, phase: callState.phase })
+    return
+  }
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) {
+    logCall('accepted:call-mismatch', { got: p.call_id, mine: currentCallId })
+    return
+  }
   clearDialTimeout()
   stopPoll()
+  logCall('accepted:start', { call_id: p.call_id, signaling: pc.signalingState })
   let sdp
   try {
     sdp = await open(callKey, p.payload)
   } catch (e) {
+    logCall('accepted:open-failed', { msg: String((e && e.message) || e) })
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('通话密钥协商失败，已挂断')
     return
   }
   const fp = dtlsFingerprintOf(sdp)
-  if (!fp || !(await verifyFingerprintMac(callKey, fp, p.fp_mac))) {
+  const macOk = !!(fp && await verifyFingerprintMac(callKey, fp, p.fp_mac))
+  if (!macOk) {
+    logCall('accepted:fp-mac-failed', { fp: fp || null })
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('对方应答指纹校验失败，已挂断（可能存在中间人）')
     return
   }
-  if (pc.signalingState !== 'have-local-offer') return // 重复事件 / 已处理
+  if (pc.signalingState !== 'have-local-offer') {
+    // 重复事件或状态机已前进：如果媒体其实已经连上，直接按 active 处理
+    logCall('accepted:bad-signaling', { signaling: pc.signalingState, conn: pc.connectionState })
+    if (pc.connectionState === 'connected') markActive()
+    return
+  }
   try {
     await pc.setRemoteDescription({ type: 'answer', sdp })
     remoteDescSet = true
     flushRemoteIce()
+    logCall('accepted:remote-desc-ok', { signaling: pc.signalingState })
     if (callState.phase === 'dialing') {
       callState.phase = 'connecting'
       callState.status = ''
     }
   } catch (e) {
+    logCall('accepted:set-remote-failed', { msg: String((e && e.message) || e) })
     api.hangupCall(currentCallId, 'hangup').catch(() => {})
     fail('通话连接建立失败，已挂断')
   }
@@ -789,6 +843,7 @@ async function resyncAfterReconnect() {
   try {
     const view = await api.getCall(currentCallId)
     if (!view) return
+    logCall('resync', { state: view.state, phase: callState.phase })
     if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
       finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
     }
@@ -802,12 +857,24 @@ async function resyncAfterReconnect() {
 export function installCallEvents() {
   if (installed) return
   installed = true
-  offs.push(onWs(WS_EVENTS.CALL_INCOMING, p => { onIncoming(p).catch(() => {}) }))
-  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, p => { onAccepted(p).catch(() => {}) }))
-  offs.push(onWs(WS_EVENTS.CALL_REJECTED, p => onRejected(p)))
-  offs.push(onWs(WS_EVENTS.CALL_ICE, p => { onRemoteIce(p).catch(() => {}) }))
-  offs.push(onWs(WS_EVENTS.CALL_ENDED, p => onEnded(p)))
-  offs.push(onWs('connect', () => { resyncAfterReconnect().catch(() => {}) }))
+  /** 统一包一层：先记日志再执行，异常也不再被静默吞掉 */
+  const wrap = (name, fn) => (p) => {
+    logCall('ws:' + name, { call_id: (p && p.call_id) || null, phase: callState.phase })
+    try {
+      Promise.resolve(fn(p)).catch(e => logCall('ws:' + name + ':error', { msg: String((e && e.message) || e) }))
+    } catch (e) {
+      logCall('ws:' + name + ':throw', { msg: String((e && e.message) || e) })
+    }
+  }
+  offs.push(onWs(WS_EVENTS.CALL_INCOMING, wrap('incoming', onIncoming)))
+  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, wrap('accepted', onAccepted)))
+  offs.push(onWs(WS_EVENTS.CALL_REJECTED, wrap('rejected', onRejected)))
+  offs.push(onWs(WS_EVENTS.CALL_ICE, wrap('ice', onRemoteIce)))
+  offs.push(onWs(WS_EVENTS.CALL_ENDED, wrap('ended', onEnded)))
+  offs.push(onWs('connect', () => {
+    logCall('ws:connect', { phase: callState.phase })
+    resyncAfterReconnect().catch(() => {})
+  }))
 }
 
 /** 卸载事件并释放资源（App 卸载 / 强制登出时调用，防麦克风摄像头残留在后台） */
