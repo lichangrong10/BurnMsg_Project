@@ -6,11 +6,11 @@
   <HomeView v-else />
 
   <!-- 聊天页覆盖层 -->
-  <ChatRoom v-if="state.chat" />
+  <transition name="bm-page"><ChatRoom v-if="state.chat" /></transition>
 
   <!-- 功能覆盖层（顺序即层级，后渲染的在上） -->
-  <CreateGroup v-if="state.showCreateGroup" />
-  <ChatInfo v-if="state.showChatInfo && state.chat" />
+  <transition name="bm-page"><CreateGroup v-if="state.showCreateGroup" /></transition>
+  <transition name="bm-page"><ChatInfo v-if="state.showChatInfo && state.chat" /></transition>
   <AdminView v-if="state.showAdmin" />
   <AnnouncementsView v-if="state.showAnnouncements" />
   <FeedbackView v-if="state.showFeedback" />
@@ -18,7 +18,7 @@
   <NotifyGuide v-if="state.showNotifyGuide" />
 
   <!-- 全局 Toast -->
-  <div v-if="state.toast" class="toast">{{ state.toast }}</div>
+  <transition name="bm-toast"><div v-if="state.toast" class="toast">{{ state.toast }}</div></transition>
 
   <!-- ═══════ App 版本更新弹窗 ═══════ -->
   <div v-if="updateInfo" class="dialog-overlay" :style="{zIndex:200}" @click.self="!updateInfo.force && dismissUpdate()">

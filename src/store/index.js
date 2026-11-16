@@ -413,10 +413,27 @@ let lastNewestStamp = 0
 
 /* ─── Toast ─── */
 let toastTimer = null
+const toastQueue = []
+
+/** 显示提示：多条依次排队，避免互相覆盖 */
 export function showToast(t) {
-  state.toast = t
+  const msg = t == null ? '' : String(t)
+  if (!msg) return
+  toastQueue.push(msg)
+  if (state.toast) return            // 正在显示 → 排队
+  nextToast()
+}
+
+function nextToast() {
+  const msg = toastQueue.shift()
+  if (!msg) { state.toast = ''; return }
+  state.toast = msg
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { state.toast = '' }, 2200)
+  toastTimer = setTimeout(() => {
+    state.toast = ''
+    // 留出离场动画时间再显示下一条
+    toastTimer = setTimeout(() => { if (toastQueue.length) nextToast() }, 160)
+  }, 2200)
 }
 
 /* ─── 登录 / 改密 / 登出 ─── */

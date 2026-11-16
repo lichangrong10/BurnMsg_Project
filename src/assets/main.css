@@ -646,3 +646,18 @@ button:active,
 /* ═══════════ 第 4 批：图片淡入 ═══════════ */
 @keyframes bmImgIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
 .bubble img, .avatar img, .msg-img, .gs-result-avatar img { animation: bmImgIn 180ms var(--ease-out); }
+
+/* ═══════════ 返回动效 + Toast 进出场 ═══════════ */
+@keyframes bmPageOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(16%); }
+}
+/* 进场沿用 .chat-page 自带动画，这里只补离场 */
+.bm-page-leave-active { animation: bmPageOut 200ms var(--ease-out) forwards; position: absolute; inset: 0; z-index: 50; }
+.bm-page-leave-active > * { pointer-events: none; }
+
+/* Toast 进出场 */
+.bm-toast-enter-active { animation: bmToastIn 180ms var(--ease-out); }
+.bm-toast-leave-active { animation: bmToastOut 160ms var(--ease-out) forwards; }
+@keyframes bmToastIn  { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes bmToastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
