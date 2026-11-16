@@ -36,8 +36,9 @@ import { showToast } from '../store'
 const RING_TIMEOUT_MS = 45000
 /** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */
 const DIAL_TIMEOUT_MS = 60000
-/** 「正在连接」兜底：进入 connecting 后这么久还没 active，就报 ICE 未连通 */
-const CONNECT_TIMEOUT_MS = 20000
+/** 「正在连接」兜底：进入 connecting 后这么久还没 active，就报 ICE 未连通。
+ *  30s：无 TURN 时 host 候选穿透 + 首帧协商在弱网下常见要 10~20s，20s 太容易误杀。 */
+const CONNECT_TIMEOUT_MS = 30000
 /** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐（5s 足够早发现丢事件） */
 const DIAL_POLL_MS = 5000
 /** ICE 批量：每 120ms 或攒满 8 条发一次，避免撞 200/min 限流 */
@@ -228,6 +229,12 @@ function createPC(iceServerList) {
     if (remoteStream) callState.remoteStream = markRaw(remoteStream)
   }
   conn.onconnectionstatechange = () => onPcStateChange(conn)
+  // 部分 WebView 上 connectionState 会滞后，ICE 已 connected 就说明媒体通道打通了
+  conn.oniceconnectionstatechange = () => {
+    const st = conn.iceConnectionState
+    logCall('pc:ice-state', { ice: st, conn: conn.connectionState })
+    if (st === 'connected' || st === 'completed') markActive()
+  }
   return conn
 }
 
@@ -630,8 +637,12 @@ function onPcStateChange(conn) {
  * @param {{conversationId:string, kind:'audio'|'video', peerName?:string, peerUserId?:string}} opts
  */
 export async function startCall({ conversationId, kind = 'audio', peerName = '', peerUserId = '' }) {
-  if (callState.phase !== 'idle') { showToast('当前已有通话进行中'); return }
+  // 只有真正在进行中的通话才拦；'ended'/'failed' 只是结果态（1.8s 后自动回 idle），
+  // 用户这时立刻重拨应该直接放行，否则会看到「当前已有通话进行中」然后立刻被收掉。
+  const busyPhases = ['dialing', 'incoming', 'connecting', 'active']
+  if (busyPhases.indexOf(callState.phase) >= 0) { showToast('当前已有通话进行中'); return }
   if (!callSupported()) { showToast('当前环境不支持通话（需 HTTPS 或 App 内使用）'); return }
+  if (callState.phase !== 'idle') { logCall('start:cleanup-stale-phase', { phase: callState.phase }) }
   // 只做兜底：默认允许视频（本地预览已在原生壳关闭）。需要纯语音时用调试开关。
   if (kind === 'video' && forceAudioOnly()) {
     kind = 'audio'
