@@ -5,7 +5,13 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
       <div class="avatar-wrap chat-avatar-wrap">
-        <div class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
+        <div v-if="chatQuad.length" class="avatar avatar-quad" style="width: 38px; height: 38px;">
+          <span v-for="(m, i) in chatQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
+            <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+          </span>
+          <span v-for="n in (4 - chatQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+        </div>
+        <div v-else class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
         <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
       </div>
       <div class="chat-title-wrap" @click="openInfo">
@@ -509,7 +515,7 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices, ensureGroupThumbs } from '../store'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -587,6 +593,14 @@ export default {
     }
   },
   computed: {
+    /** 群聊且无自定义头像 → 用前 4 位成员组成宫格 */
+    chatQuad() {
+      try {
+        const c = state.chat
+        if (!c || c.type !== 'group' || convAvatar(c)) return []
+        return (state.groupThumbs && state.groupThumbs[c.id]) || []
+      } catch (e) { return [] }
+    },
     /** 本机设备名（来自 /auth/devices 的浏览器/系统识别） */
     myDeviceLabel() {
       const list = state.devices || []
@@ -865,6 +879,7 @@ export default {
     }
   },
   mounted() {
+    try { this.ensureChatThumbs() } catch (e) {}
     // 恢复本会话未发送草稿（按会话暂存，退出/重进还原）
     if (state.chat) this.draft = getConvDraft(state.chat.id) || ''
     window.addEventListener('bm-back', this.onNativeBack)
@@ -902,6 +917,11 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    ensureChatThumbs() {
+      const c = state.chat
+      if (!c || c.type !== 'group' || convAvatar(c)) return
+      if (!(state.groupThumbs && state.groupThumbs[c.id])) ensureGroupThumbs([c.id])
+    },
     // 先关菜单、下一帧再执行动作：点击即时响应，避免重渲染卡顿感
     runAfterMenu(fn) {
       this.chatMenu = false
@@ -2423,4 +2443,13 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 /* 待处理状态：整项用主题色描边提示 */
 .chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
 .chat-menu-item.mi-urgent .mi-label { color: var(--tg-blue-dark); font-weight: 600; }
+
+  /* 群默认头像：2x2 宫格（聊天页 38px） */
+  .avatar.avatar-quad { display: flex !important; flex-wrap: wrap; align-content: space-between; justify-content: space-between;
+    gap: 2px; padding: 0; box-sizing: border-box; background: transparent; border-radius: 9px !important; overflow: hidden; flex-shrink: 0; }
+  .avatar.avatar-quad .quad-cell { flex: 0 0 calc(50% - 1px); aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600;
+    color: #fff; line-height: 1; border-radius: 3px; overflow: hidden; }
+  .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
 </style>

@@ -13,7 +13,13 @@
       <!-- ═══ 资料卡 ═══ -->
       <div class="info-card">
         <div class="avatar-editable" :class="{ dim: !(isGroup && canManage && !isDissolved) }" @click="pickGroupAvatar" :title="isGroup && canManage && !isDissolved ? '更换群头像' : ''">
-          <div class="avatar" :style="{ width: '72px', height: '72px', fontSize: '28px', background: avatarColor(title) }"><img v-if="cardAvatar" :src="cardAvatar" alt=""><template v-else>{{ (title || '?')[0] }}</template></div>
+          <div v-if="cardQuad.length" class="avatar avatar-quad" style="width: 72px; height: 72px;">
+            <span v-for="(m, i) in cardQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
+              <img v-if="m.avatar" :src="avatarSrc({ avatar_url: m.avatar })" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+            </span>
+            <span v-for="n in (4 - cardQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+          </div>
+          <div v-else class="avatar" :style="{ width: '72px', height: '72px', fontSize: '28px', background: avatarColor(title) }"><img v-if="cardAvatar" :src="cardAvatar" alt=""><template v-else>{{ (title || '?')[0] }}</template></div>
           <div v-if="isGroup && canManage && !isDissolved" class="avatar-camera"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         </div>
         <input ref="groupAvatarFile" type="file" accept="image/*" style="display:none" @change="onGroupAvatarPick">
@@ -155,7 +161,7 @@
 </template>
 
 <script>
-import { state, myChatRole, renameGroup, renameChannel, addMembers, removeMember, changeGroupAvatar, dissolveGroup, transferOwnership } from '../store'
+import { state, myChatRole, renameGroup, renameChannel, addMembers, removeMember, changeGroupAvatar, dissolveGroup, transferOwnership, ensureGroupThumbs } from '../store'
 import { avatarColor, avatarSrc, convAvatar, memberName, memberUid, memberAvatar } from '../utils/format'
 
 export default {
@@ -175,6 +181,14 @@ export default {
     }
   },
   computed: {
+    /** 群资料页：无自定义群头像时用前 4 位成员宫格 */
+    cardQuad() {
+      try {
+        const conv = state.chat
+        if (!conv || conv.type !== 'group' || convAvatar(conv)) return []
+        return (state.groupThumbs && state.groupThumbs[conv.id]) || []
+      } catch (e) { return [] }
+    },
     isGroup() {
       return state.chat && state.chat.type !== 'private'
     },
@@ -218,12 +232,18 @@ export default {
     }
   },
   mounted() {
+    try { this.ensureInfoThumbs() } catch (e) {}
     window.addEventListener('bm-back', this.onNativeBack)
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    ensureInfoThumbs() {
+      const conv = state.chat
+      if (!conv || conv.type !== 'group' || convAvatar(conv)) return
+      if (!(state.groupThumbs && state.groupThumbs[conv.id])) ensureGroupThumbs([conv.id])
+    },
     /** 原生返回键：先关本页内部弹层（解散/退群确认→成员操作→添加成员→编辑资料），消费掉事件 */
     onNativeBack(e) {
       if (this.confirmDissolve) { this.confirmDissolve = false; e.preventDefault(); return }
@@ -315,6 +335,15 @@ export default {
 .role-tag.owner { color: #fff; background: var(--tg-blue); }
 .check-circle { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--tg-border); margin-right: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .check-circle.on { background: var(--tg-blue); border-color: var(--tg-blue); }
+
+  /* 群资料页：2x2 宫格大头像 */
+  .avatar.avatar-quad { display: flex !important; flex-wrap: wrap; align-content: space-between; justify-content: space-between;
+    gap: 3px; padding: 0; box-sizing: border-box; background: transparent; border-radius: 14px !important; overflow: hidden; }
+  .avatar.avatar-quad .quad-cell { flex: 0 0 calc(50% - 1.5px); aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600;
+    color: #fff; line-height: 1; border-radius: 5px; overflow: hidden; }
+  .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
 </style>
 <style scoped>
 .avatar-editable { position: relative; cursor: pointer; display: inline-block; }

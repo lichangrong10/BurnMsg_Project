@@ -188,4 +188,11 @@ export default {
   .content-scroll.tab-anim { will-change: transform, opacity; backface-visibility: hidden; }
   .tab-slide-left-enter-active, .tab-slide-left-leave-active,
   .tab-slide-right-enter-active, .tab-slide-right-leave-active { will-change: transform, opacity; }
+
+  /* 顶栏标题居中（焚信 / 频道 / 通讯录 / 我的 均居中），右侧图标不受影响 */
+  .topbar { position: relative; }
+  .topbar .topbar-title { position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; pointer-events: none; z-index: 1; }
+  .topbar > div:not(.topbar-title) { position: relative; z-index: 2; margin-left: auto; }
 </style>
