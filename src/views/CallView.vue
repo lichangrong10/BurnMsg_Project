@@ -29,21 +29,24 @@
     </div>
 
     <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面。
-         ref 用函数式回调：元素一挂载就绑流，不再依赖 watcher 的时序；
-         元素带 transform 会进合成层，个别 WebView 上会一直黑，所以镜像交给外层不碰 video 本身。 -->
-    <video
+         ⚠️ 外层 div 承担尺寸/圆角/裁切，<video> 上**不加** transform / border-radius / box-shadow / transition：
+         这些会让 WebView 把相机流送进合成层，实测在部分机型上会卡死渲染进程（整页假死）。 -->
+    <div
       v-if="isVideoCall && hasLocalVideo"
-      :ref="bindLocalEl"
-      class="call-surface"
+      class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
-      :style="localStyle"
-      autoplay
-      playsinline
-      muted
-      @loadedmetadata="onLocalMeta"
       @click="onSurfaceClick('local')"
       @dblclick.prevent="onDblTap('local')"
-    ></video>
+    >
+      <video
+        :ref="bindLocalEl"
+        class="local-video"
+        autoplay
+        playsinline
+        muted
+        @loadedmetadata="onLocalMeta"
+      ></video>
+    </div>
 
     <div class="call-actions">
       <!-- 来电：拒接 / 接听 -->
@@ -136,7 +139,6 @@ export default {
       localEl: null,        // 本地 <video> DOM（不走 $refs，避免 v-if 时序坑）
       localWatchdog: null,  // 1.5s 未出画的自检定时器
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
-      noMirror: false,      // 自检失败后关掉镜像 transform（个别 WebView 上 transform 会让 video 黑屏）
       logOpen: false,       // 日志面板
       logText: ''
     }
@@ -159,18 +161,16 @@ export default {
       return n[0]
     },
     avatarBg() { return avatarColor(this.callState.peer.name || '?') },
-    /** 前置摄像头本地预览要镜像；后置不镜像（否则字是反的） */
+    /** 远端画面双击放大：只在用户主动双击后加 transform，不参与初始渲染 */
     remoteStyle() {
       const z = this.focus === 'remote' ? this.zoom : 1
       return z > 1 ? { transform: `scale(${z})` } : null
     },
-    localStyle() {
-      const z = this.focus === 'local' ? this.zoom : 1
-      const mirror = this.callState.facing === 'user' && !this.noMirror
-      const parts = [mirror ? 'scaleX(-1)' : null, z > 1 ? `scale(${z})` : null]
-      const t = parts.filter(Boolean).join(' ')
-      return t ? { transform: t } : null
-    },
+    /**
+     * 本地预览**不做镜像**：`transform: scaleX(-1)` 会让 WebView 把相机流送进合成层，
+     * 实测这台机器上直接卡死渲染进程（音频通话不受影响，因为没有 video 元素）。
+     * 宁可少一个镜像效果，也不冒整页假死的风险。
+     */
     /** 顶部副标题：把 phase/status 翻成一句人话（结果态优先显示结果） */
     subTitle() {
       const s = this.callState
@@ -233,7 +233,6 @@ export default {
         v.srcObject = null
         v.srcObject = s
         this.playSafely(v)
-        this.noMirror = true // 去掉 transform：个别 WebView 上合成层会让实时视频黑屏
         setTimeout(() => {
           if (this.localEl && this.localEl.videoWidth === 0) this.localDead = true
         }, 900)
@@ -329,15 +328,17 @@ export default {
 /* 画面层：同一个 .call-surface 在主画面/小窗之间切换（互换只需换 class，不重建元素） */
 .call-surface {
   position: absolute; object-fit: cover; background: #000; z-index: 1;
-  transition: transform .18s ease, width .18s ease, height .18s ease, border-radius .18s ease, opacity .18s ease;
   touch-action: manipulation; /* 让双击放大不被浏览器当成页面缩放 */
 }
 .call-surface.as-main { inset: 0; width: 100%; height: 100%; border-radius: 0; }
 .call-surface.as-pip {
   right: 14px; top: calc(env(safe-area-inset-top, 0px) + 86px);
   width: 104px; height: 148px; border-radius: 14px; z-index: 3;
-  box-shadow: 0 6px 20px rgba(0,0,0,.45);
 }
+/* 本地预览：裁切/圆角放在外层 div 上，video 只负责铺满（不碰合成层属性） */
+.call-local-wrap { overflow: hidden; background: #111; }
+.local-video { display: block; width: 100%; height: 100%; object-fit: cover; background: #111; }
+
 /* 语音通话：远端元素压到 1px，只让音轨继续播 */
 .call-surface.audio-only { width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 /* 只对**远端**元素做「还没出画就隐藏」；本地元素没有 has-video，不能一起被 rule 命中 */
@@ -414,4 +415,6 @@ export default {
 .ca-btn:active svg { transform: scale(.93); }
 .ca-btn span { opacity: .82; white-space: nowrap; }
 </style>
+
+
 
