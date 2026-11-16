@@ -93,6 +93,8 @@ export const callState = reactive({
   relay: true,
   /** 当前使用的摄像头朝向：user=前置（本地预览镜像）| environment=后置 */
   facing: 'user',
+  /** 采集降级说明（如「摄像头不可用，已按语音通话继续」）；非空时 UI 提示 */
+  mediaWarning: '',
 })
 
 /* ─── 非 reactive 的会话资源（MediaStream 放进 reactive 会被 Proxy 包裹，必须 markRaw） ─── */
@@ -191,32 +193,51 @@ function createPC(iceServerList) {
 }
 
 /** 打开麦克风（视频再带摄像头，720p 上限，留带宽给弱网）。
- *  带超时：Android 上权限弹窗没被处理时 getUserMedia 会一直挂着，界面就会永远停在「正在连接」。 */
+ *  带超时：Android 上权限弹窗没被处理时 getUserMedia 会一直挂着，界面就会永远停在「正在连接」。
+ */
 const MEDIA_TIMEOUT_MS = 12000
-async function getUserMediaFor(kind) {
-  const constraints = kind === 'video'
-    ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } }
-    : { audio: true }
-  const pending = navigator.mediaDevices.getUserMedia(constraints)
+
+/** 给 Promise 加超时，超时后把原来的流关掉，避免摄像头常驻 */
+function withTimeout(promise, msg, ms = MEDIA_TIMEOUT_MS) {
   let timer = null
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
-      const err = new Error('获取摄像头/麦克风超时（请确认权限询问已点允许）')
+      const err = new Error(msg)
       err.name = 'TimeoutError'
       reject(err)
-    }, MEDIA_TIMEOUT_MS)
+    }, ms)
   })
-  try {
-    return await Promise.race([pending, timeout])
-  } finally {
-    clearTimeout(timer)
-    // 超时后上游已经失败，但流可能稍后才拿到，别把摄像头一直开着
-    pending.then(s => {
-      if (callState.phase !== 'connecting' && callState.phase !== 'active' && callState.phase !== 'dialing') {
-        s.getTracks().forEach(t => { try { t.stop() } catch (e) { /* 忽略 */ } })
-      }
-    }).catch(() => {})
+  promise.catch(() => {}) // 避免超时后原 promise 拒绝变成 unhandled
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * 采集媒体：**麦克风优先、摄像头可选**。
+ *
+ * 为什么拆两步：个别 Android WebView / ROM（这台机器 logcat 里一直报 camerahalserver 错误）
+ * 在初始化摄像头时会卡住渲染进程的主线程，整页像死掉。先拿麦克风能把通话先建立起来，
+ * 摄像头失败就降级成语音通话并明确提示，不至于整通电话打不了。
+ */
+async function acquireMedia(kind) {
+  const audio = await withTimeout(
+    navigator.mediaDevices.getUserMedia({ audio: true }),
+    '获取麦克风超时（请确认权限询问已点允许）',
+  ).catch(e => { throw e })
+  const tracks = [...audio.getAudioTracks()]
+  if (kind === 'video') {
+    try {
+      const vs = await withTimeout(
+        navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } }),
+        '获取摄像头超时（可能被其他应用占用）',
+      )
+      tracks.push(...vs.getVideoTracks())
+    } catch (e) {
+      logCall('media:video-failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
+      callState.mediaWarning = '摄像头不可用，已按语音通话继续'
+      showToast(callState.mediaWarning)
+    }
   }
+  return new MediaStream(tracks)
 }
 
 /* ══════════ ICE 收发管线 ══════════ */
@@ -293,6 +314,7 @@ function resetLocal() {
   callState.callId = null
   callState.relay = true
   callState.facing = 'user'
+  callState.mediaWarning = ''
 }
 
 /**
@@ -571,7 +593,7 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     callKey = await deriveCallKey(ephPair, peerIKPub, conversationId, ephPub)
     // ④ 采集 → 建连 → offer
     callState.status = 'media'
-    localStream = markRaw(await getUserMediaFor(kind))
+    localStream = markRaw(await acquireMedia(kind))
     callState.localStream = localStream
     pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
@@ -796,7 +818,7 @@ export async function acceptCall() {
     const ice = await turnIceServers()
     callState.relay = ice.relay
     callKey = incomingCallKey
-    localStream = markRaw(await getUserMediaFor(callState.kind))
+    localStream = markRaw(await acquireMedia(callState.kind))
     logCall('accept:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
     callState.localStream = localStream
     pc = createPC(ice.list)
@@ -981,3 +1003,4 @@ export function uninstallCallEvents() {
   callState.endedReason = ''
   callState.error = ''
 }
+

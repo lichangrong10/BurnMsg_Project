@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="call-page" :class="'kind-' + callState.kind">
     <!-- 远端画面：默认主画面；和本地画面互换后变成小窗。
          语音通话时压到 1px 只让音轨继续播（不渲染占画面）。 -->
@@ -19,7 +19,8 @@
       <div v-if="!callState.relay && callState.phase !== 'incoming'" class="call-relay-tip">
         无通话中继 · 仅同一网络可通
       </div>
-      <div v-if="isVideoCall && hasLocal" class="call-hint">点小窗可互换画面 · 双击放大</div>
+      <div v-if="isVideoCall && hasLocalVideo" class="call-hint">点小窗可互换画面 · 双击放大</div>
+      <div v-if="callState.mediaWarning && callState.phase !== 'incoming'" class="call-hint warn">{{ callState.mediaWarning }}</div>
       <div v-if="localDead" class="call-hint warn">本地预览未出画（画面仍会发给对方）</div>
     </div>
 
@@ -31,7 +32,7 @@
          ref 用函数式回调：元素一挂载就绑流，不再依赖 watcher 的时序；
          元素带 transform 会进合成层，个别 WebView 上会一直黑，所以镜像交给外层不碰 video 本身。 -->
     <video
-      v-if="isVideoCall && hasLocal"
+      v-if="isVideoCall && hasLocalVideo"
       :ref="bindLocalEl"
       class="call-surface"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
@@ -63,11 +64,11 @@
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 18v4"/><template v-if="callState.muted"><path d="m3 3 18 18"/></template></svg>
           <span>{{ callState.muted ? '取消静音' : '静音' }}</span>
         </button>
-        <button v-if="callState.kind === 'video'" class="ca-btn ghost" :class="{ on: callState.camOff }" @click="onCamera">
+        <button v-if="callState.kind === 'video' && hasLocalVideo" class="ca-btn ghost" :class="{ on: callState.camOff }" @click="onCamera">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg>
           <span>{{ callState.camOff ? '开摄像头' : '关摄像头' }}</span>
         </button>
-        <button v-if="callState.kind === 'video'" class="ca-btn ghost" @click="onSwitch">
+        <button v-if="callState.kind === 'video' && hasLocalVideo" class="ca-btn ghost" @click="onSwitch">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8a8 8 0 0 0-14-2"/><path d="M4 16a8 8 0 0 0 14 2"/><path d="M4 4v4h4"/><path d="M20 20v-4h-4"/></svg>
           <span>翻转</span>
         </button>
@@ -143,6 +144,11 @@ export default {
   computed: {
     hasRemote() { return !!this.callState.remoteStream },
     hasLocal() { return !!this.callState.localStream },
+    /** 本地流里真的有视频轨（摄像头降级为语音时为 false，此时不显示预览小窗与摄像头按钮） */
+    hasLocalVideo() {
+      const s = this.callState.localStream
+      return !!(s && s.getVideoTracks && s.getVideoTracks().length)
+    },
     isVideoCall() { return this.callState.kind === 'video' },
     /** 构建戳：一眼看出手机上跑的是哪次打包（排查旧包/新包混淆） */
     buildTag() {
@@ -408,3 +414,4 @@ export default {
 .ca-btn:active svg { transform: scale(.93); }
 .ca-btn span { opacity: .82; white-space: nowrap; }
 </style>
+
