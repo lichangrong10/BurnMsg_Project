@@ -32,7 +32,10 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         // 只对 debug 构建开启 WebView 远程调试；release 包不开（否则任何拿到 adb 的人都能看页面内容）。
         // 需要调试 release 行为时，请改用 debug 包验证。
-        if (BuildConfig.DEBUG) {
+        // 注意：AGP 8 默认不生成 BuildConfig（buildFeatures.buildConfig=false），故用 debuggable 标记判断。
+        boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (debuggable) {
             WebView.setWebContentsDebuggingEnabled(true);
         }
         // super.onCreate(savedInstanceState);
