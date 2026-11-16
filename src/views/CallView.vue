@@ -91,8 +91,16 @@
       </template>
     </div>
 
-    <!-- 排查用：不依赖 DevTools，点一下弹窗看本次通话的完整日志 -->
+    <!-- 排查用：页面内日志面板（**不用 window.alert**，alert 会阻塞 WebView 主线程，
+         一旦弹窗不可见整页就会像死掉一样：点挂断、点日志都没反应） -->
     <div class="call-log-btn" @click="showLog">日志</div>
+    <div v-if="logOpen" class="call-log-panel">
+      <div class="clp-head">
+        <span>通话日志</span>
+        <button class="clp-close" @click="logOpen = false">关闭</button>
+      </div>
+      <pre class="clp-body">{{ logText }}</pre>
+    </div>
   </div>
 </template>
 
@@ -127,7 +135,9 @@ export default {
       localEl: null,        // 本地 <video> DOM（不走 $refs，避免 v-if 时序坑）
       localWatchdog: null,  // 1.5s 未出画的自检定时器
       localDead: false,     // 自检判定「本地预览没画面」，用来提示 + 便于反馈排查
-      noMirror: false       // 自检失败后关掉镜像 transform（个别 WebView 上 transform 会让 video 黑屏）
+      noMirror: false,      // 自检失败后关掉镜像 transform（个别 WebView 上 transform 会让 video 黑屏）
+      logOpen: false,       // 日志面板
+      logText: ''
     }
   },
   computed: {
@@ -170,6 +180,10 @@ export default {
     // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
     'callState.remoteStream'(v) { this.$nextTick(() => this.attachRemote(v)) },
     'callState.localStream'(v) { this.$nextTick(() => this.attachLocal(v)) },
+    // 出错时自动把日志摊开，省得用户还要去点（也避免现场抓不到现场）
+    'callState.phase'(v) {
+      if (v === 'failed') this.$nextTick(() => this.showLog())
+    },
     'callState.kind'() {
       this.$nextTick(() => {
         this.attachRemote(this.callState.remoteStream)
@@ -274,7 +288,7 @@ export default {
       if (which && which !== this.focus) return // 只对当前主画面生效，避免点小窗时同时触发互换
       this.zoom = this.zoom > 1 ? 1 : 2
     },
-    /** 弹窗展示本次通话日志（release 包没有 DevTools 时的兜底） */
+    /** 打开日志面板（纯 DOM，不阻塞主线程） */
     showLog() {
       let text = ''
       try {
@@ -285,8 +299,8 @@ export default {
       } catch (e) {
         text = '读取日志失败：' + (e && e.message)
       }
-      const head = `phase=${this.callState.phase} relay=${this.callState.relay}\n\n`
-      try { window.alert(head + text) } catch (e) { /* 忽略 */ }
+      this.logText = `phase=${this.callState.phase} relay=${this.callState.relay}\n\n` + text
+      this.logOpen = true
     }
   }
 }
@@ -352,6 +366,30 @@ export default {
   background: rgba(255,255,255,.07);
 }
 .call-log-btn:active { background: rgba(255,255,255,.16); color: #fff; }
+
+/* 日志面板：页面内滚动层，关掉只靠自己的按钮，绝不阻塞 JS */
+.call-log-panel {
+  position: fixed; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); z-index: 460;
+  display: flex; flex-direction: column;
+  background: rgba(12,15,18,.96); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+}
+.clp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.12);
+  font-size: 13px; color: rgba(255,255,255,.8);
+}
+.clp-close {
+  padding: 4px 12px; border-radius: 8px; border: 0; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 12.5px;
+}
+.clp-body {
+  flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.5;
+  color: rgba(255,255,255,.82); white-space: pre-wrap; word-break: break-all;
+  -webkit-overflow-scrolling: touch; user-select: text;
+}
 
 .call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }.ca-btn {
   display: inline-flex; flex-direction: column; align-items: center; gap: 7px;
