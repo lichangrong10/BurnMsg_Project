@@ -212,6 +212,34 @@ function withTimeout(promise, msg, ms = MEDIA_TIMEOUT_MS) {
 }
 
 /**
+ * 视频约束按「保守 → 宽松」逐个尝试：某些 Android WebView / ROM 对 720p + facingMode
+ * 这组约束会卡住（相机已 CONNECT 但 Promise 不返回），换成 480p 或最简约束常能过。
+ */
+const VIDEO_CONSTRAINTS = [
+  { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+  { width: { ideal: 640 }, height: { ideal: 480 } },
+  true,
+]
+
+async function acquireVideoTrack() {
+  const errors = []
+  for (const c of VIDEO_CONSTRAINTS) {
+    try {
+      const vs = await withTimeout(navigator.mediaDevices.getUserMedia({ video: c }), '获取摄像头超时', 8000)
+      const track = vs.getVideoTracks()[0]
+      if (track) {
+        logCall('media:video-ok', { constraint: JSON.stringify(c) })
+        return track
+      }
+    } catch (e) {
+      errors.push(`${JSON.stringify(c)} → ${(e && e.name) || ''} ${(e && e.message) || ''}`)
+      logCall('media:video-attempt-failed', { constraint: JSON.stringify(c), name: (e && e.name) || null })
+    }
+  }
+  throw new Error('摄像头不可用：' + errors.join(' | '))
+}
+
+/**
  * 采集媒体：**麦克风优先、摄像头可选**。
  *
  * 为什么拆两步：个别 Android WebView / ROM（这台机器 logcat 里一直报 camerahalserver 错误）
@@ -223,16 +251,13 @@ async function acquireMedia(kind) {
     navigator.mediaDevices.getUserMedia({ audio: true }),
     '获取麦克风超时（请确认权限询问已点允许）',
   ).catch(e => { throw e })
+  logCall('media:audio-ok', { tracks: audio.getAudioTracks().length })
   const tracks = [...audio.getAudioTracks()]
   if (kind === 'video') {
     try {
-      const vs = await withTimeout(
-        navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } }),
-        '获取摄像头超时（可能被其他应用占用）',
-      )
-      tracks.push(...vs.getVideoTracks())
+      tracks.push(await acquireVideoTrack())
     } catch (e) {
-      logCall('media:video-failed', { name: (e && e.name) || null, msg: String((e && e.message) || e) })
+      logCall('media:video-failed', { msg: String((e && e.message) || e) })
       callState.mediaWarning = '摄像头不可用，已按语音通话继续'
       showToast(callState.mediaWarning)
     }
@@ -593,11 +618,15 @@ export async function startCall({ conversationId, kind = 'audio', peerName = '',
     callKey = await deriveCallKey(ephPair, peerIKPub, conversationId, ephPub)
     // ④ 采集 → 建连 → offer
     callState.status = 'media'
+    logCall('start:media-begin', { kind })
     localStream = markRaw(await acquireMedia(kind))
+    logCall('start:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
     callState.localStream = localStream
     pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+    logCall('start:pc-ready', { senders: pc.getSenders().length })
     await pc.setLocalDescription(await pc.createOffer())
+    logCall('start:offer-set', { signaling: pc.signalingState })
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
     const fp = dtlsFingerprintOf(sdp)
     if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹，无法建立加密通话')
