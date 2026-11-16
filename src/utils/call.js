@@ -57,6 +57,17 @@ export function callLog() { return callLogBuf.slice() }
 if (typeof window !== 'undefined') window.__callLog = callLog
 
 /**
+ * 把环形日志整体打到控制台。Capacitor 会把 WebView 的 console.* 转进 Logcat，
+ * 所以 release 包没有 DevTools 时也能用 `adb logcat -s Capacitor` 拿到这份证据。
+ */
+function dumpCallLog(reason) {
+  try {
+    const body = callLogBuf.map(x => `${x.t} ${x.tag} ${JSON.stringify(x)}`).join('\n')
+    console.warn('[call-log] ' + (reason || '') + '\n' + body)
+  } catch (e) { /* 忽略 */ }
+}
+
+/**
  * 通话 UI 状态（CallView 直接绑定）。
  * phase: idle | incoming | dialing | connecting | active | ended | failed
  * status: 更细的进度文案（preparing | media | ringing | answering）
@@ -283,6 +294,8 @@ function finish(phase, reason, text) {
 function fail(e) {
   callState.muted = false
   callState.camOff = false
+  logCall('fail', { msg: typeof e === 'string' ? e : errText(e) })
+  dumpCallLog('fail')
   finish('failed', 'error', typeof e === 'string' ? e : errText(e))
 }
 
@@ -339,6 +352,8 @@ function startDialTimeout() {
   dialTimer = setTimeout(() => {
     if (callState.phase !== 'dialing') return
     const id = currentCallId
+    logCall('dial-timeout', { call_id: id })
+    dumpCallLog('dial-timeout')
     if (id) api.hangupCall(id, 'hangup').catch(() => {})
     finish('ended', 'timeout', '无人接听')
   }, DIAL_TIMEOUT_MS)
@@ -362,6 +377,7 @@ function startDialPoll() {
         if (!activeSeenAt) activeSeenAt = Date.now()
         logCall('poll:active-without-answer', { waited_ms: Date.now() - activeSeenAt })
         if (Date.now() - activeSeenAt > 6000) {
+          dumpCallLog('active-without-answer')
           api.hangupCall(currentCallId, 'hangup').catch(() => {})
           fail('对方已接听，但应答未送达（信令丢失），请重拨')
         }
