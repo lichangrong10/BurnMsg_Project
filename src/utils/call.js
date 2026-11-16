@@ -213,6 +213,18 @@ async function turnIceServers() {
   }
 }
 
+/** 打印 transceiver 状态：排查「对方收不到我的视频」时最关键的一组数据 */
+function trInfo(conn) {
+  try {
+    return conn.getTransceivers().map(t => ({
+      kind: (t.receiver && t.receiver.track && t.receiver.track.kind) || 'none',
+      dir: t.direction,
+      cur: t.currentDirection,
+      mid: t.mid,
+    }))
+  } catch (e) { return [] }
+}
+
 /** 建 PeerConnection：1:1 一律 max-bundle，省候选也省 TURN 带宽 */
 function createPC(iceServerList) {
   const cfg = { iceServers: iceServerList || [], bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' }
@@ -226,6 +238,11 @@ function createPC(iceServerList) {
   // 远端媒体：audio 只有音轨、video 有音视频轨，都从同一个 stream 取
   conn.ontrack = (ev) => {
     remoteStream = ev.streams && ev.streams[0] ? ev.streams[0] : null
+    logCall('pc:ontrack', {
+      kind: ev.track && ev.track.kind,
+      streams: !!(ev.streams && ev.streams.length),
+      tracks: remoteStream ? remoteStream.getTracks().map(t => t.kind) : [],
+    })
     if (remoteStream) callState.remoteStream = markRaw(remoteStream)
   }
   conn.onconnectionstatechange = () => onPcStateChange(conn)
@@ -901,14 +918,17 @@ export async function acceptCall() {
     logCall('accept:local-published', { preview: localPreviewEnabled() }) // 本地预览从这一刻开始渲染
     pc = createPC(ice.list)
     logCall('accept:pc-created', { senders: pc.getSenders().length })
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
-    logCall('accept:tracks-added', { senders: pc.getSenders().length })
+    // 顺序很重要：先 SRD 建立 transceiver（按对端 offer 的 m-line），再加轨、再 createAnswer。
+    // 反过来（先 addTrack 再 SRD）时，个别实现会把 answer 里的视频方向算成 recvonly，
+    // 表现就是「我能看到对方，对方看不到我」。
     await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
-    logCall('accept:remote-desc-ok', { signaling: pc.signalingState })
+    logCall('accept:remote-desc-ok', { signaling: pc.signalingState, tr: trInfo(pc) })
     remoteDescSet = true
     flushRemoteIce()
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+    logCall('accept:tracks-added', { senders: pc.getSenders().length, tr: trInfo(pc) })
     await pc.setLocalDescription(await pc.createAnswer())
-    logCall('accept:answer-ok', { signaling: pc.signalingState })
+    logCall('accept:answer-ok', { signaling: pc.signalingState, tr: trInfo(pc) })
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
     const fp = dtlsFingerprintOf(sdp)
     if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹')
