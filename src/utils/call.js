@@ -190,12 +190,33 @@ function createPC(iceServerList) {
   return conn
 }
 
-/** 打开麦克风（视频再带摄像头，720p 上限，留带宽给弱网） */
+/** 打开麦克风（视频再带摄像头，720p 上限，留带宽给弱网）。
+ *  带超时：Android 上权限弹窗没被处理时 getUserMedia 会一直挂着，界面就会永远停在「正在连接」。 */
+const MEDIA_TIMEOUT_MS = 12000
 async function getUserMediaFor(kind) {
   const constraints = kind === 'video'
     ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } }
     : { audio: true }
-  return navigator.mediaDevices.getUserMedia(constraints)
+  const pending = navigator.mediaDevices.getUserMedia(constraints)
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('获取摄像头/麦克风超时（请确认权限询问已点允许）')
+      err.name = 'TimeoutError'
+      reject(err)
+    }, MEDIA_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([pending, timeout])
+  } finally {
+    clearTimeout(timer)
+    // 超时后上游已经失败，但流可能稍后才拿到，别把摄像头一直开着
+    pending.then(s => {
+      if (callState.phase !== 'connecting' && callState.phase !== 'active' && callState.phase !== 'dialing') {
+        s.getTracks().forEach(t => { try { t.stop() } catch (e) { /* 忽略 */ } })
+      }
+    }).catch(() => {})
+  }
 }
 
 /* ══════════ ICE 收发管线 ══════════ */
@@ -298,9 +319,11 @@ function finish(phase, reason, text) {
 function fail(e) {
   callState.muted = false
   callState.camOff = false
-  logCall('fail', { msg: typeof e === 'string' ? e : errText(e) })
+  const text = typeof e === 'string' ? e : errText(e)
+  logCall('fail', { msg: text, name: (e && e.name) || null, raw: String((e && e.message) || e) })
   dumpCallLog('fail')
-  finish('failed', 'error', typeof e === 'string' ? e : errText(e))
+  showToast(text) // 结果态只有 1.8s，关键错误额外弹一次，免得看不到
+  finish('failed', 'error', text)
 }
 
 /** 对端媒体真正连通：进 active + 开始计时 */
@@ -765,19 +788,23 @@ export async function acceptCall() {
   clearRingTimeout()
   callState.phase = 'connecting'
   callState.status = 'answering'
+  logCall('accept:begin', { call_id: currentCallId, kind: callState.kind })
   try {
     // 被叫同样：中继凭据拿不到就只走 host 候选（同网仍可接通）
     const ice = await turnIceServers()
     callState.relay = ice.relay
     callKey = incomingCallKey
     localStream = markRaw(await getUserMediaFor(callState.kind))
+    logCall('accept:media-ok', { tracks: localStream.getTracks().map(t => t.kind) })
     callState.localStream = localStream
     pc = createPC(ice.list)
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
     await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
+    logCall('accept:remote-desc-ok', { signaling: pc.signalingState })
     remoteDescSet = true
     flushRemoteIce()
     await pc.setLocalDescription(await pc.createAnswer())
+    logCall('accept:answer-ok', { signaling: pc.signalingState })
     const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
     const fp = dtlsFingerprintOf(sdp)
     if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹')
