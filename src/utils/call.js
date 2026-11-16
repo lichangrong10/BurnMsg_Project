@@ -429,7 +429,8 @@ function startDialPoll() {
   pollTimer = setInterval(async () => {
     const phase = callState.phase
     if (!currentCallId) return
-    if (phase !== 'dialing' && phase !== 'connecting' && phase !== 'active') return
+    // incoming 也纳入：主叫取消/超时后即使 call:ended 丢了，本机也能停止振铃
+    if (phase !== 'dialing' && phase !== 'incoming' && phase !== 'connecting' && phase !== 'active') return
     try {
       const view = await api.getCall(currentCallId)
       if (!view) return
@@ -767,6 +768,7 @@ async function onIncoming(p) {
     callState.error = ''
     startRing()
     startRingTimeout()
+    startDialPoll()   // 对方取消/超时后即使 call:ended 丢了，也能在 5s 内停振铃
   } catch (e) {
     // 解密失败 / 公钥缺失 / payload 损坏：直接拒绝，不留半死界面
     api.rejectCall(p.call_id, 'decline').catch(() => {})
