@@ -96,7 +96,7 @@
     <div class="call-log-btn" @click="showLog">日志</div>
     <div v-if="logOpen" class="call-log-panel">
       <div class="clp-head">
-        <span>通话日志</span>
+        <span>通话日志 · {{ buildTag }}</span>
         <button class="clp-close" @click="logOpen = false">关闭</button>
       </div>
       <pre class="clp-body">{{ logText }}</pre>
@@ -144,6 +144,10 @@ export default {
     hasRemote() { return !!this.callState.remoteStream },
     hasLocal() { return !!this.callState.localStream },
     isVideoCall() { return this.callState.kind === 'video' },
+    /** 构建戳：一眼看出手机上跑的是哪次打包（排查旧包/新包混淆） */
+    buildTag() {
+      try { return (typeof window !== 'undefined' && window.__appBuild) || 'unknown' } catch (e) { return 'unknown' }
+    },
     initial() {
       const n = this.callState.peer.name || '对方'
       return n[0]
