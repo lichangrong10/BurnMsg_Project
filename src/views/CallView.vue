@@ -90,6 +90,9 @@
         <button class="ca-btn ghost" @click="onHangup"><span>关闭</span></button>
       </template>
     </div>
+
+    <!-- 排查用：不依赖 DevTools，点一下弹窗看本次通话的完整日志 -->
+    <div class="call-log-btn" @click="showLog">日志</div>
   </div>
 </template>
 
@@ -98,7 +101,7 @@
  * 全屏通话界面（来电 / 拨号 / 通话中 / 结果态）。
  * 只做渲染与用户手势，所有信令与密钥都在 utils/call.js。
  */
-import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera } from '../utils/call'
+import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera, callLog } from '../utils/call'
 import { avatarColor } from '../utils/format'
 
 /** 秒 → m:ss / h:mm:ss */
@@ -270,6 +273,20 @@ export default {
       if (!this.isVideoCall) return
       if (which && which !== this.focus) return // 只对当前主画面生效，避免点小窗时同时触发互换
       this.zoom = this.zoom > 1 ? 1 : 2
+    },
+    /** 弹窗展示本次通话日志（release 包没有 DevTools 时的兜底） */
+    showLog() {
+      let text = ''
+      try {
+        const list = callLog()
+        text = list.length
+          ? list.map(x => `${x.t} ${x.tag} ${JSON.stringify(x)}`).join('\n')
+          : '暂无通话日志（本次 WebView 还没有产生通话事件）'
+      } catch (e) {
+        text = '读取日志失败：' + (e && e.message)
+      }
+      const head = `phase=${this.callState.phase} relay=${this.callState.relay}\n\n`
+      try { window.alert(head + text) } catch (e) { /* 忽略 */ }
     }
   }
 }
@@ -327,8 +344,16 @@ export default {
 .call-hint { margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.55); }
 .call-hint.warn { color: #FF9095; }
 
-.call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }
-.ca-btn {
+/* 排查入口：右下角很小的「日志」，点开是弹窗，不干扰正常通话界面 */
+.call-log-btn {
+  position: absolute; right: 10px; bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
+  z-index: 5; padding: 2px 8px; border-radius: 8px;
+  font-size: 11px; color: rgba(255,255,255,.38);
+  background: rgba(255,255,255,.07);
+}
+.call-log-btn:active { background: rgba(255,255,255,.16); color: #fff; }
+
+.call-actions { position: relative; z-index: 4; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 16px; }.ca-btn {
   display: inline-flex; flex-direction: column; align-items: center; gap: 7px;
   width: 74px; padding: 0; border: 0; background: transparent;
   color: rgba(255,255,255,.88); font-size: 12px; line-height: 1; cursor: pointer;
