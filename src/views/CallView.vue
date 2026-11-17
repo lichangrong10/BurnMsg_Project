@@ -44,7 +44,7 @@
          ⚠️ 外层 div 承担尺寸/圆角/裁切，<video> 上**不加** transform / border-radius / box-shadow / transition：
          这些会让 WebView 把相机流送进合成层，实测在部分机型上会卡死渲染进程（整页假死）。 -->
     <div
-      v-if="isVideoCall && hasLocalVideo"
+      v-if="!callState.inPip && isVideoCall && hasLocalVideo"
       class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
       @click="onSurfaceClick('local')"
@@ -312,6 +312,8 @@ export default {
   align-items: center;
   justify-content: center;
 }
+/* 小窗里只放对方画面：本地预览必须隐藏，否则它会盖住整个小窗 */
+.call-page.pip-mode .call-local-wrap { display: none !important; }
 /* 视频：铺满小窗；用 contain 保证任何比例都不裁切（多余处是小窗黑边） */
 .call-page.pip-mode .call-surface.as-main {
   position: absolute; inset: 0;

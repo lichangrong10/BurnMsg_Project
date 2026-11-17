@@ -44,10 +44,10 @@ const CallPip = (() => {
   } catch (e) { return null }
 })()
 
-/** 开启小窗能力：视频用 9:16，语音用 1:1（小窗更紧凑） */
+/** 开启小窗能力：视频默认按横屏 16:9（手机采集基本都是横屏），语音用 1:1 */
 async function enablePip(kind) {
   if (!CallPip) return
-  try { await CallPip.enable({ aspectRatio: kind === 'video' ? 9 / 16 : 1 }) } catch (e) { /* 机型不支持 */ }
+  try { await CallPip.enable({ aspectRatio: kind === 'video' ? 16 / 9 : 1 }) } catch (e) { /* 机型不支持 */ }
 }
 
 /** 关闭小窗能力：避免平时切后台也进小窗 */
