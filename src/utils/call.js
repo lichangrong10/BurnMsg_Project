@@ -56,6 +56,16 @@ async function disablePip() {
   try { await CallPip.disable() } catch (e) { /* 忽略 */ }
 }
 
+/**
+ * 把远端画面的真实宽高比同步给原生小窗。
+ * 对方是横屏（如 640×360）时，若小窗还按 9:16 开，画面会被裁掉两侧；
+ * 这里按实际比例更新 PiP 参数（原生侧会取最接近的标准比例）。
+ */
+export async function setPipAspect(ratio) {
+  if (!CallPip || !ratio || !isFinite(ratio) || ratio <= 0) return
+  try { await CallPip.enable({ aspectRatio: ratio }) } catch (e) { /* 忽略 */ }
+}
+
 /** 振铃超时：与后端 CALL_RING_TIMEOUT_SECONDS 默认值保持一致（被叫侧必须自己跑） */
 const RING_TIMEOUT_MS = 45000
 /** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */

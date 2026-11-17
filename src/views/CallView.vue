@@ -12,6 +12,7 @@
       playsinline
       @click="onSurfaceClick('remote')"
       @dblclick.prevent="onDblTap('remote')"
+      @loadedmetadata="onRemoteMeta"
     ></video>
 
     <div v-if="!callState.inPip" class="call-head">
@@ -113,7 +114,7 @@
  * 全屏通话界面（来电 / 拨号 / 通话中 / 结果态）。
  * 只做渲染与用户手势，所有信令与密钥都在 utils/call.js。
  */
-import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera } from '../utils/call'
+import { callState, acceptCall, endCall, rejectCurrent, dismissCall, toggleMute, toggleCamera, switchCamera, setPipAspect } from '../utils/call'
 import { avatarColor } from '../utils/format'
 
 /** 秒 → m:ss / h:mm:ss */
@@ -264,6 +265,14 @@ export default {
      * 点画面：只有点「当前的小窗」才互换主/次（点大画面不打断观看）。
      * 视频通话里把小窗放大是最高频诉求，这一步不需要碰 WebRTC。
      */
+    /** 远端画面尺寸确定后，把真实宽高比同步给原生小窗，避免横屏画面塞进竖窗被裁 */
+    onRemoteMeta() {
+      try {
+        const v = this.$refs.remoteVideo
+        if (!v || !v.videoWidth || !v.videoHeight) return
+        setPipAspect(v.videoWidth / v.videoHeight)
+      } catch (e) { /* 忽略 */ }
+    },
     onSurfaceClick(which) {
       if (!this.isVideoCall || !this.hasLocal) return
       const pip = this.focus === 'local' ? 'remote' : 'local'
@@ -303,11 +312,11 @@ export default {
   align-items: center;
   justify-content: center;
 }
-/* 视频：铺满小窗（裁切，无黑边）。想完整不裁切就把 cover 换成 contain */
+/* 视频：铺满小窗；用 contain 保证任何比例都不裁切（多余处是小窗黑边） */
 .call-page.pip-mode .call-surface.as-main {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: cover; border-radius: 0;
+  object-fit: contain; background: #000; border-radius: 0;
 }
 /* 语音：头像 + 计时作为一个居中竖列，尺寸按短边比例，窗口再小也不会溢出 */
 .pip-col {

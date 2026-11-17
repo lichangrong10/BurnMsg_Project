@@ -357,6 +357,21 @@ public class MainActivity extends BridgeActivity {
 
         static boolean isEnabled() { return enabled && instance != null; }
 
+        /**
+         * 把任意宽高比归到最接近的标准比例（竖 9:16 / 3:4、方 1:1、横 4:3 / 16:9）。
+         * 远端是横屏时用 16:9 开小窗，画面才不会被竖窗裁掉两侧。
+         */
+        private static int[] pickRatio(double ratio) {
+            double[][] table = { {9, 16}, {3, 4}, {1, 1}, {4, 3}, {16, 9} };
+            double best = Double.MAX_VALUE;
+            int[] out = { 9, 16 };
+            for (double[] t : table) {
+                double diff = Math.abs((t[0] / t[1]) - ratio);
+                if (diff < best) { best = diff; out = new int[] { (int) t[0], (int) t[1] }; }
+            }
+            return out;
+        }
+
         static android.app.PictureInPictureParams currentParams() { return params; }
 
         static void notifyPipChanged(boolean inPip) {
@@ -385,8 +400,8 @@ public class MainActivity extends BridgeActivity {
         public void enable(PluginCall call) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { call.resolve(); return; }
             double ratio = call.getDouble("aspectRatio", 9.0 / 16.0);
-            int w = 9, h = 16;
-            if (ratio >= 0.9 && ratio <= 1.1) { w = 1; h = 1; }
+            int[] wh = pickRatio(ratio);
+            int w = wh[0], h = wh[1];
 
             android.app.PictureInPictureParams.Builder builder =
                     new android.app.PictureInPictureParams.Builder()
