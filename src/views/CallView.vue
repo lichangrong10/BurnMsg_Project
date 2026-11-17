@@ -321,31 +321,26 @@ export default {
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
 }
 
-/* ── 画中画小窗（竖版布局）────────────────────────────────
-   系统给出的窗口是竖的（约 0.68），而对方画面多为横屏（16:9）。
-   与其两头将就，不如按竖版排：
-     上方：对方画面，满宽、保持自身比例（16:9 时就是上方一条）
-     下方：剩余空间 —— 视频通话放自己的小窗，语音通话放头像 + 计时
+/* ── 画中画小窗（微信式：铺满优先）────────────────
+   系统给的窗口尺寸是固定的（实测 110×161）；对方画面就按这个尺寸铺满，
+   允许裁边但绝不留黑；自己画面做成右上角小角标，保持比例不裁。
 */
 .call-page.pip-mode {
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end; /* 下方内容贴底，上方交给绝对定位的画面 */
+  display: block;      /* 两个画面都用绝对定位，不再参与 flex 排布 */
   background: #000;
 }
-/* 对方画面：贴顶、满宽、高度按自身比例自动（不裁切、不拉伸） */
+/* 对方画面：与窗口完全同尺寸 + cover → 铺满，无黑边（超出的边被裁掉） */
 .call-page.pip-mode .call-surface.call-remote {
-  position: absolute; top: 0; left: 0;
-  width: 100%; height: auto;
-  object-fit: contain; background: #000; border-radius: 0;
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  background: #000; border-radius: 0;
 }
-/* 自己画面：底部居中，宽度按窗口、高度按摄像头比例自动（完整不裁切） */
+/* 自己画面：右上角角标，宽度按窗口比例、高度按摄像头比例，完整显示 */
 .call-page.pip-mode .call-local-wrap {
-  position: absolute; bottom: 6px; left: 50%;
-  transform: translateX(-50%);
-  width: 46%; height: auto;
+  position: absolute; right: 6px; top: 6px;
+  width: 32%; height: auto;
   border-radius: 6px; overflow: hidden;
   background: #000; z-index: 3;
 }
