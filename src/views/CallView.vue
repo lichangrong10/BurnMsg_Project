@@ -47,6 +47,7 @@
       v-if="isVideoCall && hasLocalVideo"
       class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
+      :style="localWrapStyle"
       @click="onSurfaceClick('local')"
       @dblclick.prevent="onDblTap('local')"
     >
@@ -56,6 +57,7 @@
         autoplay
         playsinline
         muted
+        @loadedmetadata="onLocalMeta"
       ></video>
     </div>
 
@@ -137,6 +139,8 @@ export default {
       focus: 'remote',
       /** 主画面数字放大倍数：双击在 1x / 2x 之间切（视觉裁切，只影响本端） */
       zoom: 1,
+      /** 本地摄像头真实宽高比（小窗里按它设框，避免左右黑边或裁切） */
+      localRatio: 3 / 4,
     }
   },
   created() {
@@ -158,8 +162,12 @@ export default {
       return n[0]
     },
     avatarBg() { return avatarColor(this.callState.peer.name || '?') },
-    /** 远端画面双击放大：只在用户主动双击后加 transform，不参与初始渲染 */
-    remoteStyle() {
+    /** 小窗里：本地画框的宽高比跟随摄像头真实比例（既不留黑边，也不裁切） */
+    localWrapStyle() {
+      if (!this.callState.inPip) return null
+      return { aspectRatio: String(this.localRatio) }
+    },
+    /** 远端画面双击放大：只在用户主动双击后加 transform，不参与初始渲染 */    remoteStyle() {
       const z = this.focus === 'remote' ? this.zoom : 1
       return z > 1 ? { transform: `scale(${z})` } : null
     },
@@ -273,6 +281,14 @@ export default {
         setPipAspect(v.videoWidth / v.videoHeight)
       } catch (e) { /* 忽略 */ }
     },
+    /** 本地摄像头真实比例：小窗里按它设小窗宽高比，既不留黑边也不裁切 */
+    onLocalMeta() {
+      try {
+        const el = this.localEl
+        if (!el || !el.videoWidth || !el.videoHeight) return
+        this.localRatio = el.videoWidth / el.videoHeight
+      } catch (e) { /* 忽略 */ }
+    },
     onSurfaceClick(which) {
       if (!this.isVideoCall || !this.hasLocal) return
       const pip = this.focus === 'local' ? 'remote' : 'local'
@@ -312,20 +328,21 @@ export default {
   align-items: center;
   justify-content: center;
 }
-/* 小窗：对方画面铺满；自己的画面等比缩到右上角，完整显示不裁切 */
+/* 小窗：对方画面铺满；自己的画面按摄像头真实比例缩到右上角，无黑边且不裁切 */
 .call-page.pip-mode .call-surface.as-main {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: cover; background: #000; border-radius: 0;
+  object-fit: cover !important;
+  background: #000; border-radius: 0;
 }
 .call-page.pip-mode .call-local-wrap {
   right: 6px; top: 6px;
   width: 34%; height: auto;
-  aspect-ratio: 3 / 4;
+  min-height: 0;
   border-radius: 6px; overflow: hidden;
   background: #000; z-index: 3;
 }
-.call-page.pip-mode .local-video { object-fit: contain; }
+.call-page.pip-mode .local-video { object-fit: cover; }
 /* 语音：头像 + 计时作为一个居中竖列，尺寸按短边比例，窗口再小也不会溢出 */
 .pip-col {
   display: flex; flex-direction: column;
