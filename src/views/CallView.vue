@@ -141,9 +141,6 @@ export default {
       zoom: 1,
       /** 本地摄像头真实宽高比（小窗里按它设框，避免左右黑边或裁切） */
       localRatio: 3 / 4,
-      /** 远端画面宽高比、当前视口宽高比（小窗里据此决定铺满还是完整显示） */
-      remoteAspect: 0,
-      vpAspect: 0,
     }
   },
   created() {
@@ -165,30 +162,15 @@ export default {
       return n[0]
     },
     avatarBg() { return avatarColor(this.callState.peer.name || '?') },
-    /**
-     * 小窗里远端画面怎么缩放：
-     *   画面比例 ≈ 窗口比例（差 <6%）→ cover：铺满、几乎不裁切；
-     *   差得多（比如横屏画面塞进近方形窗口）→ contain：**优先完整显示**，左右绝不裁，
-     *   只在另一轴上留黑边（与微信/Telegram 的处理一致）。
-     */
-    pipFit() {
-      const va = this.remoteAspect
-      const wa = this.vpAspect
-      if (!va || !wa) return 'contain'
-      return Math.abs(va - wa) / Math.max(va, wa) < 0.06 ? 'cover' : 'contain'
-    },
     /** 小窗里：本地画框的宽高比跟随摄像头真实比例（既不留黑边，也不裁切） */
     localWrapStyle() {
       if (!this.callState.inPip) return null
       return { aspectRatio: String(this.localRatio) }
     },
-    /** 远端画面：小窗里按比例自适应 fit，双击放大时加 transform */
+    /** 远端画面：双击放大时才加 transform；小窗里的缩放方式由 pip-mode 的 CSS 决定 */
     remoteStyle() {
-      const style = {}
-      if (this.callState.inPip) style.objectFit = this.pipFit
       const z = this.focus === 'remote' ? this.zoom : 1
-      if (z > 1) style.transform = `scale(${z})`
-      return Object.keys(style).length ? style : null
+      return z > 1 ? { transform: `scale(${z})` } : null
     },
     /**
      * 本地预览**不做镜像**：`transform: scaleX(-1)` 会让 WebView 把相机流送进合成层，
@@ -218,8 +200,6 @@ export default {
       } else {
         this.$nextTick(() => this.playSafely(this.$refs.remoteVideo))
       }
-      // 进出小窗视口尺寸都会变，重新取一次比例，决定 cover/contain
-      this.$nextTick(() => this.updateViewportAspect())
     },
     // 本地预览元素带 v-if（要有流才渲染），watcher 触发时 DOM 还没更新，
     // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
@@ -233,15 +213,12 @@ export default {
     }
   },
   mounted() {
-    this.updateViewportAspect()
-    window.addEventListener('resize', this.updateViewportAspect)
     this.$nextTick(() => {
       this.attachRemote(this.callState.remoteStream)
       this.attachLocal(this.callState.localStream)
     })
   },
   beforeUnmount() {
-    window.removeEventListener('resize', this.updateViewportAspect)
     // 只解除元素绑定，真正的轨道释放在 call.js 的收尾里（这里停轨道会让通话断掉）
     const r = this.$refs.remoteVideo
     if (r) r.srcObject = null
@@ -297,21 +274,12 @@ export default {
      * 点画面：只有点「当前的小窗」才互换主/次（点大画面不打断观看）。
      * 视频通话里把小窗放大是最高频诉求，这一步不需要碰 WebRTC。
      */
-    /** 远端画面尺寸确定后：记录比例并同步给原生小窗 */
+    /** 远端画面尺寸确定后：把它同步给原生小窗（窗口比例尽量贴近画面） */
     onRemoteMeta() {
       try {
         const v = this.$refs.remoteVideo
         if (!v || !v.videoWidth || !v.videoHeight) return
-        this.remoteAspect = v.videoWidth / v.videoHeight
-        setPipAspect(this.remoteAspect)
-      } catch (e) { /* 忽略 */ }
-    },
-    /** 当前视口（小窗时就是小窗尺寸）的宽高比 */
-    updateViewportAspect() {
-      try {
-        const w = window.innerWidth || 1
-        const h = window.innerHeight || 1
-        this.vpAspect = w / h
+        setPipAspect(v.videoWidth / v.videoHeight)
       } catch (e) { /* 忽略 */ }
     },
     /** 本地摄像头真实比例：小窗里按它设小窗宽高比，既不留黑边也不裁切 */
@@ -353,30 +321,42 @@ export default {
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
 }
 
-/* ── 画中画小窗：内容按窗口比例等比缩放，单列居中，绝不越界 ── */
+/* ── 画中画小窗（竖版布局）────────────────────────────────
+   系统给出的窗口是竖的（约 0.68），而对方画面多为横屏（16:9）。
+   与其两头将就，不如按竖版排：
+     上方：对方画面，满宽、保持自身比例（16:9 时就是上方一条）
+     下方：剩余空间 —— 视频通话放自己的小窗，语音通话放头像 + 计时
+*/
 .call-page.pip-mode {
   padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end; /* 下方内容贴底，上方交给绝对定位的画面 */
+  background: #000;
 }
-/* 小窗：对方画面**完整显示**（横屏时左右不裁，上下留黑边）；
-   自己的画面按摄像头真实比例缩到右上角，无左右黑边且不裁切 */
-.call-page.pip-mode .call-surface.as-main {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  background: #000; border-radius: 0;
-  /* object-fit 由内联样式按「画面比例 vs 窗口比例」动态给（cover / contain） */
+/* 对方画面：贴顶、满宽、高度按自身比例自动（不裁切、不拉伸） */
+.call-page.pip-mode .call-surface.call-remote {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: auto;
+  object-fit: contain; background: #000; border-radius: 0;
 }
+/* 自己画面：底部居中，宽度按窗口、高度按摄像头比例自动（完整不裁切） */
 .call-page.pip-mode .call-local-wrap {
-  right: 6px; top: 6px;
-  width: 34%; height: auto;
-  min-height: 0;
+  position: absolute; bottom: 6px; left: 50%;
+  transform: translateX(-50%);
+  width: 46%; height: auto;
   border-radius: 6px; overflow: hidden;
   background: #000; z-index: 3;
 }
-.call-page.pip-mode .local-video { object-fit: cover; }
+.call-page.pip-mode .local-video { object-fit: contain; }
+/* 语音：头像 + 计时居中铺满（此时没有画面，整个窗口都给它） */
+.call-page.pip-mode .pip-col {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+}
 /* 语音：头像 + 计时作为一个居中竖列，尺寸按短边比例，窗口再小也不会溢出 */
 .pip-col {
   display: flex; flex-direction: column;
