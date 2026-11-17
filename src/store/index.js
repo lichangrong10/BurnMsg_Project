@@ -1283,13 +1283,9 @@ export async function loadMessages(quiet) {
     const last = sorted[sorted.length - 1]
     const newestStamp = last ? msgTime(last) : 0
     if (cid !== lastMsgConv) {
-      // 切换会话后的首次拉取：打印一条最新消息的原始样例（确认后端真实字段名/时间格式），并重建新消息基线
-      if (last) { try { console.log('[焚信] 消息字段样例:', JSON.stringify(last).slice(0, 600)) } catch (e) { /* 忽略 */ } }
       lastMsgConv = cid
       lastNewestStamp = newestStamp
     }
-    console.log('[焚信] 拉取消息', cid, '共', sorted.length, '条' + (quiet ? '（轮询）' : ''),
-      '| 最早:', sorted.length ? fmtMsgDbg(sorted[0]) : '-', '| 最新:', last ? fmtMsgDbg(last) : '-')
     // 最新时间戳超过基线 → 有新消息到达（首次加载不算，滚底由 msgSeq 负责）
     if (newestStamp > lastNewestStamp) state.newMsgSeq++
     lastNewestStamp = Math.max(lastNewestStamp, newestStamp)

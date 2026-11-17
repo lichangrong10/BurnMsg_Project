@@ -66,8 +66,6 @@ export function connectWs(token) {
   for (const ev of Object.keys(handlers)) {
     for (const fn of handlers[ev]) socket.on(ev, fn)
   }
-  socket.on('connect', () => console.log('[焚信] WS 已连接，实时推送开启'))
-  socket.on('disconnect', reason => console.log('[焚信] WS 断开:', reason))
   socket.on('connect_error', e => console.warn('[焚信] WS 连接失败:', (e && e.message) || e))
 }
 

@@ -178,11 +178,6 @@ export default {
     fmtTime,
 
     onInput() {
-    console.log('[搜索诊断] keyword=', JSON.stringify(this.keyword),
-      ' contacts=', (state.contacts || []).length,
-      ' 命中联系人=', this.localContacts.map(u => u.display_name),
-      ' convs=', (state.convs || []).length,
-      ' 命中会话=', this.localConvs.map(c => convName(c)))
       clearTimeout(this.debounceTimer)
       if ((this.keyword || '').length < 2) {
         this.results = []

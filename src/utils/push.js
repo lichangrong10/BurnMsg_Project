@@ -57,7 +57,6 @@ async function doInit() {
       c.init()
       // Android 13+ 必须运行时申请通知权限（manifest 里声明了 POST_NOTIFICATIONS，还要动态申请一次）
       try { c.requestPermission() } catch (e) { console.warn('[push] requestPermission 失败', e) }
-      console.log('[push] 初始化成功（Cordova 路线 A）')
       diag.mode = 'cordova'
       active = true
       return true
@@ -67,7 +66,6 @@ async function doInit() {
   }
   try {
     await NativeJpush.init()
-    console.log('[push] 初始化成功（自写插件路线 B）')
     diag.mode = 'native'
     active = true
     return true
@@ -332,7 +330,6 @@ export function onPushOpened(handler) {
     try {
       // 联调用：打印点击回调的原始结构，确认 extras 到底在哪一层
       // （后端 extras 是 snake_case 的 conversation_id，插件可能原样透传，也可能包在 extras 字段里）
-      console.log('[push] opened raw =', JSON.stringify(payload))
       const extras = extrasOf(payload)
       const cid = extras && extras.conversation_id
       if (cid) handler(String(cid), extras)
