@@ -1033,6 +1033,8 @@ export function installCallEvents() {
     try {
       CallPip.addListener('pipChange', ({ inPip }) => {
         callState.inPip = !!inPip
+        // 小窗让视口尺寸突变，强制一次同步重排，避免 Chromium 还按旧尺寸绘制（白块/只显示一截）
+        try { void document.body.offsetHeight } catch (e) { /* 忽略 */ }
         if (inPip) return
         setTimeout(() => {
           const phase = callState.phase
