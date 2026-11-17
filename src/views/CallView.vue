@@ -326,6 +326,12 @@ export default {
    允许裁边但绝不留黑；自己画面做成右上角小角标，保持比例不裁。
 */
 .call-page.pip-mode {
+  /* 小窗里显式钉满视口：不依赖继承来的高度/内边距，避免顶部露出一条页面外的黑 */
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100vw; height: 100vh;
+  min-height: 100vh;
+  margin: 0;
   padding: 0;
   display: block;      /* 两个画面都用绝对定位，不再参与 flex 排布 */
   background: #000;
