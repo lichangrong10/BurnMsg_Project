@@ -130,8 +130,14 @@ export default {
     localContacts() {
       const k = (this.keyword || '').toLowerCase()
       if (!k) return []
-      const list = Array.isArray(state.contacts) ? state.contacts : []
-      return list.filter(u => {
+      // 合并：通讯录 + 已有会话的对方（去重）——保证有会话的人也能按联系人搜到
+      const map = new Map()
+      for (const u of state.contacts || []) if (u && u.id) map.set(String(u.id), u)
+      for (const c of state.convs || []) {
+        const ou = c && c.other_user
+        if (ou && ou.id && !map.has(String(ou.id))) map.set(String(ou.id), ou)
+      }
+      return [...map.values()].filter(u => {
         const n = String(u.display_name || u.name || '').toLowerCase()
         return n.includes(k) || String(u.phone || '').includes(k)
       }).slice(0, 8)
@@ -153,6 +159,10 @@ export default {
     })
   },
   methods: {
+    // 模板里用到的工具函数必须在 options API 中显式暴露（导入不等于模板可用）
+    convName,
+    avatarColor,
+    fmtTime,
     openConv(c) {
       state.showGlobalSearch = false
       openChatById(c.id)
@@ -168,6 +178,11 @@ export default {
     fmtTime,
 
     onInput() {
+    console.log('[搜索诊断] keyword=', JSON.stringify(this.keyword),
+      ' contacts=', (state.contacts || []).length,
+      ' 命中联系人=', this.localContacts.map(u => u.display_name),
+      ' convs=', (state.convs || []).length,
+      ' 命中会话=', this.localConvs.map(c => convName(c)))
       clearTimeout(this.debounceTimer)
       if ((this.keyword || '').length < 2) {
         this.results = []
