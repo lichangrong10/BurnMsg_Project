@@ -315,11 +315,37 @@ public class MainActivity extends BridgeActivity {
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
                                               android.content.res.Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        // 小窗里窗口高 111dp，而 WebView 视口只有 75dp，差的 36dp ≈ 状态栏 inset 没有被绘制，
+        // 表现为小窗顶部一条黑。进小窗时把系统栏隐藏、WebView 顶到窗口边界即可消除。
+        try {
+            final android.view.View decor = getWindow().getDecorView();
+            androidx.core.view.WindowInsetsControllerCompat ctl =
+                    androidx.core.view.WindowCompat.getInsetsController(getWindow(), decor);
+            if (isInPictureInPictureMode) {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+                ctl.setSystemBarsBehavior(
+                        androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                ctl.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+                decor.setPadding(0, 0, 0, 0);
+            } else {
+                ctl.show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
         // 小窗让 Activity 尺寸骤变，WebView 有时来不及重排/重绘（表现为白块棋盘格或只显示一截）。
         // 这里延迟强制一次布局 + 重绘，等系统把新的窗口尺寸下发完再画。
         try {
             final WebView wv = getBridge() != null ? getBridge().getWebView() : null;
             if (wv != null) {
+                if (isInPictureInPictureMode) {
+                    wv.setFitsSystemWindows(false);
+                    wv.setPadding(0, 0, 0, 0);
+                    android.view.ViewGroup.LayoutParams lp = wv.getLayoutParams();
+                    if (lp != null) {
+                        lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                        lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                        wv.setLayoutParams(lp);
+                    }
+                }
                 wv.postDelayed(() -> {
                     try {
                         wv.requestLayout();
