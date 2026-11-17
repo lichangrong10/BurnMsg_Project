@@ -1035,6 +1035,11 @@ export function installCallEvents() {
         callState.inPip = !!inPip
         // 小窗让视口尺寸突变，强制一次同步重排，避免 Chromium 还按旧尺寸绘制（白块/只显示一截）
         try { void document.body.offsetHeight } catch (e) { /* 忽略 */ }
+        // 小窗窗口通常比 WebView 表面大一圈，多出来的区域会露出 body 底色（浅灰/白）。
+        // 切到深色底，未绘制区域就变成黑的，视觉上是"小窗留黑边"而不是"缺一块"。
+        try {
+          document.documentElement.classList.toggle('pip-root', !!inPip)
+        } catch (e) { /* 忽略 */ }
         if (inPip) return
         setTimeout(() => {
           const phase = callState.phase
