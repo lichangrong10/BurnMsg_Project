@@ -328,11 +328,12 @@ export default {
   align-items: center;
   justify-content: center;
 }
-/* 小窗：对方画面铺满；自己的画面按摄像头真实比例缩到右上角，无黑边且不裁切 */
+/* 小窗：对方画面**完整显示**（横屏时左右不裁，上下留黑边）；
+   自己的画面按摄像头真实比例缩到右上角，无左右黑边且不裁切 */
 .call-page.pip-mode .call-surface.as-main {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: cover !important;
+  object-fit: contain !important;
   background: #000; border-radius: 0;
 }
 .call-page.pip-mode .call-local-wrap {
