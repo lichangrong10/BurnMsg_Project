@@ -27,6 +27,8 @@ public class MainActivity extends BridgeActivity {
 
     private Long downloadId = null;
     private BroadcastReceiver downloadReceiver;
+    /** 是否处于系统画中画小窗：小窗里不再按状态栏 inset 给 WebView 父容器加 padding */
+    private boolean pipMode = false;
     private final android.os.Handler themeSyncHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable themeSyncRunnable;
 
@@ -88,7 +90,12 @@ public class MainActivity extends BridgeActivity {
                 top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
             }
             androidx.core.graphics.Insets ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()); int bottom = Math.max(ime.bottom, bars.bottom); android.view.View parent = (android.view.View) v.getParent();
-            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bottom); } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
+            if (parent != null) {
+                // 画中画小窗里窗口本身就很小（实测 111dp 高），再按状态栏高度加顶部 padding
+                // 会让 WebView 只剩 75dp → 顶部露出一条黑。小窗里统一不加 padding。
+                if (pipMode) parent.setPadding(0, 0, 0, 0);
+                else parent.setPadding(bars.left, top, bars.right, bottom);
+            } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
             return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE).build(); // 状态栏+导航栏+刘海+键盘insets全清零，Chrome视口铺满WebView，所有避让(顶部/键盘/导航栏)交给父容器padding统一处理
         });
         getWindow().getDecorView().post(() -> {
@@ -315,6 +322,11 @@ public class MainActivity extends BridgeActivity {
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
                                               android.content.res.Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        pipMode = isInPictureInPictureMode;
+        try {
+            WebView wv0 = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv0 != null) wv0.requestApplyInsets(); // 让上面的 inset 监听按 pipMode 重新算一次
+        } catch (Exception ignored) { /* 忽略 */ }
         // 小窗里窗口高 111dp，而 WebView 视口只有 75dp，差的 36dp ≈ 状态栏 inset 没有被绘制，
         // 表现为小窗顶部一条黑。进小窗时把系统栏隐藏、WebView 顶到窗口边界即可消除。
         try {
@@ -327,6 +339,15 @@ public class MainActivity extends BridgeActivity {
                         androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
                 ctl.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
                 decor.setPadding(0, 0, 0, 0);
+                // 关键：inset 可能是被 Capacitor 的根容器消费掉的（decor.setPadding 无效），
+                // 直接在 android.R.id.content 上把 inset 全部吃掉，WebView 才能铺到窗口顶端。
+                final android.view.View root = findViewById(android.R.id.content);
+                if (root != null) {
+                    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(
+                            root, (v, insets) -> androidx.core.view.WindowInsetsCompat.CONSUMED);
+                    root.requestApplyInsets();
+                    root.setPadding(0, 0, 0, 0);
+                }
             } else {
                 ctl.show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
             }
@@ -358,6 +379,19 @@ public class MainActivity extends BridgeActivity {
                         wv.invalidate();
                     } catch (Exception ignored) { /* 忽略 */ }
                 }, 260);
+                // 临时诊断：小窗里打一次真实尺寸（确认修好后删除）
+                wv.postDelayed(() -> {
+                    try {
+                        android.view.View root = findViewById(android.R.id.content);
+                        android.view.View parent = (android.view.View) wv.getParent();
+                        android.widget.Toast.makeText(this,
+                                "win=" + getWindowManager().getCurrentWindowMetrics().getBounds()
+                                        + " web=" + wv.getWidth() + "x" + wv.getHeight()
+                                        + " pad=" + (parent != null ? parent.getPaddingTop() : -1)
+                                        + " root=" + (root != null ? root.getHeight() : -1),
+                                android.widget.Toast.LENGTH_LONG).show();
+                    } catch (Exception ignored) { /* 忽略 */ }
+                }, 500);
             }
         } catch (Exception ignored) { /* 忽略 */ }
         CallPipPlugin.notifyPipChanged(isInPictureInPictureMode);
