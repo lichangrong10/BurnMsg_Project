@@ -24,15 +24,19 @@
       <div v-if="callState.mediaWarning && callState.phase !== 'incoming'" class="call-hint warn">{{ callState.mediaWarning }}</div>
     </div>
 
-    <!-- 语音通话（或远端还没出画）：大头像；小窗里同时显示计时 -->
+    <!-- 小窗 + 语音：头像与计时排成一个居中竖列（不用 absolute，避免越界被裁） -->
+    <div v-if="callState.inPip && callState.kind !== 'video'" class="pip-col">
+      <div class="call-avatar pip" :style="{ background: avatarBg }">{{ initial }}</div>
+      <div class="pip-timer">{{ subTitle }}</div>
+    </div>
+
+    <!-- 全屏：语音通话，或视频通话远端还没出画时用大圆头像 -->
     <div
-      v-if="callState.kind !== 'video' || (!hasRemote && (callState.inPip || focus === 'remote'))"
+      v-else-if="!callState.inPip && (callState.kind !== 'video' || (!hasRemote && focus === 'remote'))"
       class="call-avatar"
-      :class="{ pip: callState.inPip }"
       :style="{ background: avatarBg }"
     >
       {{ initial }}
-      <div v-if="callState.inPip" class="pip-timer">{{ subTitle }}</div>
     </div>
 
     <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面。
@@ -291,17 +295,37 @@ export default {
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
 }
 
-/* ── 画中画小窗：只留画面/头像+计时，去掉所有边距与控件 ── */
-.call-page.pip-mode { padding: 0; justify-content: center; }
-.call-page.pip-mode .call-surface.as-main { border-radius: 0; }
-/* 小窗里的语音头像缩小，计时叠在下方 */
+/* ── 画中画小窗：内容按窗口比例等比缩放，单列居中，绝不越界 ── */
+.call-page.pip-mode {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+/* 视频：铺满小窗（裁切，无黑边）。想完整不裁切就把 cover 换成 contain */
+.call-page.pip-mode .call-surface.as-main {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; border-radius: 0;
+}
+/* 语音：头像 + 计时作为一个居中竖列，尺寸按短边比例，窗口再小也不会溢出 */
+.pip-col {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+}
 .call-avatar.pip {
-  width: 72px; height: 72px; font-size: 26px;
-  box-shadow: none; animation: none; margin: 0;
+  position: static;
+  width: min(42vmin, 96px); height: min(42vmin, 96px);
+  font-size: min(18vmin, 40px);
+  margin: 0; box-shadow: none; animation: none;
 }
 .pip-timer {
-  position: absolute; left: 0; right: 0; bottom: -26px;
-  text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+  position: static;
+  margin-top: 0;
+  font-size: max(11px, 3.2vmin); line-height: 1.2;
+  text-align: center; font-variant-numeric: tabular-nums;
   color: rgba(255,255,255,.78);
 }
 

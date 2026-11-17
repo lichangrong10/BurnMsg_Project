@@ -375,6 +375,17 @@ public class MainActivity extends BridgeActivity {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setAutoEnterEnabled(true); // 切后台自动进小窗，无需用户手动
             }
+            // 告诉系统“内容区域”就是整块界面：部分 ROM（ColorOS）不按 aspectRatio 给窗口，
+            // 带上 sourceRectHint 后小窗比例更贴近内容，画面不再被裁掉一截。
+            try {
+                Activity act = getActivity();
+                android.view.View decor = act != null && act.getWindow() != null
+                        ? act.getWindow().getDecorView() : null;
+                if (decor != null && decor.getWidth() > 0 && decor.getHeight() > 0) {
+                    builder.setSourceRectHint(
+                            new android.graphics.Rect(0, 0, decor.getWidth(), decor.getHeight()));
+                }
+            } catch (Exception ignored) { /* 忽略 */ }
             params = builder.build();
             enabled = true;
             try {
