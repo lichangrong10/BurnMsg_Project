@@ -419,6 +419,16 @@ public class MainActivity extends BridgeActivity {
             call.resolve();
         }
 
+        /** 通话结束时收起小窗：把任务移到后台，PiP 随之消失（不会退出 App） */
+        @PluginMethod
+        public void closePip(PluginCall call) {
+            try {
+                Activity act = getActivity();
+                if (act != null) act.moveTaskToBack(true);
+            } catch (Exception ignored) { /* 忽略 */ }
+            call.resolve();
+        }
+
         /** 关闭小窗能力（通话结束时调用，避免平时切后台也进小窗） */
         @PluginMethod
         public void disable(PluginCall call) {

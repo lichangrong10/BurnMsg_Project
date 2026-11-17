@@ -58,12 +58,21 @@ async function disablePip() {
 
 /**
  * 把远端画面的真实宽高比同步给原生小窗。
- * 对方是横屏（如 640×360）时，若小窗还按 9:16 开，画面会被裁掉两侧；
+ * 对方是横屏（如 1280×720）时，若小窗还按 9:16 开，画面只能缩成中间一条；
  * 这里按实际比例更新 PiP 参数（原生侧会取最接近的标准比例）。
  */
+let lastPipAspect = 0
 export async function setPipAspect(ratio) {
   if (!CallPip || !ratio || !isFinite(ratio) || ratio <= 0) return
+  lastPipAspect = ratio
   try { await CallPip.enable({ aspectRatio: ratio }) } catch (e) { /* 忽略 */ }
+}
+
+/** 通话结束时如果人在小窗里，把小窗收起（把任务移到后台，PiP 随之消失） */
+async function closePipIfNeeded(force) {
+  if (!CallPip) return
+  if (!force && !callState.inPip) return
+  try { await CallPip.closePip() } catch (e) { /* 忽略 */ }
 }
 
 /** 振铃超时：与后端 CALL_RING_TIMEOUT_SECONDS 默认值保持一致（被叫侧必须自己跑） */
@@ -370,11 +379,14 @@ function resetLocal() {
  * 用户能看到的只有 reason 文案，绝不带 SDP / 密钥等敏感内容。
  */
 function finish(phase, reason, text) {
+  const wasInPip = callState.inPip
   resetLocal()
   callState.status = ''
   callState.endedReason = reason || ''
   callState.error = text || ''
   callState.phase = phase
+  // 在小窗里结束时，把小窗一起收掉；否则 PiP 窗口会继续显示聊天页，看着像"没挂断"
+  if (wasInPip) closePipIfNeeded(true)
   const snapshot = phase
   setTimeout(() => {
     if (callState.phase !== snapshot) return
@@ -1050,13 +1062,19 @@ export function installCallEvents() {
         try {
           document.documentElement.classList.toggle('pip-root', !!inPip)
         } catch (e) { /* 忽略 */ }
-        if (inPip) return
+        if (inPip) {
+          // 进入小窗前已知远端比例的话，重新下发一次，部分 ROM 会据此调整窗口比例
+          if (lastPipAspect) { try { CallPip.enable({ aspectRatio: lastPipAspect }) } catch (e) { /* 忽略 */ } }
+          return
+        }
+        // 退出小窗：只有确实回到"不可见"状态才算被划掉。
+        // 部分 ROM 在 PiP 里会来回发 true/false，500ms 太短会误挂断，这里放宽到 2s 并复查状态。
         setTimeout(() => {
+          const st = typeof document !== 'undefined' ? document.visibilityState : 'visible'
           const phase = callState.phase
-          const hidden = typeof document !== 'undefined' && document.hidden
-          if (callState.inPip || !hidden) return
+          if (callState.inPip || st !== 'hidden') return
           if (phase === 'active' || phase === 'connecting') endCall()
-        }, 500)
+        }, 2000)
       })
     } catch (e) { /* 机型不支持则忽略 */ }
   }
