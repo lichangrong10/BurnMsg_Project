@@ -330,18 +330,17 @@ export default {
   display: block;      /* 两个画面都用绝对定位，不再参与 flex 排布 */
   background: #000;
 }
-/* 对方画面：等比缩进窗口（contain）——完整显示、绝不裁切；
-   宽画面上下留出的黑区正好用来放自己的画面 */
+/* 对方画面：钉死为窗口大小 + cover（按高度铺满）→ 无黑边，左右裁掉多余部分 */
 .call-page.pip-mode .call-surface.call-remote {
   position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  object-fit: contain;
+  width: 100% !important; height: 100% !important;
+  object-fit: cover; object-position: center center;
   background: #000; border-radius: 0;
 }
-/* 自己画面：贴右上，落在对方画面留出的黑色留白里，不遮挡内容 */
+/* 自己画面：高度按窗口百分比给（必定放得下，不会被裁），宽度由比例推出来 */
 .call-page.pip-mode .call-local-wrap {
-  position: absolute; right: 6px; top: 6px;
-  width: 30%; height: auto;
+  position: absolute; right: 6px; top: 0;
+  height: 34% !important; width: auto !important;
   border-radius: 6px; overflow: hidden;
   background: #000; z-index: 3;
 }
