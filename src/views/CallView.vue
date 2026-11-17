@@ -44,7 +44,7 @@
          ⚠️ 外层 div 承担尺寸/圆角/裁切，<video> 上**不加** transform / border-radius / box-shadow / transition：
          这些会让 WebView 把相机流送进合成层，实测在部分机型上会卡死渲染进程（整页假死）。 -->
     <div
-      v-if="!callState.inPip && isVideoCall && hasLocalVideo"
+      v-if="isVideoCall && hasLocalVideo"
       class="call-surface call-local-wrap"
       :class="{ 'as-main': focus === 'local', 'as-pip': focus === 'remote', off: callState.camOff }"
       @click="onSurfaceClick('local')"
@@ -312,14 +312,20 @@ export default {
   align-items: center;
   justify-content: center;
 }
-/* 小窗里只放对方画面：本地预览必须隐藏，否则它会盖住整个小窗 */
-.call-page.pip-mode .call-local-wrap { display: none !important; }
-/* 视频：铺满小窗；用 contain 保证任何比例都不裁切（多余处是小窗黑边） */
+/* 小窗：对方画面铺满；自己的画面等比缩到右上角，完整显示不裁切 */
 .call-page.pip-mode .call-surface.as-main {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: contain; background: #000; border-radius: 0;
+  object-fit: cover; background: #000; border-radius: 0;
 }
+.call-page.pip-mode .call-local-wrap {
+  right: 6px; top: 6px;
+  width: 34%; height: auto;
+  aspect-ratio: 3 / 4;
+  border-radius: 6px; overflow: hidden;
+  background: #000; z-index: 3;
+}
+.call-page.pip-mode .local-video { object-fit: contain; }
 /* 语音：头像 + 计时作为一个居中竖列，尺寸按短边比例，窗口再小也不会溢出 */
 .pip-col {
   display: flex; flex-direction: column;
