@@ -1,5 +1,6 @@
 package com.burnmsg.app;
 
+import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -14,6 +15,7 @@ import android.webkit.WebView;
 import androidx.core.content.FileProvider;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -44,6 +46,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(MediaSaverPlugin.class); // v5.8.8：图片保存到系统相册
         registerPlugin(NotifyPermissionPlugin.class); // Android 13+ 运行时申请通知权限
         registerPlugin(KeepAlivePlugin.class);        // 后台保活前台服务开关
+        registerPlugin(CallPipPlugin.class);          // 通话画中画（小窗）
         super.onCreate(savedInstanceState);
 
         // ── 极光推送通知渠道（PUSH_JPUSH.md §3.5）──
@@ -288,6 +291,115 @@ public class MainActivity extends BridgeActivity {
         themeSyncHandler.removeCallbacksAndMessages(null);
         if (downloadReceiver != null) {
             try { unregisterReceiver(downloadReceiver); } catch (Exception e) { /* ignore */ }
+        }
+    }
+
+    /**
+     * 用户按 Home / 切走时（API 31 以下没有 setAutoEnterEnabled，走这里主动进小窗）。
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                && CallPipPlugin.isEnabled()) {
+            android.app.PictureInPictureParams p = CallPipPlugin.currentParams();
+            if (p != null) {
+                try { enterPictureInPictureMode(p); } catch (Exception ignored) { /* 机型不支持则忽略 */ }
+            }
+        }
+    }
+
+    /** 小窗进入/退出：把状态推给前端，用于切换紧凑布局 / 判定「小窗被划掉」 */
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
+                                              android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        CallPipPlugin.notifyPipChanged(isInPictureInPictureMode);
+    }
+
+    /**
+     * Capacitor 自定义插件：通话画中画（小窗）
+     *
+     * 前端在通话 active 时调 enable()，结束调 disable()。
+     * 小窗内不提供任何按钮：点小窗由系统展开回全屏。
+     */
+    @CapacitorPlugin(name = "CallPip")
+    public static class CallPipPlugin extends Plugin {
+
+        private static CallPipPlugin instance;
+        private static boolean enabled = false;
+        private static android.app.PictureInPictureParams params;
+
+        @Override
+        public void load() {
+            instance = this;
+        }
+
+        static boolean isEnabled() { return enabled && instance != null; }
+
+        static android.app.PictureInPictureParams currentParams() { return params; }
+
+        static void notifyPipChanged(boolean inPip) {
+            if (instance == null) return;
+            JSObject ret = new JSObject();
+            ret.put("inPip", inPip);
+            instance.notifyListeners("pipChange", ret);
+        }
+
+        /** 当前设备是否支持画中画 */
+        @PluginMethod
+        public void isSupported(PluginCall call) {
+            boolean supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && getContext().getPackageManager()
+                        .hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+            JSObject ret = new JSObject();
+            ret.put("supported", supported);
+            call.resolve(ret);
+        }
+
+        /**
+         * 开启小窗能力。
+         * @param aspectRatio 宽高比（视频 9/16≈0.5625，语音 1）
+         */
+        @PluginMethod
+        public void enable(PluginCall call) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { call.resolve(); return; }
+            double ratio = call.getDouble("aspectRatio", 9.0 / 16.0);
+            int w = 9, h = 16;
+            if (ratio >= 0.9 && ratio <= 1.1) { w = 1; h = 1; }
+
+            android.app.PictureInPictureParams.Builder builder =
+                    new android.app.PictureInPictureParams.Builder()
+                            .setAspectRatio(new android.util.Rational(w, h));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(true); // 切后台自动进小窗，无需用户手动
+            }
+            params = builder.build();
+            enabled = true;
+            try {
+                Activity act = getActivity();
+                if (act != null) act.setPictureInPictureParams(params);
+            } catch (Exception ignored) { /* 部分 ROM 不支持 */ }
+            call.resolve();
+        }
+
+        /** 关闭小窗能力（通话结束时调用，避免平时切后台也进小窗） */
+        @PluginMethod
+        public void disable(PluginCall call) {
+            enabled = false;
+            params = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    Activity act = getActivity();
+                    if (act != null) {
+                        act.setPictureInPictureParams(
+                                new android.app.PictureInPictureParams.Builder()
+                                        .setAutoEnterEnabled(false).build());
+                    }
+                } catch (Exception ignored) { /* ignore */ }
+            }
+            call.resolve();
         }
     }
 

@@ -31,6 +31,30 @@ import {
 } from './callCrypto'
 import { onWs, WS_EVENTS } from './ws'
 import { showToast } from '../store'
+import { registerPlugin, Capacitor } from '@capacitor/core'
+
+/**
+ * 画中画（PiP）小窗：仅在原生壳里存在，Web 端拿不到插件，所有调用都要容错。
+ * 进入小窗后 Activity 仍可见 → WebView 不被暂停 → 相机采集与 WS 都继续，
+ * 因此不需要把媒体层迁到原生 WebRTC。
+ */
+const CallPip = (() => {
+  try {
+    return Capacitor && Capacitor.isNativePlatform() ? registerPlugin('CallPip') : null
+  } catch (e) { return null }
+})()
+
+/** 开启小窗能力：视频用 9:16，语音用 1:1（小窗更紧凑） */
+async function enablePip(kind) {
+  if (!CallPip) return
+  try { await CallPip.enable({ aspectRatio: kind === 'video' ? 9 / 16 : 1 }) } catch (e) { /* 机型不支持 */ }
+}
+
+/** 关闭小窗能力：避免平时切后台也进小窗 */
+async function disablePip() {
+  if (!CallPip) return
+  try { await CallPip.disable() } catch (e) { /* 忽略 */ }
+}
 
 /** 振铃超时：与后端 CALL_RING_TIMEOUT_SECONDS 默认值保持一致（被叫侧必须自己跑） */
 const RING_TIMEOUT_MS = 45000
@@ -68,6 +92,8 @@ export const callState = reactive({
   facing: 'user',
   /** 采集降级说明（如「摄像头不可用，已按语音通话继续」）；非空时 UI 提示 */
   mediaWarning: '',
+  /** 是否处于系统画中画小窗（原生壳才有；用于切紧凑布局与判定「小窗被划掉」） */
+  inPip: false,
 })
 
 /* ─── 非 reactive 的会话资源（MediaStream 放进 reactive 会被 Proxy 包裹，必须 markRaw） ─── */
@@ -290,6 +316,8 @@ function resetLocal() {
   stopTick()
   stopPoll()
   clearDialTimeout()
+  disablePip()
+  callState.inPip = false
 
   stopRing()
   releaseWakeLock()
@@ -371,6 +399,8 @@ function markActive() {
   callState.startedAt = Date.now()
   callState.duration = 0
   startTick()
+  // 通话建立后开启画中画：之后切到后台会自动变成小窗，媒体与 WS 都能继续
+  enablePip(callState.kind)
 }
 
 /* ══════════ 计时器 ══════════ */
@@ -532,11 +562,14 @@ function onPcStateChange(conn) {
   } else if (st === 'disconnected') {
     // 弱网瞬断很常见，给 5s 自愈窗口，仍未 connected 才收尾
     setTimeout(() => {
-      if (pc === conn && conn.connectionState !== 'connected') {
-        fail(callState.relay
-          ? '连接中断，通话已结束'
-          : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
-      }
+      if (pc !== conn || conn.connectionState === 'connected') return
+      // 在小窗里（Activity 仍可见）或页面可见时才判失败；
+      // 被系统切到后台时 Chromium 会暂停，不能据此断定"连接中断"，否则切回来就已经挂断。
+      const hidden = typeof document !== 'undefined' && document.hidden
+      if (hidden && !callState.inPip) return
+      fail(callState.relay
+        ? '连接中断，通话已结束'
+        : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
     }, 5000)
   }
 }
@@ -984,24 +1017,32 @@ async function resyncAfterReconnect() {
 export function installCallEvents() {
   if (installed) return
   installed = true
-  /** 统一包一层：先记日志再执行，异常也不再被静默吞掉 */
-  const wrap = (name, fn) => (p) => {
-
-    try {
-      Promise.resolve(fn(p)).catch(() => {})
-    } catch (e) {
-
-    }
+  /** 统一包一层：事件处理里的异常不影响 socket */
+  const wrap = (fn) => (p) => {
+    try { Promise.resolve(fn(p)).catch(() => { /* 忽略 */ }) } catch (e) { /* 忽略 */ }
   }
-  offs.push(onWs(WS_EVENTS.CALL_INCOMING, wrap('incoming', onIncoming)))
-  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, wrap('accepted', onAccepted)))
-  offs.push(onWs(WS_EVENTS.CALL_REJECTED, wrap('rejected', onRejected)))
-  offs.push(onWs(WS_EVENTS.CALL_ICE, wrap('ice', onRemoteIce)))
-  offs.push(onWs(WS_EVENTS.CALL_ENDED, wrap('ended', onEnded)))
-  offs.push(onWs('connect', () => {
+  offs.push(onWs(WS_EVENTS.CALL_INCOMING, wrap(onIncoming)))
+  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, wrap(onAccepted)))
+  offs.push(onWs(WS_EVENTS.CALL_REJECTED, wrap(onRejected)))
+  offs.push(onWs(WS_EVENTS.CALL_ICE, wrap(onRemoteIce)))
+  offs.push(onWs(WS_EVENTS.CALL_ENDED, wrap(onEnded)))
+  offs.push(onWs('connect', () => { resyncAfterReconnect().catch(() => { /* 忽略 */ }) }))
 
-    resyncAfterReconnect().catch(() => {})
-  }))
+  // 画中画状态：进入小窗 → 切紧凑布局；小窗被划掉 → 视为结束通话
+  if (CallPip) {
+    try {
+      CallPip.addListener('pipChange', ({ inPip }) => {
+        callState.inPip = !!inPip
+        if (inPip) return
+        setTimeout(() => {
+          const phase = callState.phase
+          const hidden = typeof document !== 'undefined' && document.hidden
+          if (callState.inPip || !hidden) return
+          if (phase === 'active' || phase === 'connecting') endCall()
+        }, 500)
+      })
+    } catch (e) { /* 机型不支持则忽略 */ }
+  }
 }
 
 /** 卸载事件并释放资源（App 卸载 / 强制登出时调用，防麦克风摄像头残留在后台） */

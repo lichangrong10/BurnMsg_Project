@@ -1,11 +1,12 @@
 <template>
-  <div class="call-page" :class="'kind-' + callState.kind">
+  <div class="call-page" :class="['kind-' + callState.kind, { 'pip-mode': callState.inPip }]">
     <!-- 远端画面：默认主画面；和本地画面互换后变成小窗。
-         语音通话时压到 1px 只让音轨继续播（不渲染占画面）。 -->
+         语音通话时压到 1px 只让音轨继续播（不渲染占画面）。
+         小窗（PiP）里强制主画面为远端，且铺满整个小窗。 -->
     <video
       ref="remoteVideo"
       class="call-surface call-remote"
-      :class="{ 'as-main': focus === 'remote', 'as-pip': focus === 'local', 'audio-only': callState.kind !== 'video', 'has-video': hasRemote }"
+      :class="{ 'as-main': callState.inPip || focus === 'remote', 'as-pip': !callState.inPip && focus === 'local', 'audio-only': callState.kind !== 'video', 'has-video': hasRemote }"
       :style="remoteStyle"
       autoplay
       playsinline
@@ -13,7 +14,7 @@
       @dblclick.prevent="onDblTap('remote')"
     ></video>
 
-    <div class="call-head">
+    <div v-if="!callState.inPip" class="call-head">
       <div class="call-peer">{{ callState.peer.name || '对方' }}</div>
       <div class="call-sub">{{ subTitle }}</div>
       <div v-if="!callState.relay && callState.phase !== 'incoming'" class="call-relay-tip">
@@ -23,8 +24,15 @@
       <div v-if="callState.mediaWarning && callState.phase !== 'incoming'" class="call-hint warn">{{ callState.mediaWarning }}</div>
     </div>
 
-    <div v-if="callState.kind !== 'video' || (!hasRemote && focus === 'remote')" class="call-avatar" :style="{ background: avatarBg }">
+    <!-- 语音通话（或远端还没出画）：大头像；小窗里同时显示计时 -->
+    <div
+      v-if="callState.kind !== 'video' || (!hasRemote && (callState.inPip || focus === 'remote'))"
+      class="call-avatar"
+      :class="{ pip: callState.inPip }"
+      :style="{ background: avatarBg }"
+    >
       {{ initial }}
+      <div v-if="callState.inPip" class="pip-timer">{{ subTitle }}</div>
     </div>
 
     <!-- 本地画面：默认右上角小窗，点一下和远端互换主画面。
@@ -46,7 +54,8 @@
       ></video>
     </div>
 
-    <div class="call-actions">
+    <!-- 小窗（PiP）里不显示任何按钮：点小窗由系统展开回全屏 -->
+    <div v-if="!callState.inPip" class="call-actions">
       <!-- 来电：拒接 / 接听 -->
       <template v-if="callState.phase === 'incoming'">
         <button class="ca-btn danger" @click="onReject">
@@ -169,6 +178,15 @@ export default {
     }
   },
   watch: {
+    // 进入小窗：强制显示对方画面（小窗里不该是自己的预览）；退出小窗：恢复远端播放
+    'callState.inPip'(v) {
+      if (v) {
+        this.focus = 'remote'
+        this.zoom = 1
+      } else {
+        this.$nextTick(() => this.playSafely(this.$refs.remoteVideo))
+      }
+    },
     // 本地预览元素带 v-if（要有流才渲染），watcher 触发时 DOM 还没更新，
     // 必须等 nextTick 才拿得到 ref；否则 srcObject 永远绑不上 → 自己看到黑框、对方却正常。
     'callState.remoteStream'(v) { this.$nextTick(() => this.attachRemote(v)) },
@@ -271,6 +289,20 @@ export default {
   background: radial-gradient(circle at 50% 0%, #1d2733 0%, #0d1116 72%);
   color: #fff; overflow: hidden;
   padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 28px);
+}
+
+/* ── 画中画小窗：只留画面/头像+计时，去掉所有边距与控件 ── */
+.call-page.pip-mode { padding: 0; justify-content: center; }
+.call-page.pip-mode .call-surface.as-main { border-radius: 0; }
+/* 小窗里的语音头像缩小，计时叠在下方 */
+.call-avatar.pip {
+  width: 72px; height: 72px; font-size: 26px;
+  box-shadow: none; animation: none; margin: 0;
+}
+.pip-timer {
+  position: absolute; left: 0; right: 0; bottom: -26px;
+  text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,.78);
 }
 
 /* 画面层：同一个 .call-surface 在主画面/小窗之间切换（互换只需换 class，不重建元素） */
