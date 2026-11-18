@@ -404,19 +404,6 @@ public class MainActivity extends BridgeActivity {
                         wv.invalidate();
                     } catch (Exception ignored) { /* 忽略 */ }
                 }, 260);
-                // 临时诊断：小窗里打一次真实尺寸（确认修好后删除）
-                wv.postDelayed(() -> {
-                    try {
-                        android.view.View root = findViewById(android.R.id.content);
-                        android.view.View parent = (android.view.View) wv.getParent();
-                        android.widget.Toast.makeText(this,
-                                "win=" + getWindowManager().getCurrentWindowMetrics().getBounds()
-                                        + " web=" + wv.getWidth() + "x" + wv.getHeight()
-                                        + " pad=" + (parent != null ? parent.getPaddingTop() : -1)
-                                        + " root=" + (root != null ? root.getHeight() : -1),
-                                android.widget.Toast.LENGTH_LONG).show();
-                    } catch (Exception ignored) { /* 忽略 */ }
-                }, 500);
             }
         } catch (Exception ignored) { /* 忽略 */ }
         CallPipPlugin.notifyPipChanged(isInPictureInPictureMode);
