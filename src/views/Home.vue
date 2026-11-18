@@ -1,7 +1,11 @@
 <template>
   <div class="main-page">
     <div class="topbar">
-      <div class="topbar-title">{{ state.tab === 'chats' ? '焚信' : state.tab === 'channels' ? '频道' : state.tab === 'contacts' ? '通讯录' : '我的' }}</div>
+      <!-- 「我的」二级页：顶栏变返回箭头 + 页面标题 -->
+      <div class="topbar-title" :class="{ 'with-back': state.tab === 'me' && state.meSubPage }" @click="state.tab === 'me' && state.meSubPage && (state.meSubPage = '')">
+        <svg v-if="state.tab === 'me' && state.meSubPage" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px"><path d="m15 18-6-6 6-6"/></svg>
+        {{ meTitle }}
+      </div>
       <div style="display:flex;align-items:center;gap:2px" v-if="state.tab === 'chats'">
         <div class="topbar-icon" @click="state.showGlobalSearch = true" title="搜索消息">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -18,32 +22,40 @@
     width: 7px;"></span>
         </div>
       </div>
+      <div style="display:flex;align-items:center;gap:2px" v-else-if="state.tab === 'contacts'">
+        <div class="topbar-icon" @click="state.showCreateGroup = true" title="发起群聊">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        </div>
+      </div>
     </div>
     <div class="content-scroll tab-anim">
       <transition :name="tabTransition">
-      <Chats v-if="state.tab === 'chats'" class="pad-search" />
+        <!-- keep-alive：切 Tab 不销毁重建页面，避免大列表重排导致卡顿 -->
+        <keep-alive :max="4">
+      <Chats v-if="state.tab === 'chats'" />
       <Channels v-else-if="state.tab === 'channels'" class="pad-search" />
       <Contacts v-else-if="state.tab === 'contacts'" class="pad-search" />
       <Me v-else />
+        </keep-alive>
       </transition>
     </div>
 
     <!-- 搜索框悬浮：DOM 顺序放在滑动容器之后，同级层叠时后绘制，保证始终浮在切换动画之上 -->
-    <div class="search-wrap" :class="{ 'search-off': state.tab === 'me' }">
+    <div v-if="state.tab !== 'me' && state.tab !== 'chats'" class="search-wrap">
       <input class="search-input" v-model.trim="state.keyword" :placeholder="state.tab === 'chats' ? '搜索联系人' : state.tab === 'channels' ? '搜索频道' : '搜索姓名 / 手机号'">
     </div>
     <!-- <div style="height: 10%;background: #E8EBEE;">
 
     </div> -->
-    <!-- 底部 Tab -->
-    <div class="tabbar">
+    <!-- 底部 Tab（移动端的「我的」二级页里隐藏，整页呈现；桌面端是左侧导航栏，必须保留） -->
+    <div class="tabbar" v-if="!(state.tab === 'me' && state.meSubPage && state.layout === 'mobile')">
       <div class="nav-avatar" :style="{ background: avatarColor(state.me.display_name) }">
         <img v-if="avatarSrc(state.me)" :src="avatarSrc(state.me)" alt="">
         <template v-else>{{ (state.me.display_name || '?')[0] }}</template>
       </div>
       <div class="tab-item" :class="{ active: state.tab === 'chats' }" @click="state.tab = 'chats'">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        会话<span v-if="totalUnread" class="badge tab-badge">{{ totalUnread > 99 ? '99+' : totalUnread }}</span>
+        会话
       </div>
       <div class="tab-item" :class="{ active: state.tab === 'channels' }" @click="state.tab = 'channels'">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
@@ -93,6 +105,13 @@ export default {
   computed: {
     totalUnread() {
       return state.convs.reduce((s, c) => s + (c.unread || 0), 0)
+    },
+    /** 顶栏标题：普通 Tab 用固定文案；「我的」二级页显示对应页面名 */
+    meTitle() {
+      if (state.tab === 'me' && state.meSubPage) {
+        return { account: '账号与安全', notify: '消息通知', general: '通用' }[state.meSubPage] || '我的'
+      }
+      return state.tab === 'chats' ? '焚信' : state.tab === 'channels' ? '频道' : state.tab === 'contacts' ? '通讯录' : '我的'
     }
   },
   watch: {
@@ -100,6 +119,8 @@ export default {
     'state.tab'(to, from) {
       const order = ['chats', 'channels', 'contacts', 'me']
       this.tabTransition = order.indexOf(to) >= order.indexOf(from) ? 'tab-slide-left' : 'tab-slide-right'
+      // 切走「我的」时收起二级页，避免下次回来还停在上次那一页
+      if (to !== 'me') state.meSubPage = ''
     }
   },
   methods: {
@@ -113,6 +134,8 @@ export default {
 }
 </script>
 <style scoped>
+/* 「我的」二级页顶栏：标题左侧带返回箭头，整块可点返回 */
+.topbar-title.with-back { display: flex; align-items: center; cursor: pointer; }
 /* ── 公告弹窗：最新未读公告自动弹出 ── */
 .ann-popup-mask {
   position: fixed; inset: 0; z-index: 999;
@@ -160,4 +183,30 @@ export default {
 .ann-popup-btn.ack:active { background: #2E8BD6; }
 @keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ap-pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
+
+  /* 底部 Tab 切换：只让 transform/opacity 走合成层，避免整页重绘造成卡顿 */
+  /* 注意：不要在页面容器上常驻 will-change/backface-visibility，
+     否则浏览器会长期把内容栅格化成低分辨率图层，照片/头像会逐渐变模糊。
+     只在过渡进行时由 Vue 过渡类临时提升图层。 */
+  .tab-slide-left-enter-active, .tab-slide-left-leave-active,
+  .tab-slide-right-enter-active, .tab-slide-right-leave-active { will-change: transform, opacity; }
+
+  /* 顶栏标题居中（焚信 / 频道 / 通讯录 / 我的 均居中），右侧图标不受影响 */
+  .topbar { position: relative; }
+  .topbar .topbar-title { position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; pointer-events: none; z-index: 1; }
+  .topbar > div:not(.topbar-title) { position: relative; z-index: 2; margin-left: auto; }
+
+  /* 「我的」二级页：返回箭头靠左、标题居中（箭头绝对定位，不占标题位置） */
+  .topbar .topbar-title.with-back {
+    left: 0; right: 0; width: auto;
+    justify-content: center;   /* 标题居中 */
+    text-align: center;
+    pointer-events: auto;
+    position: absolute;
+  }
+  .topbar .topbar-title.with-back > svg {
+    position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  }
 </style>

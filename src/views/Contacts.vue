@@ -1,14 +1,8 @@
 <template>
   <div>
-    <div class="contact-item" @click="openCreateGroup(false)">
-      <div class="avatar" style="width:46px;height:46px;background:rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center">
-        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="var(--tg-blue)" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      </div>
-      <div class="contact-main"><div class="contact-name" style="color:var(--tg-blue)">发起群聊</div></div>
-    </div>
     <div v-if="!filteredContacts.length" class="empty-state"><div>未找到联系人</div></div>
-    <template v-for="g in groupedContacts" :key="g.dept">
-      <div class="section-header">{{ g.dept }}</div>
+    <template v-for="g in groupedContacts" :key="g.letter">
+      <div class="section-header" :id="'sec-' + g.letter">{{ g.letter }}</div>
       <div v-for="u in g.list" :key="u.id" class="contact-item" @click="startChatWith(u)">
         <div class="avatar-wrap">
           <div class="avatar" :style="{ width: '46px', height: '46px', fontSize: '17px', background: avatarColor(u.display_name) }"><img v-if="avatarSrc(u)" :src="avatarSrc(u)" alt=""><template v-else>{{ (u.display_name || '?')[0] }}</template></div>
@@ -21,12 +15,17 @@
         </div>
       </div>
     </template>
+    <!-- 右侧字母索引：点击跳到对应分组 -->
+    <div class="alpha-index" v-if="groupedContacts.length">
+      <span v-for="g in groupedContacts" :key="g.letter" class="alpha-item" @click.stop="jumpTo(g.letter)">{{ g.letter }}</span>
+    </div>
   </div>
 </template>
 
 <script>
 import { state, startChatWith, openCreateGroup, isUserOnline } from '../store'
 import { avatarColor, avatarSrc } from '../utils/format'
+import { groupByLetter } from '../utils/pinyin'
 
 export default {
   name: 'ContactsView',
@@ -40,15 +39,18 @@ export default {
       return list.filter(u => !k || (u.display_name || '').toLowerCase().includes(k) || (u.phone || '').includes(k))
     },
     groupedContacts() {
-      const map = {}
-      this.filteredContacts.forEach(u => {
-        const d = u.department || '其他'
-        ;(map[d] = map[d] || []).push(u)
-      })
-      return Object.keys(map).sort().map(dept => ({ dept, list: map[dept] }))
-    }
+      return groupByLetter(this.filteredContacts, u => (u.display_name || u.phone || ''))
+    },
   },
   methods: {
+    /** 点击右侧字母 → 滚动到对应分组 */
+    jumpTo(letter) {
+      const el = document.getElementById('sec-' + letter)
+      if (!el) return
+      const scroller = el.closest('.content-scroll')
+      if (scroller) scroller.scrollTo({ top: el.offsetTop - 4, behavior: 'smooth' })
+      else el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    },
     openCreateGroup,
     startChatWith,
     avatarColor,
@@ -77,4 +79,25 @@ export default {
   color: #31C48D; border: 1px solid #31C48D;
   border-radius: 4px; padding: 0 4px; vertical-align: 1px;
 }
+
+  /* 分组头吸顶，滚动时始终显示当前字母 */
+  .section-header {
+    position: sticky; top: 0; z-index: 3;
+    background: #F0F2F5; padding: 5px 14px; font-size: 12.5px;
+    color: #6B7280; font-weight: 600; letter-spacing: .3px;
+  }
+
+  /* 右侧字母索引条 */
+  .alpha-index {
+    position: fixed; right: 1px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 0; z-index: 30; padding: 4px 2px;
+    border-radius: 12px; background: rgba(255,255,255,.55);
+    backdrop-filter: blur(4px);
+  }
+  .alpha-item {
+    font-size: 10px; line-height: 1.35; color: var(--tg-blue, #2A9D8F);
+    font-weight: 600; padding: 0 4px; cursor: pointer; user-select: none;
+  }
+  .alpha-item:active { transform: scale(1.3); color: #fff; background: var(--tg-blue); border-radius: 6px; }
 </style>

@@ -115,23 +115,29 @@ body {
 .topbar-sub { font-size: 12.5px; opacity: .85; font-weight: 400; }
 .topbar-icon { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .18s; flex-shrink: 0; }
 .topbar-icon:active { background: rgba(255,255,255,.18); }
-.search-wrap { padding: 6px 12px 10px; background: var(--tg-blue); flex-shrink: 0; }
+.search-wrap { padding: 8px 12px 9px; background: var(--tg-gray-bg, #fff); flex-shrink: 0; }
 .search-input {
-  width: 100%; padding: 9px 14px 9px 38px; border: none; border-radius: var(--radius-sm); font-size: 15px;
-  background: rgba(255,255,255,.22) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,.75)' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 11px center;
-  color: #fff; outline: none; box-shadow: inset 0 1px 3px rgba(0,0,0,.08);
+  width: 100%; height: 38px; padding: 0 14px 0 34px; border: none; border-radius: 10px;
+  font-size: 14.5px; color: #1A1A1A; outline: none; box-shadow: none;
+  background-color: #EFF1F3;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%238A8F98' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  background-size: 16px 16px;
+  -webkit-appearance: none;
 }
-.search-input::placeholder { color: rgba(255,255,255,.75); }
+.search-input::placeholder { color: #8A8F98; }
+.search-input:focus { background-color: #E8EBEE; }
 .content-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; padding-bottom: 83px; }
 .tabbar {
   display: flex; background: rgba(255,255,255); backdrop-filter: blur(12px);
   border-radius: var(--radius-lg) var(--radius-lg);
-  box-shadow: 0 -4px 18px rgba(0,0,0,.07);
+  box-shadow: 0 1px 2px rgba(0,0,0,.07);
   padding-bottom: var(--safe-bottom); flex-shrink: 0;
 
   padding: 5px 0px;
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
-  max-width: 360px;
+  max-width: 80%;
   margin:20px auto;
 }
 .tab-item {
@@ -541,3 +547,130 @@ html.bm-desktop .dialog { max-width: 440px; }
 }
 .notify-switch.on { background: var(--tg-blue); }
 .notify-switch.on i { left: 18px; }
+
+/* ═══════════════════════════════════════════════
+   动效规范（统一时长与缓动，只用 transform/opacity）
+   ═══════════════════════════════════════════════ */
+:root {
+  --dur-fast: 140ms;   /* 按压、悬停 */
+  --dur-base: 220ms;   /* 页面切换、弹层 */
+  --dur-slow: 280ms;   /* 大面板 */
+  --ease-out: cubic-bezier(.22,.9,.3,1);
+  --ease-spring: cubic-bezier(.34,1.3,.5,1);
+}
+
+/* 系统开启「减少动态效果」时自动降级 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* 全屏页面（聊天页 / 聊天信息 / 新建群组 / 全局搜索）从右滑入 */
+@keyframes bmPageIn {
+  from { opacity: 0; transform: translateX(18%); }
+  to   { opacity: 1; transform: none; }
+}
+.chat-page { animation: bmPageIn var(--dur-base) var(--ease-out); }
+
+/* 遮罩淡入（不改变原有层级与布局） */
+@keyframes bmMaskIn { from { opacity: 0; } to { opacity: 1; } }
+.overlay, .dialog-overlay { animation: bmMaskIn var(--dur-fast) ease-out; }
+
+/* 底部面板改用统一缓动（原有 sheetUp 保留，仅对齐时长） */
+.sheet { animation-duration: var(--dur-base); animation-timing-function: var(--ease-out); }
+.dialog { animation-duration: var(--dur-base); animation-timing-function: var(--ease-spring); }
+
+/* ═══════════ 第二批：列表与状态动效 ═══════════ */
+
+/* 会话行进场：前 8 条错峰淡入上移（长列表不做，避免卡顿） */
+@keyframes bmItemIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.conv-item { animation: bmItemIn 180ms var(--ease-out) both; }
+.conv-item:nth-child(1) { animation-delay: 0ms; }
+.conv-item:nth-child(2) { animation-delay: 24ms; }
+.conv-item:nth-child(3) { animation-delay: 48ms; }
+.conv-item:nth-child(4) { animation-delay: 72ms; }
+.conv-item:nth-child(5) { animation-delay: 96ms; }
+.conv-item:nth-child(6) { animation-delay: 120ms; }
+.conv-item:nth-child(7) { animation-delay: 144ms; }
+.conv-item:nth-child(8) { animation-delay: 168ms; }
+.conv-item:nth-child(n+9) { animation: none; }   /* 第 9 条起不再动画 */
+
+/* 未读徽标出现时弹一下 */
+@keyframes bmBadgePop {
+  0%   { transform: scale(.4); opacity: 0; }
+  55%  { transform: scale(1.18); opacity: 1; }
+  78%  { transform: scale(.96); }
+  100% { transform: scale(1); }
+}
+.conv-badge-bottom { animation: bmBadgePop 220ms var(--ease-spring); }
+
+/* 群宫格头像加载完成淡入 */
+@keyframes bmQuadIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.avatar-quad { animation: bmQuadIn 200ms var(--ease-out); }
+
+/* 返回按钮永远在最左、且可点击（防被居中的标题层盖住） */
+.chat-topbar > .topbar-icon:first-child {
+  position: relative; z-index: 6; flex-shrink: 0; margin-left: 0 !important;
+}
+.chat-topbar .chat-title-wrap { position: relative; z-index: 1; }
+
+/* ═══════════ 第三批：交互微反馈（按压/悬停） ═══════════ */
+
+/* 统一过渡：只动 transform 与背景色，避免布局抖动 */
+button, .btn, .cell, .conv-item, .topbar-icon, .tab-item, .sheet-item,
+.chat-menu-item, .chat-tab, .gs-result-item {
+  transition: transform var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) ease,
+              color var(--dur-fast) ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 按压反馈：轻微缩小（输入框、文本域不参与） */
+button:active,
+.btn:active,
+.cell:active,
+.conv-item:active,
+.sheet-item:active,
+.chat-menu-item:active,
+.chat-tab:active,
+.gs-result-item:active {
+  transform: scale(.98);
+}
+
+/* 顶栏图标按压缩得更明显一点 */
+.topbar-icon:active { transform: scale(.9); }
+
+/* 底部 Tab 按压缩放（图标本身不位移） */
+.tab-item:active { transform: scale(.96); }
+
+/* 消息气泡入场（新消息才有，历史消息不播） */
+@keyframes bmBubbleIn {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+.bubble { animation: bmBubbleIn 160ms var(--ease-out); }
+
+/* ═══════════ 第 4 批：图片淡入 ═══════════ */
+@keyframes bmImgIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
+.bubble img, .avatar img, .msg-img, .gs-result-avatar img { animation: bmImgIn 180ms var(--ease-out); }
+
+/* ═══════════ 返回动效 + Toast 进出场 ═══════════ */
+@keyframes bmPageOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(16%); }
+}
+/* 进场沿用 .chat-page 自带动画，这里只补离场 */
+.bm-page-leave-active { animation: bmPageOut 200ms var(--ease-out) forwards; position: absolute; inset: 0; z-index: 50; }
+.bm-page-leave-active > * { pointer-events: none; }
+
+/* Toast 进出场 */
+.bm-toast-enter-active { animation: bmToastIn 180ms var(--ease-out); }
+.bm-toast-leave-active { animation: bmToastOut 160ms var(--ease-out) forwards; }
+@keyframes bmToastIn  { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes bmToastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
