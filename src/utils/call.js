@@ -1,0 +1,1097 @@
+/**
+ * 通话会话引擎（V7.0 · 1:1 语音 / 视频）
+ *
+ * 信令走向（与后端约定一致）：客户端 → 服务端走 HTTP，服务端 → 客户端走 WS。
+ *
+ *   主叫 ──POST /calls──▶ 服务端 ──call:incoming──▶ 被叫
+ *   被叫 ──POST /calls/:id/accept──▶ 服务端 ──call:accepted──▶ 主叫
+ *   双方 ──POST /calls/:id/ice──▶ 服务端 ──call:ice──▶ 对端
+ *   任一方 ──POST /calls/:id/hangup──▶ 服务端 ──call:ended──▶ 双方
+ *
+ * 安全要点（文档 §7，逐条落实）：
+ *  1. 先解密 SDP 取出 DTLS 指纹 → 校验 fp_mac → 通过了才 setRemoteDescription；
+ *  2. 服务端返回的 call_id 只做路径参数，call_key 的 salt 用「会话 + 主叫 eph_pub」；
+ *  3. 仅私密会话（e2e_state=2）的绑定设备能通话，本模块不做额外放行；
+ *  4. 收尾必须 pc.close() + track.stop()，避免麦克风/摄像头常驻；
+ *  5. ICE 乱序：本地候选等 callId、远端候选等 setRemoteDescription，两个队列都要有；
+ *  6. 被叫自己起 45s 超时（后端超时只通知主叫，被叫收不到事件）。
+ */
+import { reactive, markRaw } from 'vue'
+import { api } from '../api'
+import { genKeyPair, b64, stripPad } from './e2e'
+import {
+  deriveCallKey,
+  deriveCallKeyAsCallee,
+  fingerprintMac,
+  verifyFingerprintMac,
+  dtlsFingerprintOf,
+  seal,
+  open,
+  iceServersFrom,
+} from './callCrypto'
+import { onWs, WS_EVENTS } from './ws'
+import { showToast } from '../store'
+import { registerPlugin, Capacitor } from '@capacitor/core'
+
+/**
+ * 画中画（PiP）小窗：仅在原生壳里存在，Web 端拿不到插件，所有调用都要容错。
+ * 进入小窗后 Activity 仍可见 → WebView 不被暂停 → 相机采集与 WS 都继续，
+ * 因此不需要把媒体层迁到原生 WebRTC。
+ */
+const CallPip = (() => {
+  try {
+    return Capacitor && Capacitor.isNativePlatform() ? registerPlugin('CallPip') : null
+  } catch (e) { return null }
+})()
+
+/** 开启小窗能力：视频默认按横屏 16:9（手机采集基本都是横屏），语音用 1:1 */
+async function enablePip(kind) {
+  if (!CallPip) return
+  try { await CallPip.enable({ aspectRatio: kind === 'video' ? 16 / 9 : 1 }) } catch (e) { /* 机型不支持 */ }
+}
+
+/** 关闭小窗能力：避免平时切后台也进小窗 */
+async function disablePip() {
+  if (!CallPip) return
+  try { await CallPip.disable() } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 把远端画面的真实宽高比同步给原生小窗。
+ * 对方是横屏（如 1280×720）时，若小窗还按 9:16 开，画面只能缩成中间一条；
+ * 这里按实际比例更新 PiP 参数（原生侧会取最接近的标准比例）。
+ */
+let lastPipAspect = 0
+export async function setPipAspect(ratio) {
+  if (!CallPip || !ratio || !isFinite(ratio) || ratio <= 0) return
+  lastPipAspect = ratio
+  try { await CallPip.enable({ aspectRatio: ratio }) } catch (e) { /* 忽略 */ }
+}
+
+/** 通话结束时如果人在小窗里，把小窗收起（把任务移到后台，PiP 随之消失） */
+async function closePipIfNeeded(force) {
+  if (!CallPip) return
+  if (!force && !callState.inPip) return
+  try { await CallPip.closePip() } catch (e) { /* 忽略 */ }
+}
+
+/** 振铃超时：与后端 CALL_RING_TIMEOUT_SECONDS 默认值保持一致（被叫侧必须自己跑） */
+const RING_TIMEOUT_MS = 45000
+/** 主叫兜底：超过这个时间还没等到 call:accepted 就收尾（防丢事件） */
+const DIAL_TIMEOUT_MS = 60000
+/** 拨号期轮询间隔：WS 重连窗口期可能丢事件，用 GET /calls/:id 对齐（5s 足够早发现丢事件） */
+const DIAL_POLL_MS = 5000
+/** ICE 批量：每 120ms 或攒满 8 条发一次，避免撞 200/min 限流 */
+const ICE_BATCH_MS = 120
+const ICE_BATCH_MAX = 8
+
+/**
+ * 通话 UI 状态（CallView 直接绑定）。
+ * phase: idle | incoming | dialing | connecting | active | ended | failed
+ * status: 更细的进度文案（preparing | media | ringing | answering）
+ */
+export const callState = reactive({
+  phase: 'idle',
+  status: '',
+  callId: null,
+  conversationId: null,
+  kind: 'audio',
+  peer: { id: null, name: '' },
+  startedAt: 0,
+  duration: 0,
+  endedReason: '',
+  error: '',
+  muted: false,
+  camOff: false,
+  localStream: null,
+  remoteStream: null,
+  /** 本轮通话是否拿到了 TURN/STUN 中继；false = 只有 host 候选（通常仅同网络可通） */
+  relay: true,
+  /** 当前使用的摄像头朝向：user=前置（本地预览镜像）| environment=后置 */
+  facing: 'user',
+  /** 采集降级说明（如「摄像头不可用，已按语音通话继续」）；非空时 UI 提示 */
+  mediaWarning: '',
+  /** 是否处于系统画中画小窗（原生壳才有；用于切紧凑布局与判定「小窗被划掉」） */
+  inPip: false,
+})
+
+/* ─── 非 reactive 的会话资源（MediaStream 放进 reactive 会被 Proxy 包裹，必须 markRaw） ─── */
+let pc = null
+let callKey = null
+let ephPair = null
+let peerIKPub = ''
+let currentCallId = null
+let localStream = null
+let remoteStream = null
+let incomingInvite = null       // 来电上下文：{ call_id, conversation_id, kind, eph_pub, payload, fp_mac }
+let incomingCallKey = null      // 来电时预先派生的 call_key（校验通过后接听复用）
+let incomingSdp = null          // 来电已解密的 offer SDP
+let remoteDescSet = false
+let localIceQueue = []          // 等 callId 的本地候选
+let pendingRemoteIce = []       // 等 setRemoteDescription 的远端候选
+let iceTimer = null
+let ringTimer = null
+let dialTimer = null
+let pollTimer = null
+let tickTimer = null
+let wakeLock = null
+/** 拨号期第一次在服务端看到 state=active 的时刻（用于识别「已接听但 answer 丢失」） */
+let activeSeenAt = 0
+
+/** 当前环境能否发起/接听通话（WebRTC + getUserMedia 都在） */
+export function callSupported() {
+  return typeof RTCPeerConnection === 'function'
+    && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+}
+
+/** 把各种异常翻成能直接给用户看的中文；尽量保留后端 message（已是中文） */
+export function errText(e) {
+  const raw = String((e && e.message) || e || '')
+  const name = (e && e.name) || ''
+  if (name === 'NotAllowedError' || /Permission denied|Permission dismissed/i.test(raw)) return '需要麦克风 / 摄像头权限'
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return '未检测到麦克风或摄像头'
+  if (name === 'NotReadableError') return '麦克风 / 摄像头被其他应用占用'
+  if (name === 'SecurityError') return '当前页面不是安全上下文，请在 HTTPS 或 App 内通话'
+  if (/TURN_NOT_CONFIGURED|中继未配置/.test(raw)) return '通话中继（TURN）未配置，暂时无法通话'
+  // 顺序很重要：CALL_PEER_OFFLINE 的原文里有「绑定设备已下线」，不能先被上面的模糊匹配吃掉
+  if (/CALL_PEER_OFFLINE|不在线|绑定设备已下线/.test(raw)) return '对方当前不在线'
+  if (/CALL_NOT_BOUND_DEVICE/.test(raw)) return '本设备不是该私密会话的绑定设备，无法通话'
+  if (/CALL_STATE_INVALID|已结束|已被处理/.test(raw)) return '该通话已结束或被处理'
+  if (/CALL_NOT_FOUND/.test(raw)) return '通话不存在'
+  return raw || '通话失败'
+}
+
+/** 取对端设备级 identity 公钥（私密会话唯一入口，服务端反查对方绑定设备）。
+ *  同时带出对端 device_id，作为 to_device_id 显式指定被叫设备：
+ *  私密会话只有两台绑定设备，显式指定可避免任何一侧的被叫推断出错。 */
+async function peerIKOf(conversationId) {
+  const r = await api.getPeerDeviceKey(conversationId)
+  if (!r || !r.identity_pubkey) throw new Error('对方尚未上传设备公钥，无法加密通话')
+  return { userId: r.user_id, pub: r.identity_pubkey, deviceId: r.device_id || '' }
+}
+
+/**
+ * ICE 服务器（可选增强，**绝不允许阻断通话**）。
+ *
+ * WebRTC 的连通顺序本来就与这里无关：`iceTransportPolicy:'all'` 下浏览器**先收集 host 候选**
+ * （本机网卡地址，含 Chrome 的 mDNS 混淆名），内部直连通了就完全不碰 STUN/TURN；
+ * STUN 只用来发现公网映射地址、TURN 只在直连失败时做中继。
+ * 所以没配 TURN 时正确做法是「照建连接、只收集 host 候选」，而不是中止。
+ *
+ * 返回 { list, relay }：
+ *  - list: RTCConfiguration.iceServers（未配置时为 []）
+ *  - relay: 是否拿到了中继凭据（用于 UI 提示「仅同网络可通」与失败文案）
+ */
+async function turnIceServers() {
+  try {
+    const turn = await api.getTurnCredentials()
+    return { list: [iceServersFrom(turn)], relay: true }
+  } catch (e) {
+    // 503 TURN_NOT_CONFIGURED（后端未配 TURN_SECRET）或凭据接口抖动：
+    // 退化成纯 host 候选，同网/可直连场景照常通话，跨 NAT 时再在失败文案里指向 TURN。
+    return { list: [], relay: false, warning: errText(e) }
+  }
+}
+
+/** 打印 transceiver 状态：排查「对方收不到我的视频」时最关键的一组数据 */
+function trInfo(conn) {
+  try {
+    return conn.getTransceivers().map(t => ({
+      kind: (t.receiver && t.receiver.track && t.receiver.track.kind) || 'none',
+      dir: t.direction,
+      cur: t.currentDirection,
+      mid: t.mid,
+    }))
+  } catch (e) { return [] }
+}
+
+/** 建 PeerConnection：1:1 一律 max-bundle，省候选也省 TURN 带宽 */
+function createPC(iceServerList) {
+  const cfg = { iceServers: iceServerList || [], bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' }
+  const conn = new RTCPeerConnection(cfg)
+  // 本地候选：callId 未知或还没 setRemoteDescription 时先排队
+  conn.onicecandidate = (ev) => {
+    if (!ev.candidate) return
+    try { localIceQueue.push(ev.candidate.toJSON()) } catch (e) { return }
+    scheduleIceFlush()
+  }
+  // 远端媒体：audio 只有音轨、video 有音视频轨，都从同一个 stream 取
+  conn.ontrack = (ev) => {
+    remoteStream = ev.streams && ev.streams[0] ? ev.streams[0] : null
+
+    if (remoteStream) callState.remoteStream = markRaw(remoteStream)
+  }
+  conn.onconnectionstatechange = () => onPcStateChange(conn)
+  // 部分 WebView 上 connectionState 会滞后，ICE 已 connected 就说明媒体通道打通了
+  conn.oniceconnectionstatechange = () => {
+    const st = conn.iceConnectionState
+
+    if (st === 'connected' || st === 'completed') markActive()
+  }
+  return conn
+}
+
+/** 打开麦克风（视频再带摄像头，720p 上限，留带宽给弱网）。
+ *  带超时：Android 上权限弹窗没被处理时 getUserMedia 会一直挂着，界面就会永远停在「正在连接」。
+ */
+const MEDIA_TIMEOUT_MS = 12000
+
+/** 给 Promise 加超时，超时后把原来的流关掉，避免摄像头常驻 */
+function withTimeout(promise, msg, ms = MEDIA_TIMEOUT_MS) {
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(msg)
+      err.name = 'TimeoutError'
+      reject(err)
+    }, ms)
+  })
+  promise.catch(() => {}) // 避免超时后原 promise 拒绝变成 unhandled
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+/* 说明：视频采集只走 acquireMedia 里的单次 getUserMedia（见那里的注释），
+ * 不再单独取视频轨——拆开会导致这台机器上视频轨道不发帧。 */
+
+/**
+ * 采集媒体：**麦克风优先、摄像头可选**。
+ *
+ * 为什么拆两步：个别 Android WebView / ROM（这台机器 logcat 里一直报 camerahalserver 错误）
+ * 在初始化摄像头时会卡住渲染进程的主线程，整页像死掉。先拿麦克风能把通话先建立起来，
+ * 摄像头失败就降级成语音通话并明确提示，不至于整通电话打不了。
+ */
+/**
+ * 采集媒体。
+ *
+ * ⚠️ 视频必须**一次 getUserMedia 同时拿音视频**：拆成「先音频、再视频、拼新 MediaStream」
+ * 在这台机器的 WebView 上视频轨发不出帧（远端全黑）。这是回归验证过的结论，
+ * 除非有明确收益，不要再拆。
+ *
+ * 失败兜底：视频/音频一起拿失败时，退回只拿麦克风，按语音继续（不阻断通话）。
+ */
+async function acquireMedia(kind) {
+  if (kind === 'video') {
+    try {
+      const stream = await withTimeout(
+        navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        }),
+        '获取摄像头/麦克风超时',
+      )
+
+      return stream
+    } catch (e) {
+
+      callState.mediaWarning = '摄像头不可用，已按语音通话继续'
+      showToast(callState.mediaWarning)
+    }
+  }
+  const audio = await withTimeout(
+    navigator.mediaDevices.getUserMedia({ audio: true }),
+    '获取麦克风超时（请确认权限询问已点允许）',
+  )
+
+  return new MediaStream(audio.getAudioTracks())
+}
+
+/* ══════════ ICE 收发管线 ══════════ */
+
+function scheduleIceFlush() {
+  if (iceTimer) return
+  iceTimer = setTimeout(() => { iceTimer = null; flushIce().catch(() => {}) }, ICE_BATCH_MS)
+}
+
+/** 把排队中的本地候选打包加密后发出（一批一个 payload，服务端只转发） */
+async function flushIce() {
+  if (!currentCallId || !callKey || !localIceQueue.length) return
+  const batch = localIceQueue.splice(0, ICE_BATCH_MAX)
+  try {
+    await api.sendCallIce(currentCallId, await seal(callKey, JSON.stringify(batch)))
+  } catch (e) {
+    // 限流/超时都当「这批丢了」处理：后续候选或 host 候选仍能打通，不打断通话
+  }
+  if (localIceQueue.length) scheduleIceFlush()
+}
+
+/** 远端候选：setRemoteDescription 之前一律排队，之后补齐（弱网乱序很常见） */
+function addRemoteIce(cand) {
+  if (!pc) return
+  if (!remoteDescSet) { pendingRemoteIce.push(cand); return }
+  pc.addIceCandidate(cand).catch(() => { /* 无效/重复候选忽略即可 */ })
+}
+
+function flushRemoteIce() {
+  const list = pendingRemoteIce.splice(0)
+  if (!pc) return
+  list.forEach(c => pc.addIceCandidate(c).catch(() => {}))
+}
+
+/* ══════════ 生命周期 ══════════ */
+
+/** 释放全部本地资源（幂等；任何单步异常都不许阻断收尾） */
+function resetLocal() {
+  clearRingTimeout()
+  stopTick()
+  stopPoll()
+  clearDialTimeout()
+  disablePip()
+  callState.inPip = false
+
+  stopRing()
+  releaseWakeLock()
+  if (pc) {
+    try {
+      pc.onicecandidate = null
+      pc.ontrack = null
+      pc.onconnectionstatechange = null
+      pc.close()
+    } catch (e) { /* 已关闭 */ }
+    pc = null
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(t => { try { t.stop() } catch (e) { /* 忽略 */ } })
+    localStream = null
+  }
+  remoteStream = null
+  callKey = null
+  ephPair = null
+  peerIKPub = ''
+  currentCallId = null
+  incomingInvite = null
+  incomingCallKey = null
+  incomingSdp = null
+  remoteDescSet = false
+  localIceQueue = []
+  pendingRemoteIce = []
+  activeSeenAt = 0
+  if (iceTimer) { clearTimeout(iceTimer); iceTimer = null }
+  callState.localStream = null
+  callState.remoteStream = null
+  callState.callId = null
+  callState.relay = true
+  callState.facing = 'user'
+  callState.mediaWarning = ''
+}
+
+/**
+ * 收尾并展示结果。phase 用 'ended'（正常）或 'failed'（出错），1.8s 后回 idle。
+ * 用户能看到的只有 reason 文案，绝不带 SDP / 密钥等敏感内容。
+ */
+function finish(phase, reason, text) {
+  const wasInPip = callState.inPip
+  resetLocal()
+  callState.status = ''
+  callState.endedReason = reason || ''
+  callState.error = text || ''
+  callState.phase = phase
+  // 在小窗里结束时，把小窗一起收掉；否则 PiP 窗口会继续显示聊天页，看着像"没挂断"
+  if (wasInPip) closePipIfNeeded(true)
+  const snapshot = phase
+  setTimeout(() => {
+    if (callState.phase !== snapshot) return
+    callState.phase = 'idle'
+    callState.endedReason = ''
+    callState.error = ''
+    callState.duration = 0
+  }, 1800)
+}
+
+/** 出错收尾：message 已是中文（后端 message 或 errText 翻译） */
+function fail(e) {
+  callState.muted = false
+  callState.camOff = false
+  const text = typeof e === 'string' ? e : errText(e)
+
+
+  showToast(text) // 结果态只有 1.8s，关键错误额外弹一次，免得看不到
+  finish('failed', 'error', text)
+}
+
+/** 对端媒体真正连通：进 active + 开始计时 */
+function markActive() {
+  if (callState.phase === 'active') return
+  clearRingTimeout()
+  clearDialTimeout()
+
+  // 注意：这里**不停**状态轮询——call:ended 可能丢，active 期间仍要靠 REST 兜底发现对方挂断
+  stopRing()
+  callState.phase = 'active'
+  callState.status = ''
+  callState.startedAt = Date.now()
+  callState.duration = 0
+  startTick()
+  // 通话建立后开启画中画：之后切到后台会自动变成小窗，媒体与 WS 都能继续
+  enablePip(callState.kind)
+}
+
+/* ══════════ 计时器 ══════════ */
+
+/** 通话时长（1s 一跳，UI 直接读 callState.duration） */
+function startTick() {
+  stopTick()
+  tickTimer = setInterval(() => {
+    if (!callState.startedAt) return
+    callState.duration = Math.max(0, Math.floor((Date.now() - callState.startedAt) / 1000))
+  }, 1000)
+}
+
+function stopTick() {
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+}
+
+/**
+ * 被叫振铃超时。**必须由前端自己跑**：后端 45s 超时只推 call:rejected(timeout) 给主叫，
+ * 被叫收不到任何事件，界面会一直响下去。
+ */
+function startRingTimeout() {
+  clearRingTimeout()
+  ringTimer = setTimeout(() => {
+    if (callState.phase !== 'incoming') return
+    resetLocal()
+    callState.phase = 'idle'
+    showToast('来电未接听')
+  }, RING_TIMEOUT_MS)
+}
+
+function clearRingTimeout() {
+  if (ringTimer) { clearTimeout(ringTimer); ringTimer = null }
+}
+
+/** 主叫拨号兜底（防 call:accepted 丢失导致界面卡在「正在呼叫」） */
+function startDialTimeout() {
+  clearDialTimeout()
+  dialTimer = setTimeout(() => {
+    if (callState.phase !== 'dialing') return
+    const id = currentCallId
+
+
+    if (id) api.hangupCall(id, 'hangup').catch(() => {})
+    finish('ended', 'timeout', '无人接听')
+  }, DIAL_TIMEOUT_MS)
+}
+
+function clearDialTimeout() {
+  if (dialTimer) { clearTimeout(dialTimer); dialTimer = null }
+}
+
+/** 通话状态轮询：dialing / connecting / active 全程有效。
+ *  作用有两个：
+ *   1) dialing 时发现服务端已 active → 说明「对方已接听但 answer 没送到」；
+ *   2) connecting / active 时发现服务端已结束（对方挂断、设备下线、会话关闭）→ 立刻收尾，
+ *      不再依赖 call:ended 这条可能丢的 WS 事件。 */
+function startDialPoll() {
+  stopPoll()
+  pollTimer = setInterval(async () => {
+    const phase = callState.phase
+    if (!currentCallId) return
+    // incoming 也纳入：主叫取消/超时后即使 call:ended 丢了，本机也能停止振铃
+    if (phase !== 'dialing' && phase !== 'incoming' && phase !== 'connecting' && phase !== 'active') return
+    try {
+      const view = await api.getCall(currentCallId)
+      if (!view) return
+      if (phase === 'dialing' && view.state === 'active') {
+        if (!activeSeenAt) activeSeenAt = Date.now()
+
+        if (Date.now() - activeSeenAt > 6000) {
+
+          api.hangupCall(currentCallId, 'hangup').catch(() => {})
+          fail('对方已接听，但应答未送达（信令丢失），请重拨')
+        }
+        return
+      }
+      activeSeenAt = 0
+      if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
+
+
+        finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
+      }
+    } catch (e) { /* 网络抖动忽略，下一轮再试 */ }
+  }, DIAL_POLL_MS)
+}
+
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+/* ══════════ 来电提示（提示音 + 震动） ══════════
+ * 不用音频文件：WebAudio 双音就够，且不受打包资源影响。
+ * iOS/Android 可能因未获用户手势而静音，静默失败不影响来电可用性。
+ */
+let ringCtx = null
+let ringBeepTimer = null
+
+function startRing() {
+  stopRing()
+  try { if (navigator.vibrate) navigator.vibrate([400, 200, 400]) } catch (e) { /* 忽略 */ }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    ringCtx = ringCtx || new Ctx()
+    if (ringCtx.state === 'suspended') ringCtx.resume().catch(() => {})
+    beepOnce()
+    ringBeepTimer = setInterval(beepOnce, 1600)
+  } catch (e) { /* 无声也能接 */ }
+}
+
+function beepOnce() {
+  try {
+    const t = ringCtx.currentTime
+    ;[0, 0.45].forEach(off => {
+      const osc = ringCtx.createOscillator()
+      const gain = ringCtx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = 780
+      gain.gain.setValueAtTime(0, t + off)
+      gain.gain.linearRampToValueAtTime(0.12, t + off + 0.05)
+      gain.gain.linearRampToValueAtTime(0, t + off + 0.35)
+      osc.connect(gain)
+      gain.connect(ringCtx.destination)
+      osc.start(t + off)
+      osc.stop(t + off + 0.4)
+    })
+  } catch (e) { /* 忽略 */ }
+}
+
+function stopRing() {
+  if (ringBeepTimer) { clearInterval(ringBeepTimer); ringBeepTimer = null }
+  try { if (navigator.vibrate) navigator.vibrate(0) } catch (e) { /* 忽略 */ }
+}
+
+/* ══════════ 屏幕常亮 ══════════ */
+
+async function acquireWakeLock() {
+  try {
+    if (!navigator.wakeLock) return
+    wakeLock = await navigator.wakeLock.request('screen')
+  } catch (e) { wakeLock = null }
+}
+
+function releaseWakeLock() {
+  try { wakeLock && wakeLock.release() } catch (e) { /* 忽略 */ }
+  wakeLock = null
+}
+
+/** 连接状态 → UI 阶段（active 计时、失败收尾） */
+function onPcStateChange(conn) {
+  const st = conn.connectionState
+  if (st === 'connected') markActive()
+  else if (st === 'failed') {
+    // 无中继时的失败，几乎都是「跨网络直连不通」——把话说明白，别让人以为是 bug
+    fail(callState.relay
+      ? '网络连接中断，通话已结束'
+      : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
+  } else if (st === 'disconnected') {
+    // 弱网瞬断很常见，给 5s 自愈窗口，仍未 connected 才收尾
+    setTimeout(() => {
+      if (pc !== conn || conn.connectionState === 'connected') return
+      // 在小窗里（Activity 仍可见）或页面可见时才判失败；
+      // 被系统切到后台时 Chromium 会暂停，不能据此断定"连接中断"，否则切回来就已经挂断。
+      const hidden = typeof document !== 'undefined' && document.hidden
+      if (hidden && !callState.inPip) return
+      fail(callState.relay
+        ? '连接中断，通话已结束'
+        : '双方网络无法直连（未配置通话中继），请在同一网络下重试')
+    }, 5000)
+  }
+}
+
+/* ══════════ 主叫：发起 ══════════ */
+
+/**
+ * 发起通话（仅私密会话：call_key 依赖对端设备级 IK 公钥）。
+ * @param {{conversationId:string, kind:'audio'|'video', peerName?:string, peerUserId?:string}} opts
+ */
+export async function startCall({ conversationId, kind = 'audio', peerName = '', peerUserId = '' }) {
+  // 只有真正在进行中的通话才拦；'ended'/'failed' 只是结果态（1.8s 后自动回 idle），
+  // 用户这时立刻重拨应该直接放行，否则会看到「当前已有通话进行中」然后立刻被收掉。
+  const busyPhases = ['dialing', 'incoming', 'connecting', 'active']
+  if (busyPhases.indexOf(callState.phase) >= 0) { showToast('当前已有通话进行中'); return }
+  if (!callSupported()) { showToast('当前环境不支持通话（需 HTTPS 或 App 内使用）'); return }
+  resetLocal()
+  callState.phase = 'dialing'
+  callState.status = 'preparing'
+  callState.kind = kind
+  callState.conversationId = conversationId
+  callState.peer = { id: peerUserId, name: peerName || '对方' }
+  callState.duration = 0
+  callState.error = ''
+  callState.muted = false
+  callState.camOff = false
+
+  try {
+    // ① 对端设备公钥（私密会话唯一入口）——没有它算不出 call_key
+    const peer = await peerIKOf(conversationId)
+    peerIKPub = peer.pub
+    // ② 中继凭据（可选增强）：拿不到就只收集 host 候选，不阻断通话
+    const ice = await turnIceServers()
+    callState.relay = ice.relay
+    if (!ice.relay) showToast('未配置通话中继，仅同一网络内可通话')
+    // ③ 临时密钥 + call_key：salt = 会话 + 主叫 eph_pub，POST 之前就能算
+    ephPair = await genKeyPair()
+    const ephPub = stripPad(b64(ephPair.pub))
+    callKey = await deriveCallKey(ephPair, peerIKPub, conversationId, ephPub)
+    // ④ 采集 → 建连 → offer
+    callState.status = 'media'
+
+    localStream = markRaw(await acquireMedia(kind))
+
+    callState.localStream = localStream
+   // 本地预览从这一刻开始渲染
+    pc = createPC(ice.list)
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+
+    await pc.setLocalDescription(await pc.createOffer())
+
+    const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
+    const fp = dtlsFingerprintOf(sdp)
+    if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹，无法建立加密通话')
+    // ⑤ 发请求；此时 callId 未知，本地候选在队列里等，拿到后补发
+    callState.status = 'ringing'
+    const res = await api.createCall({
+      conversation_id: conversationId,
+      kind,
+      eph_pub: ephPub,
+      fp_mac: await fingerprintMac(callKey, fp),
+      payload: await seal(callKey, sdp),
+      // 显式指定被叫设备（私密会话只有两台绑定设备），与后端 pickCalleeDevice 的
+      // 「排除主叫反推另一台」互为兜底，任一版本客户端都不会选错设备。
+      ...(peer.deviceId ? { to_device_id: peer.deviceId } : {}),
+    })
+    currentCallId = res && res.call_id
+    callState.callId = currentCallId
+    if (!currentCallId) throw new Error('服务端未返回 call_id')
+
+    flushIce().catch(() => {})
+    startDialTimeout()
+    startDialPoll()
+    acquireWakeLock()
+  } catch (e) {
+    fail(e)
+  }
+}
+
+/* ══════════ 通话内操作 ══════════ */
+
+/** 挂断（振铃中挂断 = 取消；服务端幂等，重复调用也不会报错）。
+ *  **本地先收尾、信令 fire-and-forget**：网络/后端异常时挂断按钮也必须立刻有反应，
+ *  否则会像「对方已挂断，本机还卡在正在连接且点不动」那样僵住。 */
+export async function endCall() {
+  const id = currentCallId
+  const wasDialing = callState.phase === 'dialing'
+
+  finish('ended', wasDialing ? 'cancel' : 'hangup', '')
+  if (id) api.hangupCall(id, 'hangup').catch(() => {})
+}
+
+/** 拒接来电（busy 用于本机已有通话时自动忙线） */
+export async function rejectCurrent(reason = 'decline') {
+  const invite = incomingInvite
+  const id = (invite && invite.call_id) || currentCallId
+  currentCallId = id
+
+  finish('ended', reason, reason === 'busy' ? '对方忙线中' : '已拒接')
+  if (id) api.rejectCall(id, reason).catch(() => { /* 已处理 */ })
+}
+
+/** 结果态手动关闭（纯本地，不发任何信令） */
+export function dismissCall() {
+  resetLocal()
+  callState.phase = 'idle'
+  callState.status = ''
+  callState.endedReason = ''
+  callState.error = ''
+  callState.duration = 0
+  callState.muted = false
+  callState.camOff = false
+}
+
+/** 静音 / 取消静音（只切音轨 enabled，不动采集，避免反复开关设备） */
+export function toggleMute() {
+  if (!localStream) return
+  callState.muted = !callState.muted
+  localStream.getAudioTracks().forEach(t => { t.enabled = !callState.muted })
+}
+
+/** 关闭 / 打开本地摄像头（视频通话；只切 enabled 保留轨道） */
+export function toggleCamera() {
+  if (!localStream) return
+  const tracks = localStream.getVideoTracks()
+  if (!tracks.length) return
+  callState.camOff = !callState.camOff
+  tracks.forEach(t => { t.enabled = !callState.camOff })
+}
+
+/** 前后摄像头切换。
+ *
+ * 两条路径，按兼容性从优到劣：
+ *  ① `applyConstraints({facingMode})`：同设备组内切换最快、无黑屏帧；
+ *  ② `enumerateDevices` 找下一颗 videoinput → `getUserMedia({deviceId})` 取新轨道 →
+ *     `RTCRtpSender.replaceTrack()` 热替换（不重新协商，通话不中断）。
+ *
+ * 为什么必须有 ②：Android WebView 的 MediaStreamTrack 通常只暴露 deviceId，
+ * 对轨道级 facingMode 约束抛 OverconstrainedError。旧实现只做 ①且静默吞错，
+ * 表现就是「点了翻转没反应」。
+ *
+ * @returns {Promise<boolean>} 是否真的切成功（失败会弹提示，不再静默）
+ */
+/* 摄像头切换的串行化：连点「翻转」会并发发起多次 getUserMedia + replaceTrack，
+ * 相机被反复抢占 → 本机 NotReadableError、对方解码器反复重建（表现为画面卡住）。 */
+let switchingCamera = false
+let lastSwitchAt = 0
+
+/**
+ * 前后摄像头切换（**串行 + 限频**）。
+ *
+ * 统一走一条路径：`enumerateDevices` 找下一颗 videoinput → `getUserMedia({deviceId})`
+ * → `RTCRtpSender.replaceTrack()` 热替换（不重协商，SSRC 不变，对方无需重新协商）。
+ * 不再混用 `applyConstraints({facingMode})`：两条路径交替会让轨道状态不一致，
+ * 且 Android WebView 大多不支持轨道级 facingMode。
+ *
+ * @returns {Promise<boolean>} 是否切换成功（失败有明确提示）
+ */
+export async function switchCamera() {
+  if (switchingCamera) return false
+  if (!localStream) return false
+  if (Date.now() - lastSwitchAt < 1000) return false // 1s 内重复点击直接忽略
+  const oldTrack = localStream.getVideoTracks()[0]
+  if (!oldTrack) return false
+
+  switchingCamera = true
+  try {
+    const cams = await listCameras()
+    if (cams.length < 2) { showToast('这台设备只有一颗摄像头'); return false }
+    const curId = (oldTrack.getSettings && oldTrack.getSettings().deviceId) || ''
+    const idx = cams.findIndex(c => c.deviceId === curId)
+    const next = cams[idx >= 0 ? (idx + 1) % cams.length : 0]
+
+
+    // 与首次采集保持同样的分辨率，避免对方解码器因分辨率跳变重建
+    const ns = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { deviceId: { exact: next.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    })
+    const newTrack = ns.getVideoTracks()[0]
+    if (!newTrack) { showToast('切换摄像头失败'); return false }
+    newTrack.enabled = !callState.camOff
+
+    const sender = pc && pc.getSenders().find(s => s.track && s.track.kind === 'video')
+    if (sender) await sender.replaceTrack(newTrack)
+    else if (pc) pc.addTrack(newTrack, localStream)
+
+    // 新轨确认挂上之后才停旧轨，失败时保留旧轨
+    try { oldTrack.stop() } catch (e) { /* 忽略 */ }
+    localStream = markRaw(new MediaStream([...localStream.getAudioTracks(), newTrack]))
+    callState.localStream = localStream
+    callState.facing = /back|rear|environment|后置/i.test(next.label || '') ? 'environment' : 'user'
+    lastSwitchAt = Date.now()
+
+    return true
+  } catch (e) {
+
+    showToast('切换摄像头失败：' + errText(e))
+    return false
+  } finally {
+    switchingCamera = false
+  }
+}
+
+/** 枚举摄像头（有权限后 label 才可读；无权限返回空数组） */
+export async function listCameras() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices()
+    return devs.filter(d => d.kind === 'videoinput')
+  } catch (e) {
+    return []
+  }
+}
+
+/* ══════════ 被叫：来电与接听 ══════════ */
+
+/**
+ * 处理 call:incoming。
+ *
+ * 关键：**接听前**就派生 call_key 并校验主叫的 DTLS 指纹 MAC，校验不过直接挂断，
+ * 绝不让被中间人替换的 SDP 进到 PeerConnection。被叫侧必须用 deriveCallKeyAsCallee。
+ * 派生好的 call_key / SDP 缓存起来，接听时复用（否则要重新协商，指纹也对不上）。
+ */
+async function onIncoming(p) {
+  if (!p || !p.call_id) return
+
+  // 本机已有通话 → 直接回忙线（服务端也拦，但前端先拦省一次状态机冲突与提示）
+  if (callState.phase !== 'idle' || !callSupported()) {
+
+    api.rejectCall(p.call_id, 'busy').catch(() => {})
+    return
+  }
+  try {
+    const peer = await peerIKOf(p.conversation_id)
+    peerIKPub = peer.pub
+    ephPair = await genKeyPair()
+    incomingCallKey = await deriveCallKeyAsCallee(p.eph_pub, peerIKPub, p.conversation_id, p.eph_pub)
+    incomingSdp = await open(incomingCallKey, p.payload)
+    const fp = dtlsFingerprintOf(incomingSdp)
+    if (!fp || !(await verifyFingerprintMac(incomingCallKey, fp, p.fp_mac))) {
+      api.hangupCall(p.call_id, 'hangup').catch(() => {})
+      currentCallId = null // 这通已被我们结束，别让后续 call:ended 弹结果界面
+      incomingCallKey = null
+      incomingSdp = null
+      ephPair = null
+      showToast('通话密钥校验失败，已拒绝（可能存在中间人）')
+      return
+    }
+    incomingInvite = p
+    currentCallId = p.call_id
+    callState.phase = 'incoming'
+
+    callState.status = ''
+    callState.kind = p.kind === 'video' ? 'video' : 'audio'
+    callState.conversationId = p.conversation_id
+    callState.callId = p.call_id
+    callState.peer = {
+      id: (p.from_user && p.from_user.id) || null,
+      name: (p.from_user && p.from_user.display_name) || '对方',
+    }
+    callState.duration = 0
+    callState.error = ''
+    startRing()
+    startRingTimeout()
+    startDialPoll()   // 对方取消/超时后即使 call:ended 丢了，也能在 5s 内停振铃
+  } catch (e) {
+    // 解密失败 / 公钥缺失 / payload 损坏：直接拒绝，不留半死界面
+    api.rejectCall(p.call_id, 'decline').catch(() => {})
+    currentCallId = null
+    incomingCallKey = null
+    incomingSdp = null
+    ephPair = null
+    showToast('来电解析失败，已拒绝')
+  }
+}
+
+/**
+ * 接听：复用来电时已校验的 call_key 与 offer SDP，采集后回 answer。
+ * 必须在用户手势里调用（否则 getUserMedia 与音频播放都会被拦）。
+ */
+export async function acceptCall() {
+  if (callState.phase !== 'incoming' || !incomingInvite || !incomingCallKey || !incomingSdp) return
+  stopRing()
+  clearRingTimeout()
+  callState.phase = 'connecting'
+  callState.status = 'answering'
+
+  try {
+    // 被叫同样：中继凭据拿不到就只走 host 候选（同网仍可接通）
+    const ice = await turnIceServers()
+    callState.relay = ice.relay
+    callKey = incomingCallKey
+    localStream = markRaw(await acquireMedia(callState.kind))
+
+    callState.localStream = localStream
+ // 本地预览从这一刻开始渲染
+    pc = createPC(ice.list)
+
+    // 顺序很重要：先 SRD 建立 transceiver（按对端 offer 的 m-line），再加轨、再 createAnswer。
+    // 反过来（先 addTrack 再 SRD）时，个别实现会把 answer 里的视频方向算成 recvonly，
+    // 表现就是「我能看到对方，对方看不到我」。
+    await pc.setRemoteDescription({ type: 'offer', sdp: incomingSdp })
+
+    remoteDescSet = true
+    flushRemoteIce()
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+
+    await pc.setLocalDescription(await pc.createAnswer())
+
+    const sdp = (pc.localDescription && pc.localDescription.sdp) || ''
+    const fp = dtlsFingerprintOf(sdp)
+    if (!fp) throw new Error('本地 SDP 缺少 DTLS 指纹')
+    await api.acceptCall(currentCallId, {
+      eph_pub: stripPad(b64(ephPair.pub)), // 被叫临时公钥（服务端仅存，不参与 salt）
+      fp_mac: await fingerprintMac(callKey, fp),
+      payload: await seal(callKey, sdp),
+    })
+
+    flushIce().catch(() => {})
+    startDialPoll()      // connecting 期间也用 REST 兜底（对方挂断/超时都能发现）
+    acquireWakeLock()
+  } catch (e) {
+    // 接听失败要通知对端，否则主叫一直停在「正在连接」
+
+    if (currentCallId) api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail(e)
+  }
+}
+
+/* ══════════ WS 事件装配 ══════════ */
+
+const offs = []
+let installed = false
+
+/**
+ * 主叫收到 call:accepted：解密 answer → 取 DTLS 指纹 → 校验 fp_mac → 通过才 setRemoteDescription。
+ * 顺序不能反，否则信令服务器可以替换指纹做 MITM。
+ */
+async function onAccepted(p) {
+  if (!p) return
+  if (!callKey || !pc) {
+    // 走到这里是真异常：说明本机通话状态被清掉了（例如中途 reload / 被 logout）
+
+    return
+  }
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) {
+
+    return
+  }
+  clearDialTimeout()
+  stopPoll()
+
+  let sdp
+  try {
+    sdp = await open(callKey, p.payload)
+  } catch (e) {
+
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('通话密钥协商失败，已挂断')
+    return
+  }
+  const fp = dtlsFingerprintOf(sdp)
+  const macOk = !!(fp && await verifyFingerprintMac(callKey, fp, p.fp_mac))
+  if (!macOk) {
+
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('对方应答指纹校验失败，已挂断（可能存在中间人）')
+    return
+  }
+  if (pc.signalingState !== 'have-local-offer') {
+    // 重复事件或状态机已前进：如果媒体其实已经连上，直接按 active 处理
+
+    if (pc.connectionState === 'connected') markActive()
+    return
+  }
+  try {
+    await pc.setRemoteDescription({ type: 'answer', sdp })
+    remoteDescSet = true
+    flushRemoteIce()
+
+    if (callState.phase === 'dialing') {
+      callState.phase = 'connecting'
+      callState.status = ''
+    }
+  } catch (e) {
+
+    api.hangupCall(currentCallId, 'hangup').catch(() => {})
+    fail('通话连接建立失败，已挂断')
+  }
+}
+
+/** 转发来的加密 ICE（一批一个 payload） */
+async function onRemoteIce(p) {
+  if (!p || !callKey) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  let parsed
+  try {
+    parsed = JSON.parse(await open(callKey, p.payload))
+  } catch (e) {
+    return // 解密失败/非本通电话的候选，静默丢弃
+  }
+  const list = Array.isArray(parsed) ? parsed : [parsed]
+  list.forEach(c => { if (c) addRemoteIce(c) })
+}
+
+/** 拒接 / 忙线 / 振铃超时（主叫侧） */
+function onRejected(p) {
+  if (!p) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  const text = { decline: '对方已拒接', busy: '对方忙线中', timeout: '对方无人接听' }[p.reason] || '通话已结束'
+  finish('ended', p.reason || 'decline', text)
+}
+
+/** 通话结束（双方都会收到；含设备下线 / 会话关闭联动） */
+function onEnded(p) {
+  if (!p) return
+  if (p.call_id && currentCallId && p.call_id !== currentCallId) return
+  const text = {
+    hangup: '通话已结束',
+    reject: '通话已拒接',
+    timeout: '通话超时已结束',
+    peer_offline: '对方设备离线，通话已结束',
+    session_closed: '会话已关闭，通话已结束',
+  }[p.reason] || '通话已结束'
+  finish('ended', p.reason || 'hangup', text)
+}
+
+/** WS 重连后用 REST 对齐一次状态（重连窗口期事件可能丢） */
+async function resyncAfterReconnect() {
+  if (!currentCallId || callState.phase === 'idle') return
+  try {
+    const view = await api.getCall(currentCallId)
+    if (!view) return
+
+    if (view.state === 'ended' || view.state === 'rejected' || view.state === 'missed') {
+      finish('ended', view.end_reason || view.state, view.state === 'missed' ? '无人接听' : '通话已结束')
+    }
+  } catch (e) { /* 忽略：后续事件仍会纠正 */ }
+}
+
+/**
+ * 挂上全部通话事件（App 挂载时调用一次）。
+ * ws.js 的 onWs 会在 socket 重连后自动重挂，闭包里全部做幂等判断，重复事件无副作用。
+ */
+export function installCallEvents() {
+  if (installed) return
+  installed = true
+  /** 统一包一层：事件处理里的异常不影响 socket */
+  const wrap = (fn) => (p) => {
+    try { Promise.resolve(fn(p)).catch(() => { /* 忽略 */ }) } catch (e) { /* 忽略 */ }
+  }
+  offs.push(onWs(WS_EVENTS.CALL_INCOMING, wrap(onIncoming)))
+  offs.push(onWs(WS_EVENTS.CALL_ACCEPTED, wrap(onAccepted)))
+  offs.push(onWs(WS_EVENTS.CALL_REJECTED, wrap(onRejected)))
+  offs.push(onWs(WS_EVENTS.CALL_ICE, wrap(onRemoteIce)))
+  offs.push(onWs(WS_EVENTS.CALL_ENDED, wrap(onEnded)))
+  offs.push(onWs('connect', () => { resyncAfterReconnect().catch(() => { /* 忽略 */ }) }))
+
+  // 画中画状态：进入小窗 → 切紧凑布局；小窗被划掉 → 视为结束通话
+  if (CallPip) {
+    try {
+      CallPip.addListener('pipChange', ({ inPip }) => {
+        callState.inPip = !!inPip
+        // 小窗让视口尺寸突变，强制一次同步重排，避免 Chromium 还按旧尺寸绘制（白块/只显示一截）
+        try { void document.body.offsetHeight } catch (e) { /* 忽略 */ }
+        // 小窗窗口通常比 WebView 表面大一圈，多出来的区域会露出 body 底色（浅灰/白）。
+        // 切到深色底，未绘制区域就变成黑的，视觉上是"小窗留黑边"而不是"缺一块"。
+        try {
+          document.documentElement.classList.toggle('pip-root', !!inPip)
+        } catch (e) { /* 忽略 */ }
+        if (inPip) {
+          // 进入小窗前已知远端比例的话，重新下发一次，部分 ROM 会据此调整窗口比例
+          if (lastPipAspect) { try { CallPip.enable({ aspectRatio: lastPipAspect }) } catch (e) { /* 忽略 */ } }
+          return
+        }
+        // 退出小窗：只有确实回到"不可见"状态才算被划掉。
+        // 部分 ROM 在 PiP 里会来回发 true/false，500ms 太短会误挂断，这里放宽到 2s 并复查状态。
+        setTimeout(() => {
+          const st = typeof document !== 'undefined' ? document.visibilityState : 'visible'
+          const phase = callState.phase
+          if (callState.inPip || st !== 'hidden') return
+          if (phase === 'active' || phase === 'connecting') endCall()
+        }, 2000)
+      })
+    } catch (e) { /* 机型不支持则忽略 */ }
+  }
+}
+
+/** 卸载事件并释放资源（App 卸载 / 强制登出时调用，防麦克风摄像头残留在后台） */
+export function uninstallCallEvents() {
+  installed = false
+  while (offs.length) {
+    const off = offs.pop()
+    try { off() } catch (e) { /* 忽略 */ }
+  }
+  resetLocal()
+  callState.phase = 'idle'
+  callState.status = ''
+  callState.peer = { id: null, name: '' }
+  callState.endedReason = ''
+  callState.error = ''
+}
+

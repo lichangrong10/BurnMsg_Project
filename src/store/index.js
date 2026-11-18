@@ -7,7 +7,7 @@ import { storage } from '../utils/storage'
 import { http, setBaseURL } from '../utils/request'
 import { api } from '../api'
 import { DEMO } from '../mock/demo'
-import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview } from '../utils/format'
+import { burnLabelOf, convName, memberUid, memberUser, memberName, messagePreview, memberAvatar } from '../utils/format'
 import { notifyNewMessage, notifySystem } from '../utils/notify'
 import { connectWs, disconnectWs, reconnectWs, onWs, WS_EVENTS, isWsConnected } from '../utils/ws'
 import { bindPushAlias, unbindPushAlias, isPushActive } from '../utils/push'
@@ -37,6 +37,7 @@ import { Capacitor } from '@capacitor/core'
 export const state = reactive({
   view: storage.forceChangePwd ? 'changePwd' : (storage.token ? 'main' : 'login'), // login | changePwd | main
   tab: 'chats',                           // chats | channels | contacts | me
+  meSubPage: '',                          // 「我的」二级页：'' | account | notify | general
   keyword: '',
   me: storage.user || {},
   baseURL: storage.baseURL,
@@ -70,6 +71,7 @@ export const state = reactive({
   e2eReady: false,       // 本机 E2E 密钥已就绪（旧用户级，兼容保留）
   e2eSecretReady: false, // 本机「设备级」公钥已上传，可发起/接受加密聊天
   e2eSecretBusy: false,  // 加密聊天请求进行中（防重复点击）
+  convsLoaded: false,     // 会话列表是否已完成首次加载（骨架屏用）
   devices: [],           // 已登录设备（/auth/devices：含 browser / os / 在线态）
   secretPlain: {},       // 加密聊天本机发送的明文兜底（msgId -> text）
   pwdForm: { old: '', n1: '', n2: '' },
@@ -82,6 +84,7 @@ export const state = reactive({
   createGroupAsChannel: false, // CreateGroup 打开时预设「频道」模式（openCreateGroup 设置，CreateGroup 挂载后消费复位）
   showChatInfo: false,    // 聊天信息/群管理页（覆盖层）
   showAdmin: false,       // 管理后台页（覆盖层，admin 可见入口）
+  groupThumbs: {},          // 群头像宫格缓存：groupId -> [{name, avatar}]
   groupMembers: [],       // 当前群成员列表（含角色与用户信息）
   groupMembersAt: 0,      // 群成员列表拉取时间（群已读进度据此判断是否要重拉）
   readWatermark: 0,       // 私聊对方已读水位线（ms 时间戳）：本人消息 created_at ≤ 此值即已读
@@ -410,10 +413,27 @@ let lastNewestStamp = 0
 
 /* ─── Toast ─── */
 let toastTimer = null
+const toastQueue = []
+
+/** 显示提示：多条依次排队，避免互相覆盖 */
 export function showToast(t) {
-  state.toast = t
+  const msg = t == null ? '' : String(t)
+  if (!msg) return
+  toastQueue.push(msg)
+  if (state.toast) return            // 正在显示 → 排队
+  nextToast()
+}
+
+function nextToast() {
+  const msg = toastQueue.shift()
+  if (!msg) { state.toast = ''; return }
+  state.toast = msg
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { state.toast = '' }, 2200)
+  toastTimer = setTimeout(() => {
+    state.toast = ''
+    // 留出离场动画时间再显示下一条
+    toastTimer = setTimeout(() => { if (toastQueue.length) nextToast() }, 160)
+  }, 2200)
 }
 
 /* ─── 登录 / 改密 / 登出 ─── */
@@ -838,12 +858,7 @@ async function initE2E() {
         console.warn('[焚信] 设备公钥上传失败:', e && e.message)
       }
     }
-    // 兼容旧开关：仍上传用户级公钥（后端如已下线该接口会 404，静默忽略）
-    try {
-      const pubB64 = await ensureIdentity()
-      await api.uploadIdentityKey(pubB64)
-      state.e2eReady = true
-    } catch (e) { /* 旧接口已下线，忽略 */ }
+    state.e2eReady = state.e2eSecretReady   // 旧「用户级公钥」接口已下线，仅保留设备级密钥
   } catch (e) { console.warn('[焚信] E2E 初始化失败:', e && e.message) }
 }
 
@@ -870,6 +885,9 @@ export function refreshTitle() {
 // 未读数变化即刷新：新消息 +1、打开会话清零、会话列表从服务端重拉
 watch(convUnreadTotal, refreshTitle)
 
+// 切 Tab 时收起所有页面级覆盖层（否则桌面端右侧仍是上一个覆盖层，看起来"点了没反应"）
+watch(() => state.tab, () => { closePageOverlays() })
+
 /** 加载已登录设备列表（含浏览器/系统识别信息，用于加密聊天"绑定设备"展示） */
 export async function loadDevices(force) {
   if (state.demoMode) return state.devices
@@ -882,6 +900,50 @@ export async function loadDevices(force) {
   } catch (e) { return state.devices }
 }
 
+/** 懒加载群成员缩略（群默认头像 2x2 宫格用），带缓存 */
+export async function ensureGroupThumbs(ids) {
+  const need = (ids || []).filter(id => id && !state.groupThumbs[id])
+  if (!need.length) return
+  for (const id of need.slice(0, 12)) {
+    try {
+      const arr = await api.getGroupMembers(id)
+      const members = Array.isArray(arr) ? arr : (arr && (arr.list || arr.items)) || []
+        // 用项目帮助函数解析：后端成员行把姓名/头像放在顶层 user_display_name / user_avatar_url
+        state.groupThumbs[id] = members.map(x => ({
+          name: memberName(x),
+          avatar: memberAvatar(x)
+        })).slice(0, 4)
+    } catch (e) { state.groupThumbs[id] = [] }
+  }
+}
+
+/** 预览滞后补拉：后端 last_message 比 last_message_at 旧时，拉最新几条取最后一条 */
+async function fillStalePreviews() {
+  const need = state.convs.filter(c => {
+    const lm = c.last_message || c.lastMessage || c.last_msg || null
+    const lmAt = lm && typeof lm === 'object' ? (Date.parse(lm.created_at || lm.createdAt || '') || 0) : 0
+    const convAt = Date.parse(c.last_message_at || '') || 0
+    return convAt > 0 && (!lmAt || lmAt < convAt - 1000)
+  }).slice(0, 6)
+  if (!need.length) return
+  for (let k = 0; k < need.length; k += 3) {
+    await Promise.allSettled(need.slice(k, k + 3).map(async c => {
+      try {
+        const list = asArray(await api.getMessages(c.id, { limit: 20 }))
+        const sorted = sortByTimeAsc(list)
+        const last = sorted[sorted.length - 1]
+        if (!last) return
+        const p = messagePreview(last)
+        if (!p) return
+        setLastMsg(c.id, p)
+        const cv = state.convs.find(x => String(x.id) === String(c.id))
+        if (cv) cv.lastMsg = p
+      } catch (e) { /* 静默 */ }
+    }))
+  }
+}
+
+
 export async function loadConvs(quiet) {
   // 记录加载前的私密会话，加载后对比：服务端不再返回 = 已结束/被踢 → 清理本地痕迹
   const prevSecretIds = state.convs.filter(isSecretConv).map(c => String(c.id))
@@ -890,6 +952,7 @@ export async function loadConvs(quiet) {
     const hidden = hiddenConvIds().map(String)
     DEMO.convs.forEach(c => { c.pinned = ids.includes(c.id) })
     state.convs = DEMO.convs.filter(c => !hidden.includes(String(c.id)))
+    state.convsLoaded = true
     return
   }
   try {
@@ -911,9 +974,24 @@ export async function loadConvs(quiet) {
         // 未读数一律用本机计数：后端 unread_count 是累计值（读完不减）；
         // 本地没有记录（清缓存/新登录）时先显示 0，随后由 fillLocalUnread 按服务端「我读到哪条」补算
         const local = getLocalUnread(c.id)
-        const unread = locallyRead ? 0 : (local != null ? local : 0)
+      let unread = locallyRead ? 0 : (local != null ? local : 0)
+      // 轮询补偿：服务端最后消息时间变新、且不是当前会话 → 本地未读 +1（WS 掉线也不丢红点）
+      const oldAt = old ? (Date.parse(old.last_message_at || '') || 0) : 0
+      const isCurrentConv = state.chat && String(state.chat.id) === String(c.id)
+      if (!isCurrentConv && oldAt > 0 && lastAt > oldAt && !locallyRead) {
+        unread = unread + 1
+        setLocalUnread(c.id, unread)
+      }
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
-        const preview = extractConvoPreview(c) || getLastMsg(c.id) || (old && old.lastMsg) || ''
+        // 预览优先取「最新」：后端 last_message 可能滞后（不等于 last_message_at），
+      // 此时用本机缓存的最新一条（打开会话/收发消息时会写入）
+      const serverPreview = extractConvoPreview(c)
+      const cachedPreview = getLastMsg(c.id) || (old && old.lastMsg) || ''
+      const lm = c.last_message || c.lastMessage || c.last_msg || null
+      const lmAt = lm && typeof lm === 'object' ? (Date.parse(lm.created_at || lm.createdAt || '') || 0) : 0
+      const convAt = Date.parse(c.last_message_at || '') || 0
+      const previewStale = lmAt > 0 && convAt > 0 && lmAt < convAt - 1000
+      const preview = previewStale ? (cachedPreview || serverPreview) : (serverPreview || cachedPreview)
         let mentionFlag = (old && old.mentionFlag) ? 1 : 0
         if (!mentionFlag && unread > 0) {
           const mentioned = (lastMsgObj && typeof lastMsgObj === 'object')
@@ -939,9 +1017,11 @@ export async function loadConvs(quiet) {
       const bp = (b.e2e_mode === 1 && (b.e2e_state === 1 || b.e2e_state === 2)) ? 1 : 0
       return bp - ap
     })
+    state.convsLoaded = true
     // 缺本地未读记录的会话（清缓存/新登录）：按服务端「我读到哪条」重算，不把历史消息算成未读
     fillLocalUnread(state.convs)
     if (!quiet) await fillMissingPreviews()
+    fillStalePreviews()
     refreshVisiblePresence() // 会话列表的在线圆点：拉一遍所有私聊对方的在线态（静默、异步）
   } catch (e) { if (!quiet) showToast(e.message) }
 }
@@ -1060,7 +1140,34 @@ export async function openChatById(cid) {
   return true
 }
 
+/* 页面级覆盖层统一关闭（搜索 / 公告 / 反馈 / 账号管理 / 建群 / 会话详情 / 通知指引）。
+   它们和聊天页同为 .chat-page（桌面端都占右栏、层级相同），不关掉的话
+   「在搜索页点会话」或「覆盖层开着时切 Tab」都会看到旧页面压在上面，右侧像没反应。 */
+/* 页面级覆盖层的 key（搜索 / 公告 / 反馈 / 账号管理 / 建群 / 会话详情 / 通知指引）。
+   它们同级、都占桌面端右栏，同时打开必然互相遮挡，所以做成「互斥」：任一打开就关掉其它的。 */
+const PAGE_OVERLAY_KEYS = ['showGlobalSearch', 'showAnnouncements', 'showFeedback', 'showAdmin', 'showNotifyGuide', 'showCreateGroup', 'showChatInfo']
+
+export function closePageOverlays() {
+  for (const k of PAGE_OVERLAY_KEYS) state[k] = false
+}
+
+/** 打开某个页面级覆盖层（自动关掉其它覆盖层，避免"点了搜索再点公告右侧没变化"这类叠加问题） */
+export function openPageOverlay(key) {
+  if (!PAGE_OVERLAY_KEYS.includes(key)) return false
+  for (const k of PAGE_OVERLAY_KEYS) state[k] = (k === key)
+  return true
+}
+
+// 兜底：任何地方直接改 flag 置 true（老代码里的 state.showXxx = true），也会把其它覆盖层收掉
+for (const key of PAGE_OVERLAY_KEYS) {
+  watch(() => state[key], v => {
+    if (!v) return
+    for (const other of PAGE_OVERLAY_KEYS) if (other !== key && state[other]) state[other] = false
+  })
+}
+
 export async function openChat(c) {
+  closePageOverlays() // 从搜索/公告等覆盖层点会话时，先把旧页面收掉，聊天页才能露出来
   state.chat = c
   c.unread = 0
   c.mentionFlag = 0
@@ -1171,13 +1278,9 @@ export async function loadMessages(quiet) {
     const last = sorted[sorted.length - 1]
     const newestStamp = last ? msgTime(last) : 0
     if (cid !== lastMsgConv) {
-      // 切换会话后的首次拉取：打印一条最新消息的原始样例（确认后端真实字段名/时间格式），并重建新消息基线
-      if (last) { try { console.log('[焚信] 消息字段样例:', JSON.stringify(last).slice(0, 600)) } catch (e) { /* 忽略 */ } }
       lastMsgConv = cid
       lastNewestStamp = newestStamp
     }
-    console.log('[焚信] 拉取消息', cid, '共', sorted.length, '条' + (quiet ? '（轮询）' : ''),
-      '| 最早:', sorted.length ? fmtMsgDbg(sorted[0]) : '-', '| 最新:', last ? fmtMsgDbg(last) : '-')
     // 最新时间戳超过基线 → 有新消息到达（首次加载不算，滚底由 msgSeq 负责）
     if (newestStamp > lastNewestStamp) state.newMsgSeq++
     lastNewestStamp = Math.max(lastNewestStamp, newestStamp)
@@ -1261,7 +1364,7 @@ async function decryptMessagesInList(list, cid) {
   const getPub = async uid => {
     const k = String(uid)
     if (!(k in pubCache)) {
-      try { pubCache[k] = (await api.getIdentityKey(uid)).identity_pubkey } catch (e) { pubCache[k] = null }
+      try { pubCache[k] = (await fetchPeerKey(cid)).pubkey } catch (e) { pubCache[k] = null }
     }
     return pubCache[k]
   }
@@ -1354,9 +1457,7 @@ async function onWsNewMessage(p) {
     else if (!mine) {
       try {
         const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
-        const pub = isSecretConv(convForDec)
-          ? (await fetchPeerKey(cid)).pubkey
-          : (await api.getIdentityKey(m.sender_id)).identity_pubkey
+        const pub = (await fetchPeerKey(cid)).pubkey
         const text = await decryptMessage(m, pub, cid)
         cachePlaintext(m.id, text)
         m.content = text
@@ -2243,9 +2344,7 @@ export async function revealBurn(m) {
         try {
           const cid = m.conversation_id || (state.chat && state.chat.id)
           const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
-          const pub = isSecretConv(convForDec)
-            ? (await fetchPeerKey(cid)).pubkey
-            : (await api.getIdentityKey(m.sender_id)).identity_pubkey
+      const pub = (await fetchPeerKey(cid)).pubkey
           const text = await decryptMessage(m, pub, cid)
           cachePlaintext(m.id, text)
           m.content = text
@@ -2780,7 +2879,16 @@ export function startTimers() {
     if (!wasPending && cur.e2e_state !== 2) handleSecretGone(cid, '对方已结束加密聊天')
   } catch (e) { /* 网络抖动忽略，下轮再试 */ }
 }, 4000))
-timers.push(setInterval(() => { if (state.view === 'main' && !state.chat) { loadConvs(true); refreshAnnUnread() } }, 15000))
+// 会话列表兜底轮询：WS 正常时 15s 一次；WS 掉线时 5s 一次（避免"收不到消息，进会话才看到"）
+let convPollTick = 0
+timers.push(setInterval(() => {
+  if (state.view !== 'main' || state.chat) return
+  convPollTick++
+  const wsOk = isWsConnected()
+  if (wsOk && convPollTick % 3 !== 0) return   // 在线：每 3 拍（15s）拉一次
+  loadConvs(true)
+  refreshAnnUnread()
+}, 5000))
   // 消息轮询：后台不轮询 + 在途不叠加
   timers.push(setInterval(async () => {
     if (msgPolling) return

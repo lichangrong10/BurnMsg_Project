@@ -1,17 +1,25 @@
-<template>
+﻿<template>
 <div v-if="state.chat" class="chat-page">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="closeChat">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </div>
-      <div class="avatar-wrap chat-avatar-wrap">
-        <div class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
-        <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
-      </div>
-      <div class="chat-title-wrap" @click="openInfo">
-        <div class="chat-title">{{ convName(state.chat) }}</div>
-        <div class="chat-status">{{ chatStatus }}</div>
-      </div>
+        <div class="chat-head-center">
+        <div class="avatar-wrap chat-avatar-wrap">
+          <div v-if="chatQuad.length" class="avatar avatar-quad" style="width: 38px; height: 38px;">
+            <span v-for="(m, i) in chatQuad" :key="i" class="quad-cell" :style="{ background: avatarColor(m.name || '?') }">
+              <img v-if="m.avatar" :src="m.avatar" alt=""><template v-else>{{ (m.name || '?')[0] }}</template>
+            </span>
+            <span v-for="n in (4 - chatQuad.length)" :key="'e' + n" class="quad-cell quad-empty"></span>
+          </div>
+          <div v-else class="avatar" :style="{ width: '38px', height: '38px', fontSize: '15px', background: avatarColor(convName(state.chat)) }"><img v-if="convAvatar(state.chat)" :src="convAvatar(state.chat)" alt=""><template v-else>{{ convInitial(state.chat) }}</template></div>
+          <span v-if="secretBurnLabel" class="conv-burn-badge">{{ secretBurnLabel }}</span>
+        </div>
+        <div class="chat-title-wrap" @click="openInfo">
+          <div class="chat-title">{{ convName(state.chat) }}</div>
+          <div class="chat-status">{{ chatStatus }}</div>
+        </div>
+        </div>
       <div class="topbar-icon more-btn" @click.stop="chatMenu = !chatMenu" title="更多">
         <span v-if="secretPendingMine" class="secret-dot"></span>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
@@ -30,9 +38,14 @@
       <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
       <span class="mi-label">搜索消息</span>
     </div>
-    <div class="chat-menu-item" @click="onMenuInfo">
-      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
-      <span class="mi-label">{{ state.chat && state.chat.type === 'private' ? '聊天信息' : '群组信息' }}</span>
+    <!-- 通话入口：仅**已建立的私密会话**显示（普通私聊没有对方设备公钥，打不了） -->
+    <div v-if="canCallHere" class="chat-menu-item" @click="onMenuCall('audio')">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5C3 7 9 4 12 4s9 3 9 6.5c0 1.2-.6 2-1.6 2.2l-2.7.6c-.9.2-1.7-.3-2-1.2l-.4-1.2c-1.5.5-3 .5-4.6 0l-.4 1.2c-.3.9-1.1 1.4-2 1.2l-2.7-.6C3.6 12.5 3 11.7 3 10.5Z"/></svg></span>
+      <span class="mi-label">语音通话</span>
+    </div>
+    <div v-if="canCallHere" class="chat-menu-item" @click="onMenuCall('video')">
+      <span class="mi-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg></span>
+      <span class="mi-label">视频通话</span>
     </div>
   </div>
 
@@ -116,6 +129,14 @@
             </template>
             <template v-else-if="isBlurredBurn(m) && !isMediaBurn(m)"><span class="burn-blur" :class="{ enc: isEnc(m) }"><svg v-if="isEnc(m)" class="blur-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" stroke="currentColor" stroke-width="2"/><rect x="9.6" y="11.6" width="4.8" height="3.9" rx="1" fill="currentColor" stroke="currentColor" stroke-width="1.2"/><path d="M10.6 11.6V9.3a1.4 1.4 0 0 1 2.8 0v2.3" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span v-else class="blur-ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg></span>{{ burnBlurText(m) }}</span></template>
             <template v-else-if="isMediaBurn(m) && !m.file_url"><span class="media-burn-loading">播完即焚 · 加载中</span></template>
+            <!-- 通话记录：服务端结束时落的一条 type='call' 摘要消息（视频通话 · 01:23 / 未接听 / 已拒接） -->
+            <template v-else-if="m.type === 'call'">
+              <div class="call-record">
+                <svg v-if="callRecordIsVideo(m)" class="call-record-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 11 6-3.5v9L16 13"/></svg>
+                <svg v-else class="call-record-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5C3 7 9 4 12 4s9 3 9 6.5c0 1.2-.6 2-1.6 2.2l-2.7.6c-.9.2-1.7-.3-2-1.2l-.4-1.2c-1.5.5-3 .5-4.6 0l-.4 1.2c-.3.9-1.1 1.4-2 1.2l-2.7-.6C3.6 12.5 3 11.7 3 10.5Z"/></svg>
+                <span class="call-record-text">{{ m.content || '通话记录' }}</span>
+              </div>
+            </template>
             <template v-else-if="m.type === 'image' && m.file_url">
               <div class="msg-image-wrap">
                 <img class="msg-image" :src="imgSrc(m)" @load="scrollBottom" @error="onImgErr(m)">
@@ -513,7 +534,8 @@
 
 <script>
 import { nextTick, markRaw } from 'vue'
-import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices } from '../store'
+import { state, closeChat, setBurn, setMediaBurn, sendText, sendFile, sendVoice, recallMessage, revealBurn, consumeMediaById, flushPendingMedia, showToast, editMessage, openChatInfo, asArray, toggleE2E, confirmPendingKey, ignorePendingKey, confirmTofuKey, dismissTofuAlert, loadMoreMessages, loadReaders, loadReadersMany, myChatRole ,getConvDraft, setConvDraft, isMediaBurnMsg, peerPresence, requestSecretChat, acceptSecretChat, rejectSecretChat, closeSecretChat, loadDevices, ensureGroupThumbs } from '../store'
+import { startCall } from '../utils/call'
 import { api } from '../api'
 import { http } from '../utils/request'
 import { DEMO } from '../mock/demo'
@@ -591,6 +613,14 @@ export default {
     }
   },
   computed: {
+    /** 群聊且无自定义头像 → 用前 4 位成员组成宫格 */
+    chatQuad() {
+      try {
+        const c = state.chat
+        if (!c || c.type !== 'group' || convAvatar(c)) return []
+        return (state.groupThumbs && state.groupThumbs[c.id]) || []
+      } catch (e) { return [] }
+    },
     /** 本机设备名（来自 /auth/devices 的浏览器/系统识别） */
     myDeviceLabel() {
       const list = state.devices || []
@@ -635,6 +665,15 @@ export default {
     isSecretCh() { return !!(state.chat && state.chat.e2e_mode === 1) },
     isSecretPendingCh() { return this.isSecretCh && state.chat.e2e_state === 1 },
     isSecretActiveCh() { return this.isSecretCh && state.chat.e2e_state === 2 },
+    /**
+     * 是否露出通话入口：只有**已建立的私密会话**。
+     * 普通私聊拿不到对方设备级公钥（GET /keys/device/:cid 仅对 e2e 会话开放），
+     * 后端也会以 CALL_STATE_INVALID 拒绝，所以不露出入口，避免点了才发现打不了。
+     */
+    canCallHere() {
+      const c = state.chat
+      return !!(c && c.type === 'private' && c.e2e_mode === 1 && c.e2e_state === 2)
+    },
     /** 本机是否为请求发起设备 */
     isSecretInitiatorHere() {
       if (!this.isSecretCh) return false
@@ -869,6 +908,7 @@ export default {
     }
   },
   mounted() {
+    try { this.ensureChatThumbs() } catch (e) {}
     // 恢复本会话未发送草稿（按会话暂存，退出/重进还原）
     if (state.chat) this.draft = getConvDraft(state.chat.id) || ''
     window.addEventListener('bm-back', this.onNativeBack)
@@ -906,6 +946,11 @@ export default {
     if (this.playVoiceEl) { try { this.playVoiceEl.pause() } catch (e) { /* ignore */ } this.playVoiceEl = null }
   },
   methods: {
+    ensureChatThumbs() {
+      const c = state.chat
+      if (!c || c.type !== 'group' || convAvatar(c)) return
+      if (!(state.groupThumbs && state.groupThumbs[c.id])) ensureGroupThumbs([c.id])
+    },
     // 先关菜单、下一帧再执行动作：点击即时响应，避免重渲染卡顿感
     runAfterMenu(fn) {
       this.chatMenu = false
@@ -917,7 +962,21 @@ export default {
       this.runAfterMenu(() => this.onSecretBtn())
     },
     onMenuSearch() { this.runAfterMenu(() => this.toggleChatSearch()) },
-    onMenuInfo() { this.runAfterMenu(() => this.openInfo()) },
+    onMenuCall(kind) { this.runAfterMenu(() => this.beginCall(kind)) },
+    /**
+     * 发起通话。只放行私密会话：call_key 需要对方**设备级**公钥，
+     * 后端 GET /keys/device/:cid 仅对 e2e_mode=1 && e2e_state=2 的会话开放。
+     */
+    beginCall(kind) {
+      const c = state.chat
+      if (!c || c.type !== 'private') { showToast('目前仅支持 1:1 私聊通话'); return }
+      if (!(c.e2e_mode === 1 && c.e2e_state === 2)) {
+        showToast(c.e2e_mode === 1 ? '加密聊天尚未建立，暂时不能通话' : '需先开启加密聊天才能安全通话')
+        return
+      }
+      const other = c.other_user || {}
+      startCall({ conversationId: c.id, kind, peerName: convName(c), peerUserId: other.id })
+    },
     /** 顶栏锁图标：打开加密聊天操作面板（开启 / 进入 / 接受 / 撤回 / 结束） */
     async onSecretBtn() {
       const c = state.chat
@@ -1435,6 +1494,7 @@ export default {
       if (t.type === 'file') return '[文件] ' + (t.file_name || '')
       if (t.type === 'voice') return '[语音]' + (/^\d+$/.test(t.content || '') ? ` ${t.content}″` : '')
       if (t.type === 'video') return '[视频]'
+      if (t.type === 'call') return t.content || '[通话记录]'
       return (t.content || '').replace(/\n/g, ' ').slice(0, 60)
     },
     /** 回复者显示名（引用条/气泡引用块的标题）：先读快照，再回退当前列表 */
@@ -2083,6 +2143,10 @@ export default {
     isImgMsg(m) {
       return !!(m && m.type === 'image' && m.file_url && !m.is_recalled && !this.isBurned(m) && !this.isBlurredBurn(m))
     },
+    /** 通话记录里是不是视频通话（服务端 content 形如「视频通话 · 01:23」） */
+    callRecordIsVideo(m) {
+      return !!(m && /^视频通话/.test(m.content || ''))
+    },
     /** 是否视频消息：file/video 类型 + 视频扩展名 + 未撤回/未焚毁/非模糊占位（裸媒体直出样式用，不依赖后端 type 细化）——lichangrong b81ab71 原版实现 */
     isVideoMsg(m) {
       if (!m || !m.file_url || m.is_recalled || this.isBurned(m) || this.isBlurredBurn(m)) return false
@@ -2428,4 +2492,32 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 /* 待处理状态：整项用主题色描边提示 */
 .chat-menu-item.mi-urgent { background: var(--tg-blue-tint); }
 .chat-menu-item.mi-urgent .mi-label { color: var(--tg-blue-dark); font-weight: 600; }
+
+/* ── 通话记录气泡：一行摘要（视频通话 · 01:23 / 未接听 / 已拒接），不含通话内容 ── */
+.call-record { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--tg-text-secondary); }
+.call-record-ico { flex-shrink: 0; opacity: .85; }
+.call-record-text { white-space: nowrap; }
+
+  /* 群默认头像：2x2 宫格（聊天页 38px） */
+  .avatar.avatar-quad { display: flex !important; flex-wrap: wrap; align-content: space-between; justify-content: space-between;
+    gap: 2px; padding: 0; box-sizing: border-box; background: transparent; border-radius: 9px !important; overflow: hidden; flex-shrink: 0; }
+  .avatar.avatar-quad .quad-cell { flex: 0 0 calc(50% - 1px); aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600;
+    color: #fff; line-height: 1; border-radius: 3px; overflow: hidden; }
+  .avatar.avatar-quad .quad-cell img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar.avatar-quad .quad-empty { background: rgba(255,255,255,.5); }
+
+  /* 顶栏中间区：头像 + 名称整体居中，两侧按钮不动 */
+  .chat-topbar { position: relative; }
+  .chat-head-center { position: absolute; left: 60px; right: 60px; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none; z-index: 2; }
+  .chat-head-center .chat-avatar-wrap { pointer-events: auto; }
+  .chat-head-center .chat-title-wrap { flex: 0 1 auto; min-width: 0; max-width: 60%;
+    text-align: center; display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
+  .chat-head-center .chat-title, .chat-head-center .chat-status { text-align: center; max-width: 100%; }
+
+  /* ⋯ 菜单固定靠右 */
+  .chat-topbar > .topbar-icon.more-btn {
+    margin-left: auto; position: relative; z-index: 7; flex-shrink: 0;
+  }
 </style>

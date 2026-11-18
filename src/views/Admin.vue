@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-page" style="background: var(--tg-gray-bg)">
+  <div class="chat-page ad-page" style="background: var(--tg-gray-bg)">
     <div class="chat-topbar">
       <div class="topbar-icon" @click="state.showAdmin = false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -394,7 +394,6 @@ export default {
           title: '批量开通完成',
           text: okCount !== null ? `成功 ${okCount} 个，失败 ${failCount ?? 0} 个` : '操作完成，明细已打印到控制台'
         }
-        if (okCount === null) console.log('[焚信] 批量开通结果：', r)
         this.load()
       } catch (e) {
         showToast(e.message)
@@ -419,7 +418,6 @@ export default {
           title: 'Excel 导入完成',
           text: okCount !== null ? `成功 ${okCount} 条` : '操作完成，明细已打印到控制台'
         }
-        if (okCount === null) console.log('[焚信] 导入结果：', r)
         this.load()
       } catch (e) {
         showToast(e.message)

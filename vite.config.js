@@ -15,6 +15,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://192.168.9.222:9091',
+        // target: 'http://192.168.0.99:9091',
         changeOrigin: true,
         ws: true // 代理 WebSocket（socket.io 实时推送）
       }

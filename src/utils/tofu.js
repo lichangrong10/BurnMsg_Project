@@ -34,23 +34,9 @@ export function putPinnedKey(userId, pubkey) {
  *  - { status:'missing' }              服务端无该公钥（未上传等）
  */
 export async function verifyPeerKey(peerId) {
-  let remote
-  try {
-    remote = await api.getIdentityKey(peerId) // 拦截器已解包 {user_id, identity_pubkey, ...}
-  } catch (e) {
-    // 404=对方未上传公钥 / 403=无共同会话，统一按「服务端无此公钥」处理；其余异常继续抛给调用方
-    if (/404|403|不存在|未上传|not\s*found|无权|无权限/i.test(e && e.message || '')) return { status: 'missing' }
-    throw e
-  }
-  const rb = remote && remote.identity_pubkey
-  if (!rb) return { status: 'missing' }
-  const local = getPinnedKey(peerId)
-  if (!local) {
-    putPinnedKey(peerId, rb) // 首次信任：钉住
-    return { status: 'first_trust', pubkey: rb }
-  }
-  if (local.identity_pubkey === rb) return { status: 'ok', pubkey: rb }
-  return { status: 'changed', oldPubkey: local.identity_pubkey, newPubkey: rb }
+  // 旧「用户级公钥」接口已下线（/keys/:id 404），改为设备级密钥模型，
+  // 这里保留函数签名以兼容调用方，直接返回 missing 不发起请求
+  return { status: 'missing' }
 }
 
 /** 用户点了「确认信任新密钥」→ 更新钉住，加密发送自动恢复 */
@@ -63,19 +49,6 @@ export function confirmNewKey(peerId, newPubkey) {
  * @returns 变了的 [{user_id, newPubkey}]（首次见面直接钉住，不打扰用户）
  */
 export async function syncPinnedKeys(memberIds, myUserId) {
-  const changed = []
-  const ids = (memberIds || []).filter(Boolean).map(String)
-  for (let i = 0; i < ids.length; i += 500) {
-    const batch = ids.slice(i, i + 500)
-    let data
-    try { data = await api.queryIdentityKeys(batch) } catch (e) { continue }
-    for (const k of (data || [])) {
-      if (!k || k.user_id == null || !k.identity_pubkey) continue
-      if (String(k.user_id) === String(myUserId)) continue
-      const local = getPinnedKey(k.user_id)
-      if (!local) putPinnedKey(k.user_id, k.identity_pubkey)
-      else if (local.identity_pubkey !== k.identity_pubkey) changed.push({ user_id: k.user_id, newPubkey: k.identity_pubkey })
-    }
-  }
-  return changed
+  // 旧接口已下线：不再发起 /keys/query 请求
+  return []
 }
