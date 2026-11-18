@@ -697,3 +697,8 @@ button:active,
   transition: transform 260ms cubic-bezier(.22, .9, .3, 1);
   will-change: transform;
 }
+
+/* PC 双栏：全局搜索的外层包裹与 .chat-page 一样只占右栏（左栏保留会话列表） */
+html.bm-desktop .app-root.view-main.layout-desktop > .gs-slide-wrap {
+  left: 480px;
+}
