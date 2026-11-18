@@ -325,7 +325,32 @@ public class MainActivity extends BridgeActivity {
         pipMode = isInPictureInPictureMode;
         try {
             WebView wv0 = getBridge() != null ? getBridge().getWebView() : null;
-            if (wv0 != null) wv0.requestApplyInsets(); // 让上面的 inset 监听按 pipMode 重新算一次
+            if (wv0 != null) {
+                // 直接改父容器 padding，不依赖 inset 监听是否会被重新派发（实测 requestApplyInsets 不保证回调）
+                android.view.View parent = (android.view.View) wv0.getParent();
+                if (isInPictureInPictureMode) {
+                    if (parent != null) parent.setPadding(0, 0, 0, 0);
+                    wv0.setPadding(0, 0, 0, 0);
+                    wv0.setFitsSystemWindows(false);
+                    // 兜底：隐藏系统栏会触发新一轮 inset 派发，监听可能把 padding 又加回来，
+                    // 这里在 120ms / 400ms 各再清一次，确保最终状态是 0。
+                    final android.view.View p2 = parent;
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (pipMode && p2 != null) p2.setPadding(0, 0, 0, 0);
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 120);
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (pipMode && p2 != null) p2.setPadding(0, 0, 0, 0);
+                            if (pipMode) { wv0.requestLayout(); wv0.invalidate(); }
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 400);
+                }
+                wv0.requestLayout();
+                wv0.invalidate();
+                wv0.requestApplyInsets();
+            }
         } catch (Exception ignored) { /* 忽略 */ }
         // 小窗里窗口高 111dp，而 WebView 视口只有 75dp，差的 36dp ≈ 状态栏 inset 没有被绘制，
         // 表现为小窗顶部一条黑。进小窗时把系统栏隐藏、WebView 顶到窗口边界即可消除。
