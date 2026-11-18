@@ -27,7 +27,14 @@ export const WS_EVENTS = {
   DEVICE_REMOVED: 'device:removed',
   DEVICE_ONLINE: 'device:online',   // 某设备上线（在线状态变更，设备管理页据此刷新）
   DEVICE_OFFLINE: 'device:offline', // 某设备离线
-  SESSION_CONFLICT: 'session:conflict' // 登录冲突：payload { reason:'kicked_by_new_login'|'notify', new_device:{name,ip} }
+  SESSION_CONFLICT: 'session:conflict', // 登录冲突：payload { reason:'kicked_by_new_login'|'notify', new_device:{name,ip} }
+
+  // 通话（V7.0）：payload 里的 payload 字段是 call_key 加密后的 SDP / ICE，服务端不解析
+  CALL_INCOMING: 'call:incoming', // 来电（只推被叫的绑定设备）
+  CALL_ACCEPTED: 'call:accepted', // 对方接听（推主叫，带加密 answer SDP）
+  CALL_REJECTED: 'call:rejected', // 拒接 / 忙线 / 振铃超时（推主叫）
+  CALL_ICE: 'call:ice',           // 转发加密 ICE 候选
+  CALL_ENDED: 'call:ended'        // 通话结束（推双方）
 }
 
 let socket = null

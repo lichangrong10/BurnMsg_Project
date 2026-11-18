@@ -1,5 +1,6 @@
 package com.burnmsg.app;
 
+import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -14,6 +15,7 @@ import android.webkit.WebView;
 import androidx.core.content.FileProvider;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -25,17 +27,28 @@ public class MainActivity extends BridgeActivity {
 
     private Long downloadId = null;
     private BroadcastReceiver downloadReceiver;
+    /** 是否处于系统画中画小窗：小窗里不再按状态栏 inset 给 WebView 父容器加 padding */
+    private boolean pipMode = false;
     private final android.os.Handler themeSyncHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable themeSyncRunnable;
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
+        // 只对 debug 构建开启 WebView 远程调试；release 包不开（否则任何拿到 adb 的人都能看页面内容）。
+        // 需要调试 release 行为时，请改用 debug 包验证。
+        // 注意：AGP 8 默认不生成 BuildConfig（buildFeatures.buildConfig=false），故用 debuggable 标记判断。
+        boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (debuggable) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         // super.onCreate(savedInstanceState);
         // registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(DownloadApkPlugin.class);
         registerPlugin(MediaSaverPlugin.class); // v5.8.8：图片保存到系统相册
         registerPlugin(NotifyPermissionPlugin.class); // Android 13+ 运行时申请通知权限
         registerPlugin(KeepAlivePlugin.class);        // 后台保活前台服务开关
+        registerPlugin(CallPipPlugin.class);          // 通话画中画（小窗）
         super.onCreate(savedInstanceState);
 
         // ── 极光推送通知渠道（PUSH_JPUSH.md §3.5）──
@@ -77,7 +90,12 @@ public class MainActivity extends BridgeActivity {
                 top = resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
             }
             androidx.core.graphics.Insets ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()); int bottom = Math.max(ime.bottom, bars.bottom); android.view.View parent = (android.view.View) v.getParent();
-            if (parent != null) { parent.setPadding(bars.left, top, bars.right, bottom); } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
+            if (parent != null) {
+                // 画中画小窗里窗口本身就很小（实测 111dp 高），再按状态栏高度加顶部 padding
+                // 会让 WebView 只剩 75dp → 顶部露出一条黑。小窗里统一不加 padding。
+                if (pipMode) parent.setPadding(0, 0, 0, 0);
+                else parent.setPadding(bars.left, top, bars.right, bottom);
+            } // 只推顶部避开状态栏；底部padding去掉(设0)，恢复原样避免顶起输入框/影响键盘
             return new androidx.core.view.WindowInsetsCompat.Builder(insets).setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout(), androidx.core.graphics.Insets.NONE).setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE).build(); // 状态栏+导航栏+刘海+键盘insets全清零，Chrome视口铺满WebView，所有避让(顶部/键盘/导航栏)交给父容器padding统一处理
         });
         getWindow().getDecorView().post(() -> {
@@ -119,11 +137,21 @@ public class MainActivity extends BridgeActivity {
         });
 
         // 语音消息（V5.8.4）：Android 6.0+ 的 RECORD_AUDIO 属运行时权限，WebView getUserMedia 依赖它；
-        // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+        // 启动时请求一次，用户允许后 Capacitor Bridge 对 WebView 的录音权限请求才会放行。
+        // 视频通话（V7.0）：CAMERA 同理（WebView 的 RESOURCE_VIDEO_CAPTURE 需要它），一并申请。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            java.util.ArrayList<String> needPerms = new java.util.ArrayList<>();
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{ android.Manifest.permission.RECORD_AUDIO }, 1001);
+                needPerms.add(android.Manifest.permission.RECORD_AUDIO);
+            }
+            if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                needPerms.add(android.Manifest.permission.CAMERA);
+            }
+            if (!needPerms.isEmpty()) {
+                requestPermissions(needPerms.toArray(new String[0]), 1001);
+            }
         }
     }
 
@@ -270,6 +298,253 @@ public class MainActivity extends BridgeActivity {
         themeSyncHandler.removeCallbacksAndMessages(null);
         if (downloadReceiver != null) {
             try { unregisterReceiver(downloadReceiver); } catch (Exception e) { /* ignore */ }
+        }
+    }
+
+    /**
+     * 用户按 Home / 切走时（API 31 以下没有 setAutoEnterEnabled，走这里主动进小窗）。
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                && CallPipPlugin.isEnabled()) {
+            android.app.PictureInPictureParams p = CallPipPlugin.currentParams();
+            if (p != null) {
+                try { enterPictureInPictureMode(p); } catch (Exception ignored) { /* 机型不支持则忽略 */ }
+            }
+        }
+    }
+
+    /** 状态栏顶部 inset（含刘海）；拿不到时退回系统资源里的状态栏高度 */
+    private int statusBarTopInset() {
+        try {
+            android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+            if (wi != null) {
+                androidx.core.graphics.Insets b = androidx.core.view.WindowInsetsCompat
+                        .toWindowInsetsCompat(wi)
+                        .getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                                | androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+                if (b.top > 0) return b.top;
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
+        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
+    }
+
+    /** 小窗进入/退出：把状态推给前端，用于切换紧凑布局 / 判定「小窗被划掉」 */
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
+                                              android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        pipMode = isInPictureInPictureMode;
+        try {
+            WebView wv0 = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv0 != null) {
+                // 直接改父容器 padding，不依赖 inset 监听是否会被重新派发（实测 requestApplyInsets 不保证回调）
+                android.view.View parent = (android.view.View) wv0.getParent();
+                if (isInPictureInPictureMode) {
+                    if (parent != null) parent.setPadding(0, 0, 0, 0);
+                    wv0.setPadding(0, 0, 0, 0);
+                    wv0.setFitsSystemWindows(false);
+                    // 兜底：隐藏系统栏会触发新一轮 inset 派发，监听可能把 padding 又加回来，
+                    // 这里在 120ms / 400ms 各再清一次，确保最终状态是 0。
+                    final android.view.View p2 = parent;
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (pipMode && p2 != null) p2.setPadding(0, 0, 0, 0);
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 120);
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (pipMode && p2 != null) p2.setPadding(0, 0, 0, 0);
+                            if (pipMode) { wv0.requestLayout(); wv0.invalidate(); }
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 400);
+                } else {
+                    // 回到全屏：把状态栏 padding 加回来。
+                    // 不能只依赖 requestApplyInsets —— 实测 inset 监听不会因退出小窗而重新派发，
+                    // 若这里不显式恢复，页面顶部会顶到状态栏下面（内容与状态栏重叠）。
+                    if (parent != null) parent.setPadding(0, statusBarTopInset(), 0, 0);
+                    wv0.setFitsSystemWindows(false);
+                    final android.view.View p3 = parent;
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (!pipMode && p3 != null) p3.setPadding(0, statusBarTopInset(), 0, 0);
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 200);
+                }
+                wv0.requestLayout();
+                wv0.invalidate();
+                wv0.requestApplyInsets();
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
+        // 小窗里窗口高 111dp，而 WebView 视口只有 75dp，差的 36dp ≈ 状态栏 inset 没有被绘制，
+        // 表现为小窗顶部一条黑。进小窗时把系统栏隐藏、WebView 顶到窗口边界即可消除。
+        try {
+            final android.view.View decor = getWindow().getDecorView();
+            androidx.core.view.WindowInsetsControllerCompat ctl =
+                    androidx.core.view.WindowCompat.getInsetsController(getWindow(), decor);
+            if (isInPictureInPictureMode) {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+                ctl.setSystemBarsBehavior(
+                        androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                ctl.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+                decor.setPadding(0, 0, 0, 0);
+                // 关键：inset 可能是被 Capacitor 的根容器消费掉的（decor.setPadding 无效），
+                // 直接在 android.R.id.content 上把 inset 全部吃掉，WebView 才能铺到窗口顶端。
+                final android.view.View root = findViewById(android.R.id.content);
+                if (root != null) {
+                    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(
+                            root, (v, insets) -> androidx.core.view.WindowInsetsCompat.CONSUMED);
+                    root.requestApplyInsets();
+                    root.setPadding(0, 0, 0, 0);
+                }
+            } else {
+                ctl.show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
+        // 小窗让 Activity 尺寸骤变，WebView 有时来不及重排/重绘（表现为白块棋盘格或只显示一截）。
+        // 这里延迟强制一次布局 + 重绘，等系统把新的窗口尺寸下发完再画。
+        try {
+            final WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv != null) {
+                if (isInPictureInPictureMode) {
+                    wv.setFitsSystemWindows(false);
+                    wv.setPadding(0, 0, 0, 0);
+                    android.view.ViewGroup.LayoutParams lp = wv.getLayoutParams();
+                    if (lp != null) {
+                        lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                        lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                        wv.setLayoutParams(lp);
+                    }
+                }
+                wv.postDelayed(() -> {
+                    try {
+                        wv.requestLayout();
+                        wv.invalidate();
+                    } catch (Exception ignored) { /* 忽略 */ }
+                }, 60);
+                wv.postDelayed(() -> {
+                    try {
+                        wv.requestLayout();
+                        wv.invalidate();
+                    } catch (Exception ignored) { /* 忽略 */ }
+                }, 260);
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
+        CallPipPlugin.notifyPipChanged(isInPictureInPictureMode);
+    }
+
+    /**
+     * Capacitor 自定义插件：通话画中画（小窗）
+     *
+     * 前端在通话 active 时调 enable()，结束调 disable()。
+     * 小窗内不提供任何按钮：点小窗由系统展开回全屏。
+     */
+    @CapacitorPlugin(name = "CallPip")
+    public static class CallPipPlugin extends Plugin {
+
+        private static CallPipPlugin instance;
+        private static boolean enabled = false;
+        private static android.app.PictureInPictureParams params;
+
+        @Override
+        public void load() {
+            instance = this;
+        }
+
+        static boolean isEnabled() { return enabled && instance != null; }
+
+        /**
+         * 把任意宽高比归到最接近的标准比例（竖 9:16 / 3:4、方 1:1、横 4:3 / 16:9）。
+         * 远端是横屏时用 16:9 开小窗，画面才不会被竖窗裁掉两侧。
+         */
+        private static int[] pickRatio(double ratio) {
+            double[][] table = { {9, 16}, {3, 4}, {1, 1}, {4, 3}, {16, 9} };
+            double best = Double.MAX_VALUE;
+            int[] out = { 9, 16 };
+            for (double[] t : table) {
+                double diff = Math.abs((t[0] / t[1]) - ratio);
+                if (diff < best) { best = diff; out = new int[] { (int) t[0], (int) t[1] }; }
+            }
+            return out;
+        }
+
+        static android.app.PictureInPictureParams currentParams() { return params; }
+
+        static void notifyPipChanged(boolean inPip) {
+            if (instance == null) return;
+            JSObject ret = new JSObject();
+            ret.put("inPip", inPip);
+            instance.notifyListeners("pipChange", ret);
+        }
+
+        /** 当前设备是否支持画中画 */
+        @PluginMethod
+        public void isSupported(PluginCall call) {
+            boolean supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && getContext().getPackageManager()
+                        .hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+            JSObject ret = new JSObject();
+            ret.put("supported", supported);
+            call.resolve(ret);
+        }
+
+        /**
+         * 开启小窗能力。
+         * @param aspectRatio 宽高比（视频 9/16≈0.5625，语音 1）
+         */
+        @PluginMethod
+        public void enable(PluginCall call) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { call.resolve(); return; }
+            double ratio = call.getDouble("aspectRatio", 9.0 / 16.0);
+            int[] wh = pickRatio(ratio);
+            int w = wh[0], h = wh[1];
+
+            android.app.PictureInPictureParams.Builder builder =
+                    new android.app.PictureInPictureParams.Builder()
+                            .setAspectRatio(new android.util.Rational(w, h));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(true); // 切后台自动进小窗，无需用户手动
+                builder.setSeamlessResizeEnabled(true); // 窗口尺寸过渡期间也持续重排，避免白块/残帧
+            }
+            params = builder.build();
+            enabled = true;
+            try {
+                Activity act = getActivity();
+                if (act != null) act.setPictureInPictureParams(params);
+            } catch (Exception ignored) { /* 部分 ROM 不支持 */ }
+            call.resolve();
+        }
+
+        /** 通话结束时收起小窗：把任务移到后台，PiP 随之消失（不会退出 App） */
+        @PluginMethod
+        public void closePip(PluginCall call) {
+            try {
+                Activity act = getActivity();
+                if (act != null) act.moveTaskToBack(true);
+            } catch (Exception ignored) { /* 忽略 */ }
+            call.resolve();
+        }
+
+        /** 关闭小窗能力（通话结束时调用，避免平时切后台也进小窗） */
+        @PluginMethod
+        public void disable(PluginCall call) {
+            enabled = false;
+            params = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    Activity act = getActivity();
+                    if (act != null) {
+                        act.setPictureInPictureParams(
+                                new android.app.PictureInPictureParams.Builder()
+                                        .setAutoEnterEnabled(false).build());
+                    }
+                } catch (Exception ignored) { /* ignore */ }
+            }
+            call.resolve();
         }
     }
 

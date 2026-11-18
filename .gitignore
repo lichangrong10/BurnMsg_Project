@@ -104,3 +104,5 @@ expo-env.d.ts
 *.tsbuildinfo
 node-compile-cache/
 .codegraph/
+
+.tmp/*

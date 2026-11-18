@@ -145,5 +145,15 @@ export const api = {
   getPresenceUsers: (ids) => http.get('/presence/users', { // 批量查询指定用户，参数名是 ids（逗号分隔）
     params: { ids: (Array.isArray(ids) ? ids : [ids]).filter(Boolean).join(',') }
   }),
-  getPresenceMe: () => http.get('/presence/me') // 本人多设备在线态（含 is_current 标识本机）
+  getPresenceMe: () => http.get('/presence/me'), // 本人多设备在线态（含 is_current 标识本机）
+
+  // ── 通话信令（V7.0 1:1 语音 / 视频）──
+  // 服务端只透传：SDP / ICE 一律由 call_key 加密后放进 payload，服务端不解析
+  getTurnCredentials: () => http.get('/calls/turn-credentials'), // 未配置 TURN_SECRET 时 503 TURN_NOT_CONFIGURED
+  createCall: body => http.post('/calls', body), // { conversation_id, kind, eph_pub, fp_mac, payload, to_device_id? }
+  acceptCall: (callId, body) => http.post(`/calls/${callId}/accept`, body), // { eph_pub, fp_mac, payload }
+  rejectCall: (callId, reason = 'decline') => http.post(`/calls/${callId}/reject`, { reason }), // decline | busy
+  sendCallIce: (callId, payload) => http.post(`/calls/${callId}/ice`, { payload }), // 加密的 ICE 候选批次
+  hangupCall: (callId, reason = 'hangup') => http.post(`/calls/${callId}/hangup`, { reason }), // hangup | session_closed，幂等
+  getCall: callId => http.get(`/calls/${callId}`) // 重连 / 多标签对齐状态
 }
