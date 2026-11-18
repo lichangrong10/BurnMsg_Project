@@ -858,12 +858,7 @@ async function initE2E() {
         console.warn('[焚信] 设备公钥上传失败:', e && e.message)
       }
     }
-    // 兼容旧开关：仍上传用户级公钥（后端如已下线该接口会 404，静默忽略）
-    try {
-      const pubB64 = await ensureIdentity()
-      await api.uploadIdentityKey(pubB64)
-      state.e2eReady = true
-    } catch (e) { /* 旧接口已下线，忽略 */ }
+    state.e2eReady = state.e2eSecretReady   // 旧「用户级公钥」接口已下线，仅保留设备级密钥
   } catch (e) { console.warn('[焚信] E2E 初始化失败:', e && e.message) }
 }
 
@@ -1369,7 +1364,7 @@ async function decryptMessagesInList(list, cid) {
   const getPub = async uid => {
     const k = String(uid)
     if (!(k in pubCache)) {
-      try { pubCache[k] = (await api.getIdentityKey(uid)).identity_pubkey } catch (e) { pubCache[k] = null }
+      try { pubCache[k] = (await fetchPeerKey(cid)).pubkey } catch (e) { pubCache[k] = null }
     }
     return pubCache[k]
   }
@@ -1462,9 +1457,7 @@ async function onWsNewMessage(p) {
     else if (!mine) {
       try {
         const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
-        const pub = isSecretConv(convForDec)
-          ? (await fetchPeerKey(cid)).pubkey
-          : (await api.getIdentityKey(m.sender_id)).identity_pubkey
+        const pub = (await fetchPeerKey(cid)).pubkey
         const text = await decryptMessage(m, pub, cid)
         cachePlaintext(m.id, text)
         m.content = text
@@ -2351,9 +2344,7 @@ export async function revealBurn(m) {
         try {
           const cid = m.conversation_id || (state.chat && state.chat.id)
           const convForDec = state.convs.find(x => String(x.id) === String(cid)) || (state.chat && String(state.chat.id) === String(cid) ? state.chat : null)
-          const pub = isSecretConv(convForDec)
-            ? (await fetchPeerKey(cid)).pubkey
-            : (await api.getIdentityKey(m.sender_id)).identity_pubkey
+      const pub = (await fetchPeerKey(cid)).pubkey
           const text = await decryptMessage(m, pub, cid)
           cachePlaintext(m.id, text)
           m.content = text
