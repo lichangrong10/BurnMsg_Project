@@ -7,16 +7,10 @@
       <span>{{ pullText }}</span>
     </div>
     <div class="chat-tabs" style="margin-top: 10px;">
-<<<<<<< HEAD
-      <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="chatTab = 'private'">私聊</div>
-      <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="chatTab = 'group'">群组</div>
-      <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="chatTab = 'channel'">频道</div>
-=======
         <div class="tab-slider" :style="{ transform: 'translateX(calc(' + (tabIndex * 100) + '% + ' + (tabIndex * 14) + 'px))' }"></div>
       <div class="chat-tab" :class="{ active: chatTab === 'private' }" @click="switchTab('private')"><span class="tab-label">私聊<span v-if="tabUnread.private" class="tab-dot"></span></span></div>
       <div class="chat-tab" :class="{ active: chatTab === 'group' }" @click="switchTab('group')"><span class="tab-label">群组<span v-if="tabUnread.group" class="tab-dot"></span></span></div>
       <div class="chat-tab" :class="{ active: chatTab === 'channel' }" @click="switchTab('channel')"><span class="tab-label">频道<span v-if="tabUnread.channel" class="tab-dot"></span></span></div>
->>>>>>> develop
     </div>
     <transition :name="slideName" mode="out-in">
       <div :key="chatTab" class="conv-list-wrap">
@@ -94,12 +88,8 @@ export default {
   data() {
     return {
       state,
-<<<<<<< HEAD
-      chatTab: 'private', // private | group | channel
-=======
       chatTab: 'private',
     slideName: 'slide-left', // private | group | channel
->>>>>>> develop
       menu: null,        // 长按/右键浮层：{ conv, x, y }
       pullDist: 0,       // 下拉距离 px
       pullState: 'idle'  // idle | pulling | ready | refreshing
