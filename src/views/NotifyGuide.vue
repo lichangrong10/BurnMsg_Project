@@ -47,7 +47,8 @@
 
 <script>
 import { state, showToast } from '../store'
-import { ensureNotificationPermission, openNotificationSettings } from '../utils/push'
+import { ensureNotificationPermission, openNotificationSettings, ensureHeadsUp, openChannelSettings } from '../utils/push'
+import { setSysNotifyOn } from '../utils/notify'
 
 export default {
   name: 'NotifyGuide',
@@ -87,7 +88,21 @@ export default {
       this.busy = true
       try {
         const granted = await ensureNotificationPermission()
-        showToast(granted ? '通知权限已开启' : '未获得授权，可点下面的按钮去系统设置里手动打开')
+        if (!granted) {
+          showToast('未获得授权，可点下面的按钮去系统设置里手动打开')
+          return
+        }
+        // ① 应用内开关一并打开，避免"系统开了但 App 里还是关着"
+        try { setSysNotifyOn(true) } catch (e) {}
+        // ② 把「消息通知」渠道提升为高重要性（悬浮横幅）
+        const headsUp = await ensureHeadsUp()
+        if (headsUp) {
+          showToast('通知已开启，悬浮横幅正常')
+        } else {
+          showToast('通知已开启，请在系统设置里打开「悬浮通知/横幅」')
+          // 部分 ROM 不允许 App 重建渠道，直接带用户去渠道设置页
+          setTimeout(() => { openChannelSettings() }, 900)
+        }
       } finally {
         this.busy = false
       }

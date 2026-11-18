@@ -353,3 +353,31 @@ export function onPushOpened(handler) {
     if (pending && pending.conversation_id) emit(pending)
   } catch (e) { /* 忽略 */ }
 }
+
+/**
+ * 一键开启：确保通知渠道为「高重要性」（会弹出悬浮横幅）。
+ * @returns {Promise<boolean>} 渠道是否已经允许悬浮横幅
+ */
+export async function ensureHeadsUp() {
+  if (!isNative) return false
+  try {
+    const r = await NotifyPermission.ensureChannel()
+    diag.channel = r && r.importance
+    return !!(r && r.headsUp)
+  } catch (e) {
+    console.warn('[push] 通知渠道检查失败', e)
+    return false
+  }
+}
+
+/** 直达「消息通知」渠道的系统设置页（悬浮横幅开关所在页） */
+export async function openChannelSettings() {
+  if (!isNative) return false
+  try {
+    await NotifyPermission.openChannelSettings()
+    return true
+  } catch (e) {
+    console.warn('[push] 打开渠道设置失败', e)
+    return false
+  }
+}

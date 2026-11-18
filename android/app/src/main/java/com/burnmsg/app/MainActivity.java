@@ -290,6 +290,74 @@ public class MainActivity extends BridgeActivity {
                 }
             }
         }
+    /** 消息通知渠道 id：与极光推送体里的 channel_id 一致 */
+    private static final String MSG_CHANNEL_ID = "messages";
+
+    /**
+     * 确保「消息通知」渠道为高重要性（IMPORTANCE_HIGH → 会弹悬浮横幅）。
+     * Android 限制：渠道建好后重要性只能由用户改；若发现偏低，删除后按高重要性重建。
+     */
+    @PluginMethod
+    public void ensureChannel(PluginCall call) {
+        com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                ret.put("headsUp", true);
+                ret.put("importance", 5);
+                call.resolve(ret);
+                return;
+            }
+            android.app.NotificationManager nm =
+                (android.app.NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) { ret.put("headsUp", false); call.resolve(ret); return; }
+
+            android.app.NotificationChannel ch = nm.getNotificationChannel(MSG_CHANNEL_ID);
+            boolean rebuild = ch == null || ch.getImportance() < android.app.NotificationManager.IMPORTANCE_HIGH;
+            if (rebuild) {
+                if (ch != null) nm.deleteNotificationChannel(MSG_CHANNEL_ID);
+                android.app.NotificationChannel nc = new android.app.NotificationChannel(
+                    MSG_CHANNEL_ID, "消息通知", android.app.NotificationManager.IMPORTANCE_HIGH);
+                nc.setDescription("新消息提醒");
+                nc.enableVibration(true);
+                nc.enableLights(true);
+                nc.setShowBadge(true);
+                nc.setLockscreenVisibility(android.app.Notification.VISIBILITY_PRIVATE);
+                nm.createNotificationChannel(nc);
+                ch = nm.getNotificationChannel(MSG_CHANNEL_ID);
+            }
+            int imp = ch == null ? 0 : ch.getImportance();
+            ret.put("importance", imp);
+            ret.put("headsUp", imp >= android.app.NotificationManager.IMPORTANCE_HIGH);
+            ret.put("rebuilt", rebuild);
+            call.resolve(ret);
+        } catch (Exception e) {
+            ret.put("headsUp", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    /** 直达「消息通知」渠道的系统设置页（悬浮横幅开关在这里） */
+    @PluginMethod
+    public void openChannelSettings(PluginCall call) {
+        try {
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                intent = new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+                intent.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+                intent.putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, MSG_CHANNEL_ID);
+            } else {
+                intent = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                intent.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("打开渠道设置失败: " + e.getMessage());
+        }
+    }
+
     }
 
     @Override
