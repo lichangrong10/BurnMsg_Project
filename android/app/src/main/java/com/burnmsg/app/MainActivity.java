@@ -317,6 +317,22 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /** 状态栏顶部 inset（含刘海）；拿不到时退回系统资源里的状态栏高度 */
+    private int statusBarTopInset() {
+        try {
+            android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+            if (wi != null) {
+                androidx.core.graphics.Insets b = androidx.core.view.WindowInsetsCompat
+                        .toWindowInsetsCompat(wi)
+                        .getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                                | androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+                if (b.top > 0) return b.top;
+            }
+        } catch (Exception ignored) { /* 忽略 */ }
+        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return resId > 0 ? getResources().getDimensionPixelSize(resId) : 0;
+    }
+
     /** 小窗进入/退出：把状态推给前端，用于切换紧凑布局 / 判定「小窗被划掉」 */
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
@@ -346,6 +362,18 @@ public class MainActivity extends BridgeActivity {
                             if (pipMode) { wv0.requestLayout(); wv0.invalidate(); }
                         } catch (Exception ignored) { /* 忽略 */ }
                     }, 400);
+                } else {
+                    // 回到全屏：把状态栏 padding 加回来。
+                    // 不能只依赖 requestApplyInsets —— 实测 inset 监听不会因退出小窗而重新派发，
+                    // 若这里不显式恢复，页面顶部会顶到状态栏下面（内容与状态栏重叠）。
+                    if (parent != null) parent.setPadding(0, statusBarTopInset(), 0, 0);
+                    wv0.setFitsSystemWindows(false);
+                    final android.view.View p3 = parent;
+                    wv0.postDelayed(() -> {
+                        try {
+                            if (!pipMode && p3 != null) p3.setPadding(0, statusBarTopInset(), 0, 0);
+                        } catch (Exception ignored) { /* 忽略 */ }
+                    }, 200);
                 }
                 wv0.requestLayout();
                 wv0.invalidate();
