@@ -321,6 +321,7 @@ export default {
       this.isNativeApp = false
     }
     this.keepAliveOn = isKeepAliveOn()
+    this.refreshNotifyGranted()
     // 获取当前 App 版本号
     try {
       const cap = window.Capacitor
@@ -342,6 +343,12 @@ export default {
     if (this._offDevOffline) this._offDevOffline()
     if (this._offDevRemoved) this._offDevRemoved()
   },
+  watch: {
+    // keep-alive 下 mounted 只跑一次：每次进入「消息通知」页都重新读一次真实权限
+    'state.meSubPage'(v) {
+      if (v === 'notify') this.refreshNotifyGranted()
+    }
+  },
   computed: {
     /** 推送诊断文案：路线 + registration_id + alias + setAlias 结果
         alias 是与登录 userId 清洗后（去 '-'）比对，极光 alias 只接受字母/数字/下划线 */
@@ -360,6 +367,25 @@ export default {
     },
   },
   methods: {
+    /** 读取系统通知权限的真实状态（重启后不能默认成「未开启」） */
+    async refreshNotifyGranted() {
+      try {
+        const ok = await checkNotificationPermission()
+        this.notifyGranted = !!ok
+        // 已经授权过 → 标记引导已完成，别再弹「一键开启」
+        if (ok) { try { storage.notifyGuideSeen = true } catch (e) {} }
+      } catch (e) { /* 忽略 */ }
+    },
+    /** 点「通知权限」：已开启则只提示，未开启才去系统设置 */
+    async openPermissionSetting() {
+      const ok = await checkNotificationPermission()
+      this.notifyGranted = !!ok
+      if (ok) { showToast('通知权限已开启'); return }
+      const granted = await ensureNotificationPermission()
+      this.notifyGranted = !!granted
+      if (granted) { try { storage.notifyGuideSeen = true } catch (e) {} }
+      else openNotificationSettings()
+    },
     avatarColor,
     avatarSrc,
     /** 桌面消息通知开关：打开时才申请浏览器通知权限（有用户手势，Chrome 才会真正弹授权框） */
