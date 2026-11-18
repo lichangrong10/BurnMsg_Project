@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景缩放容器：
+     108dp 画布四周各内缩 6dp，前景实际绘制区 96dp。
+     原前景图内部内容本身约 59% 宽，缩放后视觉约占可见圆形安全区的 79%，
+     既能完整显示又不贴边被桌面裁切。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_foreground"
+    android:insetLeft="6dp"
+    android:insetTop="6dp"
+    android:insetRight="6dp"
+    android:insetBottom="6dp" />

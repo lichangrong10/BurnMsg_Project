@@ -356,7 +356,11 @@
           <div class="sheet-item secret-primary" @click="doRequestSecret">
             {{ state.e2eSecretReady ? '开启加密聊天' : '开启加密聊天（本机密钥准备中…）' }}
           </div>
-          <div class="sheet-item secret-tip">开启后仅本机与对方设备可见，其他设备看不到；仅支持文本消息</div>
+          <div class="sheet-item secret-tip">开启后仅本机与对方设备可见，其他设备看不到；支持文本、语音、图片、文件</div>
+      <div class="sheet-item secret-tip secret-call-tip">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>
+        <span>开启后可进行<strong>语音通话</strong>与<strong>视频通话</strong>，通话内容同样端到端加密</span>
+      </div>
         </template>
         <template v-else-if="isSecretActiveCh">
           <div class="sheet-item danger" @click="confirmCloseSecret = true">结束加密聊天（删除全部消息）</div>
@@ -2459,6 +2463,20 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .secret-profile-sub { font-size: 12.5px; color: var(--tg-text-secondary); }
 .sheet-item.secret-primary { color: var(--tg-blue); font-weight: 600; }
 .sheet-item.secret-tip { font-size: 12px; color: #9AA0A6; padding-top: 2px; padding-bottom: 10px; }
+  /* 通话能力提示：图标 + 文字横向排列，强调可见 */
+  .sheet-item.secret-call-tip {
+    display: flex; align-items: flex-start; gap: 8px;
+    color: #5F6670; line-height: 1.5;
+    background: rgba(42, 157, 143, .07); border-radius: 10px;
+    margin: 0 12px 10px; padding: 11px 14px;
+  }
+  .sheet-item.secret-call-tip svg { flex-shrink: 0; margin-top: 2px; color: var(--tg-blue, #2A9D8F); }
+  .sheet-item.secret-call-tip span { line-height: 1.7; word-break: break-word; }
+  /* 加粗词与灰色文字之间留出呼吸感 */
+  .sheet-item.secret-call-tip strong {
+    color: var(--tg-text, #111); font-weight: 600;
+    margin: 0 3px; white-space: nowrap;
+  }
 
 
 /* ═══════ 顶栏「⋯」下拉菜单（贴合主题色） ═══════ */

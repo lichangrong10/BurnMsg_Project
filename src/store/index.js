@@ -596,6 +596,7 @@ export function setLocalUnread(cid, n) {
 /* 未读补算：以服务端「我读到哪条」为准（成员表的 last_read_message_id，私聊/群聊都有效），
    数出该会话里这条之后、别人发的消息条数。这样即使清缓存/重新登录、本地标记全没了，
    也不会把历史消息全算成未读；本地标记只负责运行期的即时增减。 */
+const pollSeenAt = {}   // cid -> 轮询已处理到的最后消息时间（防重复计数）
 const unreadFilledAt = {} // cid -> 上次补算时间（避免每次 loadConvs 都重算）
 async function computeUnreadFromServer(cid, conv) {
   try {
@@ -975,13 +976,15 @@ export async function loadConvs(quiet) {
         // 本地没有记录（清缓存/新登录）时先显示 0，随后由 fillLocalUnread 按服务端「我读到哪条」补算
         const local = getLocalUnread(c.id)
       let unread = locallyRead ? 0 : (local != null ? local : 0)
-      // 轮询补偿：服务端最后消息时间变新、且不是当前会话 → 本地未读 +1（WS 掉线也不丢红点）
+      // 轮询补偿：仅在 WS 掉线时生效（WS 在线时由推送负责 +1，避免同一条消息被算两次）
       const oldAt = old ? (Date.parse(old.last_message_at || '') || 0) : 0
       const isCurrentConv = state.chat && String(state.chat.id) === String(c.id)
-      if (!isCurrentConv && oldAt > 0 && lastAt > oldAt && !locallyRead) {
+      const seenAt = pollSeenAt[c.id] != null ? pollSeenAt[c.id] : oldAt
+      if (!isCurrentConv && !locallyRead && !isWsConnected() && seenAt > 0 && lastAt > seenAt) {
         unread = unread + 1
         setLocalUnread(c.id, unread)
       }
+      if (lastAt > 0) pollSeenAt[c.id] = lastAt
         const lastMsgObj = c.last_message ?? c.lastMessage ?? c.last_msg ?? null
         // 预览优先取「最新」：后端 last_message 可能滞后（不等于 last_message_at），
       // 此时用本机缓存的最新一条（打开会话/收发消息时会写入）
