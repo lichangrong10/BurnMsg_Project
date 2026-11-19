@@ -2465,10 +2465,10 @@ mark.csi-hl { background: transparent; color: var(--tg-blue, #5aabdf); font-weig
 .sheet-item.secret-tip { font-size: 12px; color: #9AA0A6; padding-top: 2px; padding-bottom: 10px; }
   /* 通话能力提示：图标 + 文字横向排列，强调可见 */
   .sheet-item.secret-call-tip {
-    display: flex; align-items: flex-start; gap: 8px;
-    color: #5F6670; line-height: 1.5;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    color: #5F6670; line-height: 1.55; text-align: center;
     background: rgba(42, 157, 143, .07); border-radius: 10px;
-    margin: 0 12px 10px; padding: 11px 14px;
+    width: auto; max-width: 620px; margin: 0 auto 10px; padding: 11px 16px;
   }
   .sheet-item.secret-call-tip svg { flex-shrink: 0; margin-top: 2px; color: var(--tg-blue, #2A9D8F); }
   .sheet-item.secret-call-tip span { line-height: 1.7; word-break: break-word; }

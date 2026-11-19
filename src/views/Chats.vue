@@ -76,14 +76,20 @@
         <div class="conv-menu-item danger" @click="onDeleteConv">删除会话</div>
       </div>
     </div>
-  <!-- 其他设备遗留加密会话：详情面板 -->
-  <div v-if="legacyE2E" class="overlay" @click.self="legacyE2E = null">
-    <div class="sheet">
-      <div class="sheet-title">{{ legacyE2E.name }} 在其他设备有加密会话</div>
-      <div class="sheet-item secret-tip" v-if="legacyE2E.browser">设备：{{ legacyE2E.browser }}</div>
-      <div class="sheet-item secret-tip">该加密会话与那台设备绑定，本机无法查看其中的历史消息。</div>
-      <div class="sheet-item danger" @click="doEndLegacyE2E">结束旧加密会话（删除消息，不可恢复）</div>
-      <div class="sheet-item sheet-cancel" @click="legacyE2E = null">取消</div>
+  <!-- 旧设备遗留加密会话：居中弹窗 -->
+  <div v-if="legacyE2E" class="legacy-mask" @click.self="legacyE2E = null">
+    <div class="legacy-modal">
+      <div class="legacy-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      </div>
+      <div class="legacy-title">{{ legacyE2E.name }} 在其他设备有加密会话</div>
+      <div class="legacy-device" v-if="legacyE2E.browser">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <span>{{ legacyE2E.browser }}</span>
+      </div>
+      <div class="legacy-note">该加密会话与那台设备绑定，本机无法查看其中的历史消息。结束后对方也需重新发起才能再次加密聊天。</div>
+      <button class="legacy-btn danger" @click="doEndLegacyE2E">结束旧加密会话</button>
+      <button class="legacy-btn plain" @click="legacyE2E = null">取消</button>
     </div>
   </div>
 
@@ -477,4 +483,42 @@ export default {
   .conv-item.has-legacy {
     background: linear-gradient(90deg, rgba(245, 158, 11, .07), transparent 62%);
   }
+
+  /* 旧设备遗留加密会话：居中弹窗 */
+  .legacy-mask {
+    position: fixed; inset: 0; z-index: 230; padding: 24px;
+    background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
+    animation: legacyFade .18s ease-out;
+  }
+  @keyframes legacyFade { from { opacity: 0 } to { opacity: 1 } }
+  .legacy-modal {
+    width: 100%; max-width: 330px; background: var(--tg-bg, #fff); border-radius: 20px;
+    padding: 24px 20px 18px; text-align: center; box-shadow: 0 18px 50px rgba(0,0,0,.24);
+    animation: legacyPop .24s cubic-bezier(.2,1.3,.4,1);
+  }
+  @keyframes legacyPop { from { opacity: 0; transform: scale(.92) translateY(8px) } to { opacity: 1; transform: none } }
+  .legacy-icon {
+    width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 16px;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    background: linear-gradient(135deg, #F59E0B, #EF7C22); box-shadow: 0 8px 20px rgba(245,158,11,.34);
+  }
+  .legacy-title { font-size: 16.5px; font-weight: 600; color: var(--tg-text, #111); margin-bottom: 12px; line-height: 1.4; }
+  .legacy-device {
+    display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px;
+    padding: 7px 12px; border-radius: 10px; font-size: 13px; font-weight: 500;
+    color: var(--tg-text, #111); background: rgba(245,158,11,.10);
+  }
+  .legacy-device svg { color: #B4690E; }
+  .legacy-note {
+    font-size: 12px; line-height: 1.6; color: var(--tg-text-secondary, #8A8F98);
+    background: rgba(0,0,0,.035); border-radius: 10px; padding: 9px 12px; margin-bottom: 16px; text-align: left;
+  }
+  .legacy-btn {
+    width: 100%; height: 44px; border: none; border-radius: 12px;
+    font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 8px;
+    transition: transform .14s ease, background .14s ease;
+  }
+  .legacy-btn:active { transform: scale(.97); }
+  .legacy-btn.danger { background: #F04438; color: #fff; }
+  .legacy-btn.plain { background: rgba(0,0,0,.05); color: var(--tg-text, #111); margin-bottom: 0; }
 </style>
