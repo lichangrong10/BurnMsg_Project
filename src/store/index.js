@@ -98,7 +98,9 @@ export const state = reactive({
   feedbackList: [],       // 我的反馈列表（含管理员回复）
   feedbackLoading: false, // 反馈列表加载中
   showGlobalSearch: false, // 全局消息搜索页（覆盖层）
-  showNotifyGuide: false,  // 通知设置指引页（覆盖层，PUSH_JPUSH.md §9）
+  showNotifyGuide: false,
+  mySecretSessions: [], // 我在其它设备绑定的加密会话（/conversations/e2e-mine）
+  e2eOtherDevices: [],   // 其他设备上的加密会话（[{ browser }]），非空则登录后提示  // 通知设置指引页（覆盖层，PUSH_JPUSH.md §9）
   targetMessageId: null,   // 全局搜索跳转定位：目标消息 id（ChatRoom 消费后清空）
   layout: 'mobile'         // 布局模式：mobile(默认/原生App) | tablet(web中屏) | desktop(web宽屏双栏)
 })
@@ -437,6 +439,33 @@ function nextToast() {
 }
 
 /* ─── 登录 / 改密 / 登出 ─── */
+/** 解析登录返回里“其他设备上的加密会话”信息：
+ *  - e2e_on_other_devices: boolean / number / string[] / 对象
+ *  - device_browser: 单个浏览器名 或 名称数组
+ */
+function normalizeE2eDevices(d) {
+  try {
+    const raw = d && d.e2e_on_other_devices
+    if (!raw) return []
+    let browsers = d.device_browser
+    if (Array.isArray(raw)) {
+      // 数组：可能是字符串或 { device_browser } 对象
+      return raw.map(x => (typeof x === 'string' ? x : (x && (x.device_browser || x.browser)) || '')).filter(Boolean)
+    }
+    if (typeof raw === 'object') {
+      const b = raw.device_browser || raw.devices || raw.list
+      if (Array.isArray(b)) return b.map(x => (typeof x === 'string' ? x : (x && (x.device_browser || x.browser)) || '')).filter(Boolean)
+      if (typeof b === 'string' && b) return [b]
+      return []
+    }
+    // boolean / number：有会话但没有设备名
+    if (Array.isArray(browsers)) browsers = browsers.map(x => (typeof x === 'string' ? x : (x && (x.device_browser || x.browser)) || '')).filter(Boolean)
+    else if (typeof browsers === 'string' && browsers) browsers = [browsers]
+    else browsers = []
+    return browsers.length ? browsers : ['其他设备']
+  } catch (e) { return [] }
+}
+
 export async function login(phone, password) {
   http.defaults.baseURL = state.baseURL
   const d = await api.login(phone, password)
@@ -453,6 +482,7 @@ export async function login(phone, password) {
     state.pwdForm.old = password
   } else {
     state.view = 'main'
+  state.tab = 'chats'   // 登录后固定回会话页
     connectWs(d.access_token)
     bindPushAlias(d.user && d.user.id) // 极光 alias = userId（PUSH_JPUSH.md §4.2），离线推送靠它投递
     bootstrap()
@@ -944,6 +974,46 @@ async function fillStalePreviews() {
   }
 }
 
+
+/** 我在其它设备上的加密会话（绑定设备不是本机 → 列表行显示 ⚠️） */
+export async function loadMySecretSessions() {
+  try {
+    const r = await api.e2eMine()
+    state.mySecretSessions = Array.isArray(r) ? r : (r && (r.list || r.data)) || []
+  } catch (e) { state.mySecretSessions = [] }
+  return state.mySecretSessions
+}
+
+/** 该「普通私聊」的对方是否在其它设备上留有加密会话（按 peer_user_id 匹配） */
+export function convOtherDeviceE2E(c) {
+  if (!c || c.type !== 'private') return null
+  const peerId = c.other_user && c.other_user.id
+  if (!peerId) return null
+  const it = (state.mySecretSessions || []).find(x =>
+    String(x.peer_user_id) === String(peerId) && !x.is_bound_device)
+  if (!it) return null
+  return {
+    browser: it.bound_device_name || it.device_browser || '其他设备',
+    secretConvId: it.conversation_id,   // 旧加密会话 id（与普通私聊不是同一个）
+    peerName: it.peer_name || ''
+  }
+}
+
+/** 结束对方设备上遗留的加密会话（用旧加密会话 id，而不是普通私聊 id） */
+
+
+/** 结束「其他设备上的」加密会话：优先按会话关闭，失败退回关闭全部 */
+export async function endLegacySecretConv(session) {
+  const cid = session && (session.secretConvId || session.conversation_id)
+  if (!cid) return { ok: false, msg: '缺少加密会话 id' }
+  try {
+    await api.e2eClose(cid, 'other_device')
+    await loadMySecretSessions()
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, msg: (e && (e.message || e.errMsg)) || '网络异常' }
+  }
+}
 
 export async function loadConvs(quiet) {
   // 记录加载前的私密会话，加载后对比：服务端不再返回 = 已结束/被踢 → 清理本地痕迹

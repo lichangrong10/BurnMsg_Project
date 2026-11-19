@@ -59,6 +59,7 @@ export const api = {
   e2eRequest: target_user_id => http.post('/conversations/e2e-request', { target_user_id }),
   e2eAccept: id => http.post(`/conversations/${id}/e2e-accept`),
   e2eReject: id => http.post(`/conversations/${id}/e2e-reject`),
+  e2eMine: () => http.get('/conversations/e2e-mine'), // 我在其他设备的加密会话列表
   e2eClose: (id, reason = 'user') => http.post(`/conversations/${id}/e2e-close`, { reason }),
 
   // ── 消息操作 ──

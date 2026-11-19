@@ -681,8 +681,10 @@ button:active,
 /* Toast 进出场 */
 .bm-toast-enter-active { animation: bmToastIn 180ms var(--ease-out); }
 .bm-toast-leave-active { animation: bmToastOut 160ms var(--ease-out) forwards; }
-@keyframes bmToastIn  { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
-@keyframes bmToastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* 注意：.toast 用 left:50% + translateX(-50%) 居中，
+   keyframes 里必须保留 -50% 的横向偏移，否则动画期间会偏移到右侧、结束后再跳回中间 */
+@keyframes bmToastIn  { from { opacity: 0; transform: translate(-50%, 10px) scale(.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes bmToastOut { from { opacity: 1; transform: translate(-50%, 0) scale(1); } to { opacity: 0; transform: translate(-50%, 6px) scale(.98); } }
 
 /* 全屏页面进场时的不透明底板：页面淡入过程中透出的是底板颜色，不是下层的白色页面 */
 .page-plate {

@@ -27,7 +27,7 @@
       <div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#707579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <div>暂无会话<br><small>从通讯录选择同事，直接发起聊天</small></div>
     </div>
-    <div v-for="c in filteredConvs" :key="c.id" class="conv-item" :class="{ 'is-pinned': c.pinned, 'has-unread': c.unread }"
+    <div v-for="c in filteredConvs" :key="c.id" class="conv-item" :class="{ 'has-legacy': !!convE2EDot(c), 'is-pinned': c.pinned, 'has-unread': c.unread }"
       @click="onClickConv(c)"
       @contextmenu.prevent="openMenu(c, $event)"
       @touchstart="touchStart($event, c)"
@@ -50,7 +50,7 @@
       </div>
       <div class="conv-main">
         <div class="conv-row">
-          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ displayName(c) }}<span v-if="c.e2e_mode === 1" class="conv-enc">{{ c.e2e_state === 1 ? '加密请求' : '加密' }}</span></div>
+          <div class="conv-name"><svg v-if="c.pinned" class="pin-mark" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{ displayName(c) }}<span v-if="c.e2e_mode === 1" class="conv-enc">{{ c.e2e_state === 1 ? '加密请求' : '加密' }}</span><span v-if="convE2EDot(c)" class="conv-legacy-tag" title="点击查看/结束其他设备上的加密会话" @click.stop="openLegacyE2E(c)"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>旧设备加密</span></div>
         </div>
         <div class="conv-row" style="align-items:center">
           <div class="conv-preview"><svg v-if="c.burning" class="burn-tag" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5.7c-1.1 3.2 1.4 4.9 2.9 6.6 1.5 1.7 2.8 3.6 2.8 5.9a7.2 7.2 0 1 1-14.4 0c0-2.9 1.6-5 3.2-6.8.5 1.8 1.6 2.8 2.8 3.4.1-2.8-.5-5.8 2.7-9.1z"/></svg><span v-if="c.mentionFlag" class="conv-mention">有人@了你</span><template v-else>{{ c.lastMsg || '开始聊天吧' }}</template></div>
@@ -76,17 +76,29 @@
         <div class="conv-menu-item danger" @click="onDeleteConv">删除会话</div>
       </div>
     </div>
+  <!-- 其他设备遗留加密会话：详情面板 -->
+  <div v-if="legacyE2E" class="overlay" @click.self="legacyE2E = null">
+    <div class="sheet">
+      <div class="sheet-title">{{ legacyE2E.name }} 在其他设备有加密会话</div>
+      <div class="sheet-item secret-tip" v-if="legacyE2E.browser">设备：{{ legacyE2E.browser }}</div>
+      <div class="sheet-item secret-tip">该加密会话与那台设备绑定，本机无法查看其中的历史消息。</div>
+      <div class="sheet-item danger" @click="doEndLegacyE2E">结束旧加密会话（删除消息，不可恢复）</div>
+      <div class="sheet-item sheet-cancel" @click="legacyE2E = null">取消</div>
+    </div>
+  </div>
+
   </div>
 </template>
 
 <script>
-import { state, openChat, togglePin, deleteConversation, loadConvs, isUserOnline, ensureGroupThumbs } from '../store'
+import { state, convOtherDeviceE2E, endLegacySecretConv, loadMySecretSessions, openChat, togglePin, deleteConversation, loadConvs, isUserOnline, ensureGroupThumbs, showToast } from '../store'
 import { avatarColor, convAvatar, convName, convInitial, fmtTime } from '../utils/format'
 
 export default {
   name: 'ChatsView',
   data() {
     return {
+      legacyE2E: null,   // 其他设备遗留加密会话的详情面板
       state,
       chatTab: 'private',
     slideName: 'slide-left', // private | group | channel
@@ -159,12 +171,32 @@ export default {
   },
   mounted() {
     this.syncGroupThumbs()
+    this.ensureMySecrets()
     window.addEventListener('bm-back', this.onNativeBack)
   },
   beforeUnmount() {
     window.removeEventListener('bm-back', this.onNativeBack)
   },
   methods: {
+    ensureMySecrets() { try { loadMySecretSessions() } catch (e) {} },
+    /** 该会话在其他设备是否有遗留加密会话 */
+    convE2EDot(c) { return convOtherDeviceE2E(c) },
+    openLegacyE2E(c) {
+      const info = convOtherDeviceE2E(c) || {}
+      this.legacyE2E = { id: c.id, name: convName(c), browser: info.browser || '', secretConvId: info.secretConvId || '' }
+    },
+    async doEndLegacyE2E() {
+      const it = this.legacyE2E
+      if (!it) return
+      const r = await endLegacySecretConv({ secretConvId: it.secretConvId })
+      if (r && r.ok) {
+        this.legacyE2E = null
+        showToast('已结束旧加密会话')
+        loadConvs(true)
+      } else {
+        showToast('结束失败：' + ((r && r.msg) || '未知原因'))
+      }
+    },
     /** 群默认头像宫格成员（有自定义头像时不显示宫格） */
     quadMembers(c) {
       if (!c || c.type !== 'group' || convAvatar(c)) return []
@@ -431,4 +463,18 @@ export default {
   .skel-line-2 { width: 66%; margin-top: 9px; }
   .skel-avatar, .skel-line { animation: skelPulse 1.1s ease-in-out infinite; }
   @keyframes skelPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+  /* 旧设备遗留加密会话：琥珀色标签 + 行内淡黄底 */
+  .conv-legacy-tag {
+    display: inline-flex; align-items: center; gap: 3px;
+    margin-left: 6px; padding: 1px 6px; border-radius: 8px;
+    background: rgba(245, 158, 11, .16); color: #B4690E;
+    font-size: 10.5px; font-weight: 600; line-height: 15px;
+    vertical-align: 1px; cursor: pointer; white-space: nowrap;
+  }
+  .conv-legacy-tag svg { flex-shrink: 0; }
+  .conv-legacy-tag:active { transform: scale(.94); }
+  .conv-item.has-legacy {
+    background: linear-gradient(90deg, rgba(245, 158, 11, .07), transparent 62%);
+  }
 </style>
